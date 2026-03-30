@@ -1,0 +1,63 @@
+-- Scratch — Simple Notepad
+-- Type text. Left/Right arrows move cursor. Backspace deletes. Enter for newline. Esc quits.
+
+'FW 6 def  'FH 8 def
+'MX 2 def  'MY 2 def
+
+-- Editor state: flat buffer of char codes + cursor index
+{ 'buf [] 'cur 0 } box 'ed let
+'eg ('k let ed (k get swap free) borrow nip) def
+'es! ('k let 'v let ed (v k put) modify) def
+
+-- Insert character at cursor
+'insert-ch ('ch let
+  'buf eg 'cur eg ch array-insert 'buf es!
+  'cur eg inc 'cur es!
+) def
+
+-- Backspace: delete char before cursor
+'do-bs (
+  0 'cur eg lt (
+    'cur eg dec dup 'cur es!
+    'buf eg swap array-remove drop 'buf es!
+  ) () choose
+) def
+
+'move-left  (0 'cur eg lt  ('cur eg dec 'cur es!) () choose) def
+'move-right ('cur eg 'buf eg len swap free lt ('cur eg inc 'cur es!) () choose) def
+
+-- Render buffer and cursor
+'render (
+  1 clear
+  'cur eg 'c let
+  'buf eg 'b let
+  b len swap free 'n let
+  MX MY
+  n range ('i let 'y let 'x let
+    i c eq (x y FW FH 12 rect) () choose
+    b i nth swap free 'ch let
+    ch 10 eq
+      (MX y FH plus)
+      (ch x y 6 draw-char  x FW plus y)
+    choose
+  ) for-each
+  'y let 'x let
+  c n eq (x y FW FH 12 rect) () choose
+  present
+) def
+
+-- Drain key buffer, dispatch each key
+'handle-input (
+  read-key 'key let
+  key 0 lt not (
+    key 27 eq (halt) () choose
+    key 32 lt not key 127 lt and (key insert-ch) () choose
+    key 8 eq (do-bs) () choose
+    key 13 eq (10 insert-ch) () choose
+    key 1001 eq (move-left) () choose
+    key 1000 eq (move-right) () choose
+    handle-input
+  ) () choose
+) def
+
+(render handle-input 16 sleep true) loop

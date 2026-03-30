@@ -1,0 +1,681 @@
+-- Shell — a simple REPL with built-in interpreter
+-- Type expressions like "3 4 plus" and press Enter to evaluate.
+-- Supports ints, bools, quotations, choose, apply.
+-- Esc quits.
+
+'FW 6 def  'FH 8 def
+
+-- ═══ State ═══
+
+[] box 'dstk let    -- values (ints encoding all types)
+[] box 'dtags let   -- type tags parallel to dstk
+[] box 'qheap let   -- quotation heap: array of char-code arrays (strings)
+dict-new box 'env-defs let  -- hash → qheap index (auto-execute on lookup)
+dict-new box 'env-vals let  -- hash → value (push on lookup)
+dict-new box 'env-tags let  -- hash → tag (parallel to env-vals)
+[] box 'hist let
+[] box 'ibuf let
+0 box 'curs let
+
+-- ═══ Tags ═══
+'T_INT  0 def
+'T_BOOL 1 def
+'T_QREF 2 def
+'T_SYM  3 def
+
+-- ═══ String utilities ═══
+
+'str-hash (0 swap (swap 31 mul plus) for-each) def
+
+'int-to-str (
+  dup 0 eq (drop [48]) (
+    dup 0 lt (true swap neg) (false swap) choose
+    [] swap
+    (
+      10 divmod 48 plus
+      swap (swap cons) dip
+      dup 0 eq not
+    ) loop
+    drop
+    swap (45 swap cons) () choose
+  ) choose
+) def
+
+'draw-str ('color let 'dy let 'dx let
+  len 'slen let
+  slen range ('i let
+    i nth
+    i FW mul dx plus dy color draw-char
+  ) for-each
+  free
+  dx slen FW mul plus
+) def
+
+-- ═══ Tagged stack helpers ═══
+
+'dpush-int  (dstk swap box-push drop dtags T_INT  box-push drop) def
+'dpush-bool (dstk swap box-push drop dtags T_BOOL box-push drop) def
+'dpush-qref (dstk swap box-push drop dtags T_QREF box-push drop) def
+'dpush-sym  (dstk swap box-push drop dtags T_SYM  box-push drop) def
+
+'dpop-val  (dstk box-pop nip) def
+'dpop-tag  (dtags box-pop nip) def
+'dpop-pair (dpop-tag 'tg let dpop-val tg) def
+
+-- Multi-pop (restore original order: bottom first)
+'dpop2-val (dpop-val dpop-val swap) def
+'dpop2-tag (dpop-tag dpop-tag swap) def
+'dpop3-val (dpop-val dpop-val dpop-val swap rot) def
+'dpop3-tag (dpop-tag dpop-tag dpop-tag swap rot) def
+
+-- Multi-push (preserve order via let capture)
+'dpush2-int  ('a let 'b let b dpush-int  a dpush-int)  def
+'dpush3-int  ('a let 'b let 'c let c dpush-int b dpush-int a dpush-int) def
+-- Tag-preserving push: push val with given tag
+'dpush-tagged ('tg let 'v let v dstk swap box-push drop tg dtags swap box-push drop) def
+-- Multi-push with tags
+'dpush2-tagged ('ta let 'va let 'tb let 'vb let
+  vb tb dpush-tagged va ta dpush-tagged) def
+'dpush3-tagged ('ta let 'va let 'tb let 'vb let 'tc let 'vc let
+  vc tc dpush-tagged vb tb dpush-tagged va ta dpush-tagged) def
+
+'dlen  (dstk box-len nip) def
+
+'need ('n let
+  dlen n lt (
+    "need " n int-to-str cat " values" cat hist swap box-push drop
+    false
+  ) (true) choose
+) def
+
+'err (hist swap box-push drop) def
+
+-- ═══ Precomputed word hashes ═══
+
+"dup"    str-hash 'H_DUP    let
+"drop"   str-hash 'H_DROP   let
+"swap"   str-hash 'H_SWAP   let
+"over"   str-hash 'H_OVER   let
+"rot"    str-hash 'H_ROT    let
+"nip"    str-hash 'H_NIP    let
+"plus"   str-hash 'H_PLUS   let
+"sub"    str-hash 'H_SUB    let
+"mul"    str-hash 'H_MUL    let
+"divmod" str-hash 'H_DIVMOD let
+"eq"     str-hash 'H_EQ     let
+"lt"     str-hash 'H_LT     let
+"not"    str-hash 'H_NOT    let
+"neg"    str-hash 'H_NEG    let
+"and"    str-hash 'H_AND    let
+"or"     str-hash 'H_OR     let
+"print"  str-hash 'H_PRINT  let
+"assert" str-hash 'H_ASSERT let
+"apply"  str-hash 'H_APPLY  let
+"choose" str-hash 'H_CHOOSE let
+"true"   str-hash 'H_TRUE   let
+"false"  str-hash 'H_FALSE  let
+"clear-stack" str-hash 'H_CLEAR let
+"dip"    str-hash 'H_DIP    let
+"if"     str-hash 'H_IF     let
+"loop"   str-hash 'H_LOOP   let
+"def"    str-hash 'H_DEF    let
+"let"    str-hash 'H_LET    let
+"inc"    str-hash 'H_INC    let
+"dec"    str-hash 'H_DEC    let
+"gt"     str-hash 'H_GT     let
+"ge"     str-hash 'H_GE     let
+"le"     str-hash 'H_LE     let
+"neq"    str-hash 'H_NEQ    let
+
+-- ═══ Tokenizer ═══
+
+'is-delim (dup 40 eq over 41 eq or over 91 eq or over 93 eq or over 123 eq or over 125 eq or) def
+
+'tokenize (
+  [] box 'toks let
+  [] box 'tcur let
+  (
+    dup 32 eq (
+      drop
+      tcur box-len nip 0 eq not (
+        tcur clone nip toks swap box-push drop
+        tcur [] set drop
+      ) () choose
+    ) (
+      is-delim (
+        -- flush current token if non-empty
+        tcur box-len nip 0 eq not (
+          tcur clone nip toks swap box-push drop
+          tcur [] set drop
+        ) () choose
+        -- emit delimiter as single-char token
+        tcur swap box-push drop
+        tcur clone nip toks swap box-push drop
+        tcur [] set drop
+      ) (
+        tcur swap box-push drop
+      ) choose
+    ) choose
+  ) for-each
+  tcur box-len nip 0 eq not (
+    tcur clone nip toks swap box-push drop
+  ) () choose
+  tcur free
+  toks
+) def
+
+-- ═══ Number parsing ═══
+
+'is-num? (
+  len 'n let
+  0 nth 'c0 let
+  c0 48 ge c0 58 lt and (
+    true
+  ) (
+    c0 45 eq n 1 gt and (
+      1 nth 'c1 let
+      c1 48 ge c1 58 lt and
+    ) (false) choose
+  ) choose
+) def
+
+'parse-int (
+  uncons 'rest let 'c0 let
+  c0 45 eq (
+    0 rest (swap 10 mul swap 48 sub plus) for-each neg
+  ) (
+    c0 48 sub rest (swap 10 mul swap 48 sub plus) for-each
+  ) choose
+) def
+
+-- ═══ Token evaluator ═══
+
+-- Forward declarations via boxes so eval-tokens and collect-quotation can reference each other
+-- eval-tokens-fn: box holding the eval-tokens quotation (set later)
+
+-- peek helpers: ( tok -- tok bool ) non-destructive
+'is-open-paren  (len 'n let 0 nth 'c let n 1 eq c 40 eq and) def
+'is-close-paren (len 'n let 0 nth 'c let n 1 eq c 41 eq and) def
+
+-- collect-quotation: gather tokens between ( and matching ), store as string in qheap
+-- tb and pos are boxes from the calling eval-tokens
+'collect-quotation ('cpos let 'ctb let
+  [] box 'qchars let
+  1 box 'qdepth let
+  (qdepth clone nip 0 eq not (
+    ctb cpos clone nip box-nth nip
+    cpos (inc) modify
+    is-open-paren (
+      free
+      qdepth (inc) modify
+      qchars 40 box-push drop qchars 32 box-push drop
+    ) (
+      is-close-paren (
+        free
+        qdepth (dec) modify
+        qdepth clone nip 0 eq not (
+          qchars 41 box-push drop qchars 32 box-push drop
+        ) () choose
+      ) (
+        (qchars swap box-push drop) for-each
+        qchars 32 box-push drop
+      ) choose
+    ) choose
+    true
+  ) (false) choose) loop
+  qdepth free
+  qchars clone nip qchars free
+) def
+
+'dispatch (
+  [
+    -- Stack ops (tag-preserving: always pop pairs together)
+    ((H_DUP eq)  (drop 1 need (
+      dpop-pair 'ta let 'va let
+      va ta dpush-tagged va ta dpush-tagged
+    ) () choose))
+    ((H_DROP eq) (drop 1 need (dpop-pair drop drop) () choose))
+    ((H_SWAP eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      va ta dpush-tagged vb tb dpush-tagged
+    ) () choose))
+    ((H_OVER eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      vb tb dpush-tagged va ta dpush-tagged vb tb dpush-tagged
+    ) () choose))
+    ((H_ROT eq) (drop 3 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let dpop-pair 'tc let 'vc let
+      vb tb dpush-tagged va ta dpush-tagged vc tc dpush-tagged
+    ) () choose))
+    ((H_NIP eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair drop drop
+      va ta dpush-tagged
+    ) () choose))
+    ((H_DIP eq) (drop 2 need (
+      dpop-pair 'tq let 'vq let
+      dpop-pair 'tv let 'vv let
+      tq T_QREF eq (
+        qheap vq box-nth nip tokenize eval-tokens
+        vv tv dpush-tagged
+      ) ("dip: need quotation" err) choose
+    ) () choose))
+
+    -- Math ops (pop pairs, check tags, compute)
+    ((H_PLUS eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va plus dpush-int) ("plus: need ints" err) choose
+    ) () choose))
+    ((H_SUB eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va sub dpush-int) ("sub: need ints" err) choose
+    ) () choose))
+    ((H_MUL eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va mul dpush-int) ("mul: need ints" err) choose
+    ) () choose))
+    ((H_DIVMOD eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va divmod dpush2-int) ("divmod: need ints" err) choose
+    ) () choose))
+    ((H_NEG eq) (drop 1 need (
+      dpop-pair 'ta let 'va let
+      ta T_INT eq (va neg dpush-int) ("neg: need int" err) choose
+    ) () choose))
+
+    -- Compare ops → produce bools
+    ((H_EQ eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta tb eq (va vb eq) (false) choose
+      (1) (0) choose dpush-bool
+    ) () choose))
+    ((H_LT eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va lt (1) (0) choose dpush-bool) ("lt: need ints" err) choose
+    ) () choose))
+    ((H_NOT eq) (drop 1 need (
+      dpop-pair 'ta let 'va let
+      va 0 eq (1) (0) choose dpush-bool
+    ) () choose))
+    ((H_AND eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      va 0 eq not vb 0 eq not and (1) (0) choose dpush-bool
+    ) () choose))
+    ((H_OR eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      va 0 eq not vb 0 eq not or (1) (0) choose dpush-bool
+    ) () choose))
+
+    -- I/O
+    ((H_PRINT eq) (drop 1 need (
+      dpop-pair 'tg let 'v let
+      v tg val-to-str hist swap box-push drop
+    ) () choose))
+    ((H_ASSERT eq) (drop 1 need (
+      dpop-pair 'tg let 'v let
+      v 0 eq not ("ok" hist swap box-push drop) ("ASSERT FAILED" err) choose
+    ) () choose))
+
+    -- Control flow
+    ((H_APPLY eq) (drop 1 need (
+      dpop-pair 'ta let 'va let
+      ta T_QREF eq (qheap va box-nth nip tokenize eval-tokens)
+      ("apply: need quotation" err) choose
+    ) () choose))
+    ((H_CHOOSE eq) (drop 3 need (
+      dpop-pair 'te let 've let
+      dpop-pair 'tt let 'vt let
+      dpop-pair 'tb let 'vb let
+      te T_QREF eq tt T_QREF eq and (
+        vb 0 eq not
+        (qheap vt box-nth nip tokenize eval-tokens)
+        (qheap ve box-nth nip tokenize eval-tokens)
+        choose
+      ) ("choose: need bool + 2 quotations" err) choose
+    ) () choose))
+
+    -- if: scrutinee (pred) (then) (else) if
+    ((H_IF eq) (drop 4 need (
+      dpop-pair 'te let 've let   -- else qref
+      dpop-pair 'tt let 'vt let   -- then qref
+      dpop-pair 'tp let 'vp let   -- pred qref
+      dpop-pair 'ts let 'vs let   -- scrutinee
+      tp T_QREF eq tt T_QREF eq and te T_QREF eq and (
+        -- push scrutinee for predicate to borrow
+        vs ts dpush-tagged
+        qheap vp box-nth nip tokenize eval-tokens
+        -- pop bool result from pred
+        dpop-pair drop 'pb let
+        -- push scrutinee for branch
+        vs ts dpush-tagged
+        pb 0 eq not
+        (qheap vt box-nth nip tokenize eval-tokens)
+        (qheap ve box-nth nip tokenize eval-tokens)
+        choose
+      ) ("if: need value + 3 quotations" err) choose
+    ) () choose))
+
+    -- loop: (body) loop — body must leave bool on dstk
+    ((H_LOOP eq) (drop 1 need (
+      dpop-pair 'tl let 'vl let
+      tl T_QREF eq (
+        (
+          qheap vl box-nth nip tokenize eval-tokens
+          dpop-pair drop 0 eq not
+        ) loop
+      ) ("loop: need quotation" err) choose
+    ) () choose))
+
+    -- def: 'name (body) def — auto-execute on lookup
+    ((H_DEF eq) (drop 2 need (
+      dpop-pair 'tq let 'vq let  -- quotation
+      dpop-pair 'ts let 'vs let  -- symbol
+      ts T_SYM eq tq T_QREF eq and (
+        env-defs (vs vq dict-set) modify
+      ) ("def: need symbol + quotation" err) choose
+    ) () choose))
+
+    -- let: value 'name let — push on lookup
+    ((H_LET eq) (drop 2 need (
+      dpop-pair 'ts let 'vs let  -- symbol name
+      dpop-pair 'tv let 'vv let  -- value
+      ts T_SYM eq (
+        env-vals (vs vv dict-set) modify
+        env-tags (vs tv dict-set) modify
+      ) ("let: need value + symbol" err) choose
+    ) () choose))
+
+    -- inc/dec
+    ((H_INC eq) (drop 1 need (
+      dpop-pair 'ta let 'va let
+      ta T_INT eq (va inc dpush-int) ("inc: need int" err) choose
+    ) () choose))
+    ((H_DEC eq) (drop 1 need (
+      dpop-pair 'ta let 'va let
+      ta T_INT eq (va dec dpush-int) ("dec: need int" err) choose
+    ) () choose))
+
+    -- More comparisons
+    ((H_GT eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va gt (1) (0) choose dpush-bool) ("gt: need ints" err) choose
+    ) () choose))
+    ((H_GE eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va ge (1) (0) choose dpush-bool) ("ge: need ints" err) choose
+    ) () choose))
+    ((H_LE eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta T_INT eq tb T_INT eq and
+      (vb va le (1) (0) choose dpush-bool) ("le: need ints" err) choose
+    ) () choose))
+    ((H_NEQ eq) (drop 2 need (
+      dpop-pair 'ta let 'va let dpop-pair 'tb let 'vb let
+      ta tb eq (va vb eq not) (true) choose
+      (1) (0) choose dpush-bool
+    ) () choose))
+
+    -- Clear
+    ((H_CLEAR eq) (drop (dlen 0 eq (false) (dpop-pair drop drop true) choose) loop))
+  ]
+  (int-to-str [63 32] swap cat hist swap box-push drop)
+  cond
+) def
+
+'eval-token (
+  -- ( tok -- ) consumes token, dispatches as word or env lookup
+  str-hash 'h let
+  h H_TRUE eq (1 dpush-bool) (
+    h H_FALSE eq (0 dpush-bool) (
+      -- check user-defined defs first
+      env-defs (h dict-has swap free) borrow nip (
+        env-defs (h dict-get swap free) borrow nip 'qi let
+        qheap qi box-nth nip tokenize eval-tokens
+      ) (
+        -- check user-defined lets
+        env-vals (h dict-has swap free) borrow nip (
+          env-vals (h dict-get swap free) borrow nip
+          env-tags (h dict-get swap free) borrow nip
+          dpush-tagged
+        ) (
+          h dispatch
+        ) choose
+      ) choose
+    ) choose
+  ) choose
+) def
+
+'eval-tokens (
+  'tb let
+  0 box 'pos let
+  (pos clone nip tb box-len nip lt (
+    tb pos clone nip box-nth nip
+    pos (inc) modify
+    -- token is on the stack, peek to classify
+    is-open-paren (
+      free  -- consume open-paren token
+      tb pos collect-quotation 'qs let
+      qheap qs box-push drop
+      qheap box-len nip dec dpush-qref
+    ) (
+      is-close-paren (free) (
+        is-num? (parse-int dpush-int) (
+          -- check for 'symbol (starts with char 39)
+          0 nth 39 eq (
+            0 array-remove drop str-hash dpush-sym
+          ) (
+            eval-token
+          ) choose
+        ) choose
+      ) choose
+    ) choose
+    true
+  ) (false) choose) loop
+  pos free
+  tb free
+) def
+
+-- ═══ Eval line ═══
+
+'val-to-str ('tg let 'v let
+  tg T_INT eq (v int-to-str) (
+    tg T_BOOL eq (v 0 eq ("false") ("true") choose) (
+      tg T_QREF eq ("(..)") (
+        tg T_SYM eq ([39] v int-to-str cat) ("?") choose
+      ) choose
+    ) choose
+  ) choose
+) def
+
+'eval-line (
+  ibuf box-len nip 0 eq not (
+    [62 32] ibuf clone nip cat hist swap box-push drop
+    ibuf clone nip tokenize eval-tokens
+    dlen 0 eq not (
+      "=> " dlen range ('i let
+        dtags i box-nth nip 'tg let
+        dstk i box-nth nip 'v let
+        v tg val-to-str cat " " cat
+      ) for-each
+      hist swap box-push drop
+    ) () choose
+  ) () choose
+  ibuf [] set drop
+  curs 0 set drop
+) def
+
+-- ═══ Render ═══
+
+'render (
+  0 clear
+
+  -- Stack display
+  "Stack: " dlen 0 eq (
+    "(empty)" cat 2 2 5 draw-str drop
+  ) (
+    dlen range ('i let
+      dtags i box-nth nip 'tg let
+      dstk i box-nth nip 'v let
+      v tg val-to-str cat " " cat
+    ) for-each
+    2 2 7 draw-str drop
+  ) choose
+
+  -- History
+  hist box-len nip 'nh let
+  20 nh min 'visible let
+  nh visible sub 'start let
+  visible range ('i let
+    hist i start plus box-nth nip
+    2 16 i FH mul plus 6 draw-str drop
+  ) for-each
+
+  -- Input line
+  62 2 190 11 draw-char
+  ibuf box-len nip range ('i let
+    ibuf i box-nth nip i FW mul 14 plus 190 7 draw-char
+  ) for-each
+
+  -- Cursor
+  curs clone nip FW mul 14 plus 190 FW FH 11 rect
+
+  present
+) def
+
+-- ═══ Input handler ═══
+
+'handle-input (
+  read-key 'key let
+  key 0 lt not (
+    key 27 eq (halt) () choose
+    key 32 ge key 127 lt and (
+      ibuf (curs clone nip key array-insert) modify
+      curs (inc) modify
+    ) () choose
+    key 8 eq (
+      curs clone nip 0 gt (
+        curs (dec) modify
+        ibuf (curs clone nip array-remove drop) modify
+      ) () choose
+    ) () choose
+    key 13 eq (eval-line) () choose
+    key 1001 eq (curs clone nip 0 gt (curs (dec) modify) () choose) () choose
+    key 1000 eq (curs clone nip ibuf box-len nip lt (curs (inc) modify) () choose) () choose
+    handle-input
+  ) () choose
+) def
+
+-- ═══ Self-test ═══
+
+-- Ints
+"3 4 plus" tokenize eval-tokens
+dpop-val 7 eq assert dpop-tag T_INT eq assert
+"10 3 sub" tokenize eval-tokens
+dpop-val 7 eq assert dpop-tag T_INT eq assert
+"6 dup mul" tokenize eval-tokens
+dpop-val 36 eq assert dpop-tag T_INT eq assert
+"100 3 divmod" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_INT eq assert dpop-val 33 eq assert dpop-tag T_INT eq assert
+"-10" tokenize eval-tokens
+dpop-val -10 eq assert dpop-tag T_INT eq assert
+
+-- Stack ops
+"1 2 3 rot" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop dpop-val 3 eq assert dpop-tag drop dpop-val 2 eq assert dpop-tag drop
+"1 2 swap" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop dpop-val 2 eq assert dpop-tag drop
+"1 2 nip" tokenize eval-tokens
+dpop-val 2 eq assert dpop-tag drop
+"1 2 over" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop dpop-val 2 eq assert dpop-tag drop dpop-val 1 eq assert dpop-tag drop
+
+-- Bools
+"true" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_BOOL eq assert
+"false" tokenize eval-tokens
+dpop-val 0 eq assert dpop-tag T_BOOL eq assert
+"3 3 eq" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_BOOL eq assert
+"3 4 eq" tokenize eval-tokens
+dpop-val 0 eq assert dpop-tag T_BOOL eq assert
+"1 not" tokenize eval-tokens
+dpop-val 0 eq assert dpop-tag T_BOOL eq assert
+"3 5 lt" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_BOOL eq assert
+
+-- Quotations + apply
+"( 3 4 plus ) apply" tokenize eval-tokens
+dpop-val 7 eq assert dpop-tag T_INT eq assert
+
+-- Choose
+"true ( 1 ) ( 2 ) choose" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_INT eq assert
+"false ( 1 ) ( 2 ) choose" tokenize eval-tokens
+dpop-val 2 eq assert dpop-tag T_INT eq assert
+
+-- Nested quotations
+"true ( ( 10 ) apply ) ( 20 ) choose" tokenize eval-tokens
+dpop-val 10 eq assert dpop-tag T_INT eq assert
+
+-- Parens without spaces
+"(3 4 plus) apply" tokenize eval-tokens
+dpop-val 7 eq assert dpop-tag T_INT eq assert
+
+-- Assert with bools
+"3 3 eq assert" tokenize eval-tokens
+
+-- Symbols
+"'foo 'foo eq" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag T_BOOL eq assert
+"'foo 'bar eq" tokenize eval-tokens
+dpop-val 0 eq assert dpop-tag T_BOOL eq assert
+
+-- if: bool scrutinee
+"true () (drop 1) (drop 2) if" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop
+"false () (drop 1) (drop 2) if" tokenize eval-tokens
+dpop-val 2 eq assert dpop-tag drop
+
+-- if: int scrutinee with predicate
+"5 (3 lt) (drop 0) (drop 1) if" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop
+"2 (3 lt) (drop 0) (drop 1) if" tokenize eval-tokens
+dpop-val 0 eq assert dpop-tag drop
+
+-- if: branch receives scrutinee
+"10 (5 lt) (5 plus) (5 sub) if" tokenize eval-tokens
+dpop-val 5 eq assert dpop-tag drop
+
+-- loop with counter
+"0 (dup 10 lt (inc true) (false) choose) loop 10 eq" tokenize eval-tokens
+dpop-val 1 eq assert dpop-tag drop
+
+-- loop immediate exit
+"(false) loop" tokenize eval-tokens
+
+-- def: define and use a word
+"'double (2 mul) def 5 double" tokenize eval-tokens
+dpop-val 10 eq assert dpop-tag drop
+
+-- let: bind a value
+"5 'x let x x plus" tokenize eval-tokens
+dpop-val 10 eq assert dpop-tag drop
+
+-- inc/dec
+"5 inc" tokenize eval-tokens
+dpop-val 6 eq assert dpop-tag drop
+"5 dec" tokenize eval-tokens
+dpop-val 4 eq assert dpop-tag drop
+
+-- Clean up dstk for main loop
+(dlen 0 eq (false) (dpop-val drop dpop-tag drop true) choose) loop
+
+-- ═══ Main loop ═══
+
+(render handle-input 16 sleep true) loop

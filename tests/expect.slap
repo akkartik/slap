@@ -1,0 +1,1254 @@
+-- ═══ Stack ═══
+
+-- dup
+3 dup plus 6 eq assert
+true dup and assert
+
+-- drop
+3 4 drop 3 eq assert
+
+-- swap
+1 2 swap 1 eq assert drop
+
+-- dip
+1 2 (inc) dip 2 eq assert 2 eq assert
+
+-- ═══ Math ═══
+
+-- plus
+3 4 plus 7 eq assert
+0 0 plus 0 eq assert
+-3 5 plus 2 eq assert
+
+-- sub
+10 3 sub 7 eq assert
+3 10 sub -7 eq assert
+
+-- mul
+3 4 mul 12 eq assert
+-2 3 mul -6 eq assert
+0 999 mul 0 eq assert
+
+-- divmod
+7 2 divmod 1 eq assert 3 eq assert
+-7 2 divmod 1 eq assert -4 eq assert
+10 5 divmod 0 eq assert 2 eq assert
+
+-- ═══ Compare ═══
+
+-- eq: integers
+42 42 eq assert
+1 2 eq not assert
+
+-- eq: booleans
+true true eq assert
+true false eq not assert
+
+-- eq: symbols
+'foo 'foo eq assert
+'foo 'bar eq not assert
+
+-- eq: arrays
+[1 2 3] [1 2 3] eq assert
+[1 2] [1 2 3] eq not assert
+[] [] eq assert
+
+-- lt
+1 2 lt assert
+2 1 lt not assert
+3 3 lt not assert
+-1 0 lt assert
+
+-- ═══ Arrays ═══
+
+-- literal
+[1 2 3] len swap free 3 eq assert
+
+-- empty
+[] len swap free 0 eq assert
+
+-- cons
+1 [2 3] cons [1 2 3] eq assert
+
+-- uncons
+[1 2 3] uncons [2 3] eq assert 1 eq assert
+
+-- nth
+[10 20 30] 1 nth 20 eq assert free
+
+-- set-nth
+[10 20 30] 1 99 set-nth [10 99 30] eq assert
+
+-- cat
+[1 2] [3 4] cat [1 2 3 4] eq assert
+
+-- slice
+[10 20 30 40 50] 1 3 slice [20 30] eq assert free
+
+-- array-insert
+[1 2 3] 1 99 array-insert [1 99 2 3] eq assert
+
+-- array-remove
+[10 20 30] 1 array-remove 20 eq assert [10 30] eq assert
+
+-- ═══ Records ═══
+
+-- literal + get
+{'x 1 'y 2} 'x get 1 eq assert 'y get 2 eq assert free
+
+-- put (add new field)
+{'x 1} 99 'y put 'y get 99 eq assert free
+
+-- put (overwrite)
+{'x 1} 42 'x put 'x get 42 eq assert free
+
+-- remove
+{'x 1 'y 2} 'y remove 2 eq assert 'x get 1 eq assert free
+
+-- ═══ Control ═══
+
+-- apply
+(3 4 plus) apply 7 eq assert
+
+-- if: Bool scrutinee
+true () (drop 'yes) (drop 'no) if 'yes eq assert
+false () (drop 'yes) (drop 'no) if 'no eq assert
+
+-- if: Int scrutinee (predicate borrows)
+5 (3 lt) (drop 'small) (drop 'big) if 'big eq assert
+2 (3 lt) (drop 'small) (drop 'big) if 'small eq assert
+
+-- if: branch receives scrutinee
+10 (5 lt) (5 plus) (5 sub) if 5 eq assert
+
+-- loop with counter
+0 (dup 10 lt (inc true) (false) choose) loop
+10 eq assert
+
+-- loop immediate exit
+(false) loop
+
+-- ═══ Heap ═══
+
+-- box + clone + free
+42 box 'b let
+b clone nip 42 eq assert
+b free
+
+-- set
+0 box 'b let
+b 99 set drop
+b clone nip 99 eq assert
+b free
+
+-- borrow on box
+[1 2 3] box (0 (plus) fold) borrow 6 eq assert free
+
+-- borrow on box
+42 box 'b let
+b (1 plus) borrow 43 eq assert
+-- b still valid
+b clone nip 42 eq assert
+b free
+
+-- ═══ Closures ═══
+
+-- def and auto-execute
+'double (2 mul) def
+5 double 10 eq assert
+
+-- let binding
+5 'x let
+x 5 eq assert
+
+-- closure via compose
+'make-adder (quote (plus) compose) def
+'add3 3 make-adder def
+10 add3 13 eq assert
+
+-- nested closure via compose
+'outer (quote (plus) compose) def
+'f 5 outer def
+10 f 15 eq assert
+
+-- (fn) wrapping passes quotation as data
+'my-fn (2 mul) def
+[1 2 3] (my-fn) each [2 4 6] eq assert
+
+-- ═══ Prelude ═══
+
+-- not
+true not false eq assert
+false not assert
+
+-- and
+true true and assert
+true false and not assert
+false true and not assert
+
+-- or
+false false or not assert
+true false or assert
+false true or assert
+
+-- choose
+true (1) (2) choose 1 eq assert
+false (1) (2) choose 2 eq assert
+
+-- inc / dec
+5 inc 6 eq assert
+5 dec 4 eq assert
+
+-- neg / abs
+3 neg -3 eq assert
+-5 abs 5 eq assert
+0 abs 0 eq assert
+
+-- nip
+1 2 nip 2 eq assert
+
+-- over
+1 2 over 1 eq assert drop drop
+
+-- rot
+1 2 3 rot 1 eq assert 3 eq assert 2 eq assert
+
+-- empty?
+[] empty? assert free
+[1] empty? not assert free
+
+-- max / min
+3 7 max 7 eq assert
+3 7 min 3 eq assert
+
+-- fold (sum)
+[1 2 3 4] 0 (plus) fold 10 eq assert
+
+-- reverse
+[1 2 3] reverse [3 2 1] eq assert
+
+-- each
+[1 2 3] (2 mul) each [2 4 6] eq assert
+
+-- sum
+[10 20 30] sum 60 eq assert
+
+-- modify
+42 box 'b let
+b (1 plus) modify
+b clone nip 43 eq assert
+b free
+
+-- update
+{'x 1 'y 2} (inc) 'x update 'x get 2 eq assert free
+
+-- ═══ Derived ═══
+
+-- range
+5 range [0 1 2 3 4] eq assert
+0 range [] eq assert
+
+-- for-each (side-effect only)
+0 box 'acc let
+[1 2 3] ('v let acc (v plus) modify) for-each
+acc clone nip 6 eq assert
+acc free
+
+-- for-index
+0 [10 20 30] (nip plus) for-index    3 eq assert
+0 [10 20 30] (mul plus) for-index    80 eq assert
+
+-- ═══ Strings ═══
+
+"" [] eq assert
+"A" len swap free 1 eq assert
+"A" uncons free 65 eq assert
+
+-- ═══ Edge Cases ═══
+
+-- deeply nested quotation
+'f1 ((1 plus)) def
+5 f1 apply 6 eq assert
+
+-- large array
+100 range len swap free 100 eq assert
+
+-- recursive fold on long list
+50 range 0 (plus) fold 1225 eq assert
+
+-- borrow inside borrow (TODO: nested borrow causes infinite stack in type checker)
+-- [1 2 3] (([4 5] cat) borrow nip len swap free 5 eq assert) borrow drop
+
+-- compose
+'f (1 plus) (2 mul) compose def
+3 f 8 eq assert
+
+-- quote + apply
+42 quote apply 42 eq assert
+
+-- record with many fields
+{'a 1 'b 2 'c 3 'd 4 'e 5} 'e get 5 eq assert free
+
+-- sequential box modifications
+10 box 'a let
+a (5 plus) modify
+a clone nip 15 eq assert
+a (2 mul) modify
+a clone nip 30 eq assert
+a free
+
+-- fold producing array
+[1 2 3] [] (swap cons) fold [3 2 1] eq assert
+
+-- empty fold
+[] 0 (plus) fold 0 eq assert
+
+-- nested arrays
+[[1 2] [3 4]] 0 nth [1 2] eq assert free
+
+-- swap inside dip
+1 2 3 (swap) dip 3 eq assert 1 eq assert 2 eq assert
+
+-- borrow on box with copy contents
+42 box (inc) borrow 43 eq assert clone swap free 42 eq assert
+
+-- multiple let bindings in one scope
+(1 'a let 2 'b let a b plus) apply 3 eq assert
+
+-- symbol interning identity
+'hello 'hello eq assert
+
+-- negative divmod
+-10 3 divmod 2 eq assert -4 eq assert
+
+-- large fold (stress test pool recycling)
+1000 range 0 (plus) fold 499500 eq assert
+
+-- mutual recursion via shared scope (TODO: forward references unsupported in type checker)
+-- 'even? (dup 0 eq (drop true) (dec odd?) choose) def
+-- 'odd?  (dup 0 eq (drop false) (dec even?) choose) def
+-- 4 even? assert
+-- 5 odd? assert
+-- 3 even? not assert
+
+-- record update multiple fields
+{'x 0 'y 0} (inc) 'x update (inc) 'x update 'x get 2 eq assert free
+
+-- empty record
+{} 42 'x put 'x get 42 eq assert free
+
+-- ═══ Type checker: let binding tests ═══
+
+-- let binds values (not auto-executed)
+42 'x let x 42 eq assert
+'hello 'name let name 'hello eq assert
+true 'flag let flag assert
+
+-- let-bound value used in quotation (pushed, not executed)
+10 'n let (n 1 plus) apply 11 eq assert
+
+-- let-bound symbol used with get/put
+{'x 1 'y 2} (inc) 'x update 'x get 2 eq assert free
+
+-- def binds quotations (auto-executed)
+'double (2 mul) def 7 double 14 eq assert
+'add5 (5 plus) def 10 add5 15 eq assert
+
+-- def-bound quotations with choose
+true ('yes) ('no) choose 'yes eq assert
+false ('yes) ('no) choose 'no eq assert
+
+-- fold with def-bound fn
+[1 2 3 4 5] 0 (plus) fold 15 eq assert
+[1 2 3] (dup mul) each [1 4 9] eq assert
+
+-- ═══ Adversarial: Recursion ═══
+
+-- fibonacci
+'fib (dup 2 lt
+  ()
+  (dup 1 sub fib swap 2 sub fib plus)
+  choose
+) def
+0 fib 0 eq assert
+1 fib 1 eq assert
+6 fib 8 eq assert
+10 fib 55 eq assert
+
+-- factorial
+'fact (dup 0 eq (drop 1) (dup 1 sub fact mul) choose) def
+0 fact 1 eq assert
+5 fact 120 eq assert
+10 fact 3628800 eq assert
+
+-- GCD
+'gcd (dup 0 eq
+  (drop)
+  (swap over divmod nip gcd)
+  choose
+) def
+48 18 gcd 6 eq assert
+100 75 gcd 25 eq assert
+17 13 gcd 1 eq assert
+
+-- countdown to array
+'countdown (dup 0 eq
+  (drop [])
+  (dup 1 sub countdown cons)
+  choose
+) def
+5 countdown [5 4 3 2 1] eq assert
+0 countdown [] eq assert
+
+-- ═══ Adversarial: Boxes ═══
+
+-- chained box modifications with intermediate reads
+0 box 'c let
+c (1 plus) modify
+c (1 plus) modify
+c (1 plus) modify
+c (1 plus) modify
+c (1 plus) modify
+c clone nip 5 eq assert
+c (10 mul) modify
+c clone nip 50 eq assert
+c free
+
+-- multiple independent boxes
+1 box 'a let
+2 box 'b let
+3 box 'c let
+a clone nip 1 eq assert
+b clone nip 2 eq assert
+c clone nip 3 eq assert
+a (b clone nip plus) modify
+a clone nip 3 eq assert
+b (c clone nip mul) modify
+b clone nip 6 eq assert
+a free b free c free
+
+-- borrow on boxed int (non-destructive)
+99 box 'n let
+n (1 plus) borrow 100 eq assert
+n (2 mul) borrow 198 eq assert
+n clone nip 99 eq assert
+n free
+
+-- ═══ Adversarial: Composition ═══
+
+-- quotation composition chains
+'add1 (1 plus) def
+'add2 (1 plus) (1 plus) compose def
+'add4 (add2) (add2) compose def
+0 add1 1 eq assert
+0 add2 2 eq assert
+0 add4 4 eq assert
+
+-- closure factory via compose
+'make-multiplier (quote (mul) compose) def
+'times3 3 make-multiplier def
+'times7 7 make-multiplier def
+5 times3 15 eq assert
+5 times7 35 eq assert
+
+-- ═══ Adversarial: Dip ═══
+
+-- nested dip
+1 2 3 (drop) dip 3 eq assert 1 eq assert
+1 2 3 ((drop) dip) dip 3 eq assert 2 eq assert
+1 2 3 4 (((drop) dip) dip) dip 4 eq assert 3 eq assert 2 eq assert
+
+-- dip preserving linear values
+[1 2 3] 42 (len swap free 3 eq assert) dip 42 eq assert
+
+-- ═══ Adversarial: Apply ═══
+
+-- apply inside apply
+((3 4 plus)) apply apply 7 eq assert
+
+-- ═══ Adversarial: Scope Isolation ═══
+
+-- let bindings in quotations don't leak
+99 'outer let
+(42 'inner let inner) apply
+outer 99 eq assert
+
+-- shadowing: inner let doesn't clobber outer
+1 'x let
+(2 'x let x) apply 2 eq assert
+x 1 eq assert
+
+-- multiple let bindings in sequence
+5 'a let 10 'b let
+(a b plus) apply 15 eq assert
+
+-- ═══ Adversarial: Records ═══
+
+-- record as fold accumulator
+[1 2 3 4 5] {'sum 0 'count 0}
+  ('val let
+   (val plus) 'sum update
+   (inc) 'count update)
+fold
+'sum get 15 eq assert
+'count get 5 eq assert
+free
+
+-- nested record operations
+{'pos {'x 10 'y 20} 'vel {'x 1 'y -1}}
+'pos get 'x get 10 eq assert free (free) dip
+'vel get 'y get -1 eq assert free free
+
+-- ═══ Adversarial: Control Flow ═══
+
+-- if with array scrutinee
+[1 2 3] (len swap free 3 eq) (sum) (free 0) if
+6 eq assert
+
+-- loop inside loop
+0 (dup 3 lt
+  (inc
+   0 (dup 3 lt (inc true) (false) choose) loop
+   drop
+   true)
+  (false)
+  choose
+) loop
+3 eq assert
+
+-- complex choose chains
+true (1) (2) choose
+false (10 mul) (20 mul) choose
+20 eq assert
+
+-- ═══ Adversarial: Arrays ═══
+
+-- slice and cat round-trip
+[1 2 3 4 5] 0 2 slice (2 5 slice) dip swap cat swap free [1 2 3 4 5] eq assert
+
+-- set-nth chain builds array
+[0 0 0 0 0] 0 1 set-nth 1 2 set-nth 2 3 set-nth 3 4 set-nth 4 5 set-nth
+[1 2 3 4 5] eq assert
+
+-- cons and uncons round-trip
+[2 3 4] 1 swap cons uncons [2 3 4] eq assert 1 eq assert
+
+-- empty array edge cases
+[] reverse [] eq assert
+[] 0 (plus) fold 0 eq assert
+[] sum 0 eq assert
+
+-- map via each preserves order
+[10 20 30 40 50] (1 plus) each [11 21 31 41 51] eq assert
+
+-- nested arrays with fold over lengths
+[[1] [2 3] [4 5 6]]
+0 (len swap free plus) fold 6 eq assert
+
+-- negative range
+-3 range [] eq assert
+
+-- ═══ Adversarial: Arithmetic ═══
+
+-- large arithmetic
+1000000 1000000 mul 1000000000000 eq assert
+999999999 1 plus 1000000000 eq assert
+-999999999 neg 999999999 eq assert
+
+-- negative edge cases
+-1 -1 mul 1 eq assert
+-1 -1 plus -2 eq assert
+0 neg 0 eq assert
+-1 abs 1 eq assert
+
+-- ═══ Adversarial: Stack Gymnastics ═══
+
+-- over and rot stress
+1 2 3 over 2 eq assert rot 1 eq assert 3 eq assert 2 eq assert
+
+-- for-each with box mutation
+0 box 'total let
+[10 20 30] ('n let total (n plus) modify) for-each
+total clone nip 60 eq assert
+total free
+
+-- swap inside if branches
+3 (2 lt) (1 plus) (1 sub) if 2 eq assert
+
+-- fold producing array (reverse via fold)
+[1 2 3] [] (swap cons) fold [3 2 1] eq assert
+
+-- ═══ Floats ═══
+
+-- literals
+3.14 3.14 eq assert
+-2.5 -2.5 eq assert
+0.0 0.0 eq assert
+
+-- fadd
+1.0 2.0 fadd 3.0 eq assert
+-1.5 2.5 fadd 1.0 eq assert
+
+-- fsub
+10.0 3.0 fsub 7.0 eq assert
+1.0 1.0 fsub 0.0 eq assert
+
+-- fmul
+2.5 4.0 fmul 10.0 eq assert
+-3.0 2.0 fmul -6.0 eq assert
+0.0 999.0 fmul 0.0 eq assert
+
+-- fdiv
+10.0 2.0 fdiv 5.0 eq assert
+-6.0 3.0 fdiv -2.0 eq assert
+
+-- flt
+1.0 2.0 flt assert
+2.0 1.0 flt not assert
+3.0 3.0 flt not assert
+-1.0 0.0 flt assert
+
+-- itof / ftoi
+42 itof 42.0 eq assert
+3.9 ftoi 3 eq assert
+-2.7 ftoi -2 eq assert
+0 itof 0.0 eq assert
+
+-- float in dup/drop
+1.5 dup fadd 3.0 eq assert
+1.5 2.5 drop 1.5 eq assert
+
+-- float in swap
+1.0 2.0 swap 1.0 eq assert drop
+
+-- ═══ Tacit Combinators ═══
+
+-- keep: x (f) → f(x) x
+5 (inc) keep 5 eq assert 6 eq assert
+3 (dup mul) keep 3 eq assert 9 eq assert
+
+-- bi: x (f) (g) → f(x) g(x)
+10 (inc) (dec) bi 9 eq assert 11 eq assert
+6 (2 mul) (3 plus) bi 9 eq assert 12 eq assert
+
+-- both: x y (f) → f(x) f(y)
+3 7 (inc) both 8 eq assert 4 eq assert
+2 5 (dup mul) both 25 eq assert 4 eq assert
+
+-- ═══ Arithmetic Helpers ═══
+
+-- div / mod
+7 2 div 3 eq assert
+7 2 mod 1 eq assert
+10 5 div 2 eq assert
+10 3 mod 1 eq assert
+0 5 mod 0 eq assert
+
+-- ═══ Comparison Helpers ═══
+
+-- gt
+5 3 gt assert
+3 5 gt not assert
+3 3 gt not assert
+
+-- ge
+5 3 ge assert
+3 3 ge assert
+2 3 ge not assert
+
+-- le
+3 5 le assert
+3 3 le assert
+5 3 le not assert
+
+-- neq
+1 2 neq assert
+3 3 neq not assert
+
+-- ═══ Predicates ═══
+
+-- zero?
+0 zero? assert
+1 zero? not assert
+-1 zero? not assert
+
+-- pos?
+5 pos? assert
+0 pos? not assert
+-1 pos? not assert
+
+-- neg?
+-3 neg? assert
+0 neg? not assert
+5 neg? not assert
+
+-- even? / odd?
+4 even? assert
+5 even? not assert
+0 even? assert
+3 odd? assert
+4 odd? not assert
+1 odd? assert
+
+-- ═══ Array Helpers ═══
+
+-- filter
+[1 2 3 4 5 6] (even?) filter [2 4 6] eq assert
+[1 2 3 4 5] (3 gt) filter [4 5] eq assert
+[1 2 3] (10 lt) filter [1 2 3] eq assert
+[] (even?) filter [] eq assert
+
+-- first / last
+[10 20 30] first 10 eq assert free
+[10 20 30] last 30 eq assert free
+
+-- take
+[1 2 3 4 5] 3 take [1 2 3] eq assert
+[1 2 3] 0 take [] eq assert
+[1 2 3] 5 take [1 2 3] eq assert
+
+-- drop-n
+[1 2 3 4 5] 2 drop-n [3 4 5] eq assert
+[1 2 3] 0 drop-n [1 2 3] eq assert
+[1 2 3] 3 drop-n [] eq assert
+
+-- couple
+3 7 couple [3 7] eq assert
+1 2 couple len swap free 2 eq assert
+
+-- product
+[1 2 3 4] product 24 eq assert
+[5] product 5 eq assert
+
+-- ═══ New Primitives: sort ═══
+
+[3 1 4 1 5 9 2 6] sort [1 1 2 3 4 5 6 9] eq assert
+[] sort [] eq assert
+[42] sort [42] eq assert
+[5 4 3 2 1] sort [1 2 3 4 5] eq assert
+
+-- sort-desc
+[3 1 4 1 5] sort-desc [5 4 3 1 1] eq assert
+
+-- ═══ New Primitives: scan ═══
+
+-- prefix sums
+[1 2 3 4] 0 (plus) scan [0 1 3 6 10] eq assert
+
+-- prefix products
+[1 2 3 4] 1 (mul) scan [1 1 2 6 24] eq assert
+
+-- scan on empty
+[] 0 (plus) scan [0] eq assert
+
+-- ═══ New Primitives: zip-with ═══
+
+[1 2 3] [4 5 6] (plus) zip-with [5 7 9] eq assert
+[1 2 3] [10 20 30] (mul) zip-with [10 40 90] eq assert
+
+-- truncates to shorter
+[1 2] [10 20 30] (plus) zip-with [11 22] eq assert
+
+-- empty
+[] [1 2 3] (plus) zip-with [] eq assert
+
+-- ═══ New Primitives: windows ═══
+
+[1 2 3 4] 2 windows [[1 2] [2 3] [3 4]] eq assert
+[1 2 3 4 5] 3 windows [[1 2 3] [2 3 4] [3 4 5]] eq assert
+[1 2 3] 1 windows [[1] [2] [3]] eq assert
+[1 2 3] 3 windows [[1 2 3]] eq assert
+
+-- ═══ New Primitives: table ═══
+
+[1 2] [10 20] (plus) table [[11 21] [12 22]] eq assert
+[1 2 3] [1 2 3] (mul) table [[1 2 3] [2 4 6] [3 6 9]] eq assert
+
+-- ═══ New Primitives: select ═══
+
+[10 20 30 40 50] [0 2 4] select [10 30 50] eq assert
+[10 20 30] [2 1 0] select [30 20 10] eq assert
+[10 20 30] [] select [] eq assert
+
+-- ═══ New Primitives: where ═══
+
+[false true false true true] where [1 3 4] eq assert
+[0 1 0 2 0] where [1 3] eq assert
+[true true true] where [0 1 2] eq assert
+[] where [] eq assert
+
+-- ═══ New Primitives: rotate ═══
+
+[1 2 3 4] 1 rotate [2 3 4 1] eq assert
+[1 2 3 4] 2 rotate [3 4 1 2] eq assert
+[1 2 3 4] 0 rotate [1 2 3 4] eq assert
+[1 2 3 4] 4 rotate [1 2 3 4] eq assert
+[1 2 3 4] -1 rotate [4 1 2 3] eq assert
+[] 3 rotate [] eq assert
+
+-- ═══ New Primitives: unique ═══
+
+[3 1 2 1 3 2] unique [3 1 2] eq assert
+[1 1 1] unique [1] eq assert
+[] unique [] eq assert
+[1 2 3] unique [1 2 3] eq assert
+
+-- ═══ New Primitives: member ═══
+
+[1 2 3 4] 3 member assert free
+[1 2 3 4] 5 member not assert free
+[] 1 member not assert free
+
+-- ═══ New Primitives: index-of ═══
+
+[10 20 30] 20 index-of 1 eq assert free
+[10 20 30] 40 index-of -1 eq assert free
+[1 1 1] 1 index-of 0 eq assert free
+
+-- ═══ New Primitives: flatten ═══
+
+[[1 2] [3 4]] flatten [1 2 3 4] eq assert
+[[1] [2] [3]] flatten [1 2 3] eq assert
+[[] [1 2] []] flatten [1 2] eq assert
+[] flatten [] eq assert
+
+-- ═══ Control: repeat ═══
+
+5 3 (inc) repeat 8 eq assert
+2 4 (dup mul) repeat 65536 eq assert
+42 0 (inc) repeat 42 eq assert
+
+-- ═══ Math Helpers ═══
+
+-- sign
+5 sign 1 eq assert
+-3 sign -1 eq assert
+0 sign 0 eq assert
+
+-- clamp
+15 0 10 clamp 10 eq assert
+-5 0 10 clamp 0 eq assert
+5 0 10 clamp 5 eq assert
+
+-- gcd
+48 18 gcd 6 eq assert
+100 75 gcd 25 eq assert
+17 13 gcd 1 eq assert
+12 0 gcd 12 eq assert
+
+-- ═══ Composition Examples ═══
+
+-- sum of squares
+[1 2 3 4] (dup mul) each sum 30 eq assert
+
+-- sum of even numbers
+[1 2 3 4 5 6] (even?) filter sum 12 eq assert
+
+-- dot product
+[1 2 3] [4 5 6] (mul) zip-with sum 32 eq assert
+
+-- stencil (moving sum)
+[1 2 3 4 5] 2 (sum) stencil [3 5 7 9] eq assert
+
+-- unique sorted
+[3 1 2 1 3 2] unique sort [1 2 3] eq assert
+
+-- indices of elements > 3
+[1 5 2 7 3 9] (3 gt) each where [1 3 5] eq assert
+
+-- select with range (identity)
+[10 20 30] 3 range select [10 20 30] eq assert
+
+-- flatten table
+[1 2] [10 20] (plus) table flatten [11 21 12 22] eq assert
+
+-- gcd via fold
+[12 18 24] 0 (gcd) fold 6 eq assert
+
+-- ═══ Dict ═══
+
+-- dict-new + dict-set + dict-get
+dict-new 'x 42 dict-set 'y 99 dict-set 'd let
+d 'x dict-get swap free 42 eq assert
+d 'y dict-get swap free 99 eq assert
+d free
+
+-- dict-has
+dict-new 'x 1 dict-set 'd2 let
+d2 'x dict-has swap free assert
+d2 'z dict-has swap free not assert
+d2 free
+
+-- dict-count
+dict-new dict-count 0 eq assert free
+dict-new 'a 1 dict-set 'b 2 dict-set 'c 3 dict-set dict-count 3 eq assert free
+
+-- dict-set overwrites
+dict-new 'x 1 dict-set 'x 2 dict-set 'x dict-get 2 eq assert free
+
+-- dict-remove
+dict-new 'x 1 dict-set 'y 2 dict-set 'x dict-remove 1 eq assert
+dict-count 1 eq assert free
+
+-- dict-keys
+dict-new 'a 1 dict-set 'b 2 dict-set dict-keys len swap free 2 eq assert free
+
+-- int keys
+dict-new 0 100 dict-set 1 200 dict-set 2 300 dict-set 'd3 let
+d3 0 dict-get swap free 100 eq assert
+d3 1 dict-get swap free 200 eq assert
+d3 2 dict-get swap free 300 eq assert
+d3 free
+
+-- many entries (stress hash table resize)
+dict-new
+50 range ('i let i i 10 mul dict-set) for-each
+'d4 let
+d4 dict-count swap free 50 eq assert
+d4 0 dict-get swap free 0 eq assert
+d4 49 dict-get swap free 490 eq assert
+d4 25 dict-get swap free 250 eq assert
+d4 free
+
+-- ═══ Float Math Primitives ═══
+
+-- sqrt
+4.0 sqrt 2.0 eq assert
+9.0 sqrt 3.0 eq assert
+1.0 sqrt 1.0 eq assert
+0.0 sqrt 0.0 eq assert
+
+-- sin / cos
+0.0 sin 0.0 eq assert
+0.0 cos 1.0 eq assert
+
+-- floor
+3.7 floor 3.0 eq assert
+-2.3 floor -3.0 eq assert
+5.0 floor 5.0 eq assert
+
+-- ceil
+3.2 ceil 4.0 eq assert
+-2.7 ceil -2.0 eq assert
+5.0 ceil 5.0 eq assert
+
+-- round
+3.5 round 4.0 eq assert
+2.4 round 2.0 eq assert
+-1.5 round -2.0 eq assert
+
+-- atan2
+1.0 0.0 atan2 ftoi 1 eq assert
+0.0 1.0 atan2 ftoi 0 eq assert
+
+-- fmod
+5.5 2.0 fmod 1.5 eq assert
+10.0 3.0 fmod 1.0 eq assert
+
+-- ═══ Float Prelude ═══
+
+-- pi / tau
+pi ftoi 3 eq assert
+tau ftoi 6 eq assert
+
+-- fneg
+3.0 fneg -3.0 eq assert
+-2.5 fneg 2.5 eq assert
+0.0 fneg 0.0 eq assert
+
+-- fabs
+-5.0 fabs 5.0 eq assert
+3.0 fabs 3.0 eq assert
+0.0 fabs 0.0 eq assert
+
+-- lerp
+0.0 10.0 0.5 lerp 5.0 eq assert
+0.0 10.0 0.0 lerp 0.0 eq assert
+0.0 10.0 1.0 lerp 10.0 eq assert
+
+-- between?
+5 0 10 between? assert
+0 0 10 between? assert
+10 0 10 between? assert
+-1 0 10 between? not assert
+11 0 10 between? not assert
+
+-- ═══ Array Predicates ═══
+
+-- any?
+[1 2 3 4] (even?) any? assert
+[1 3 5] (even?) any? not assert
+[] (even?) any? not assert
+
+-- all?
+[2 4 6] (even?) all? assert
+[2 3 6] (even?) all? not assert
+[] (even?) all? assert
+
+-- count
+[1 2 3 4 5 6] (even?) count 3 eq assert
+[1 3 5] (even?) count 0 eq assert
+[] (even?) count 0 eq assert
+
+-- ═══ Array Combinators ═══
+
+-- zip
+[1 2 3] [4 5 6] zip [[1 4] [2 5] [3 6]] eq assert
+[] [] zip [] eq assert
+
+-- fix
+42 fix [42] eq assert
+[1 2] fix len swap free 1 eq assert
+
+-- match (record dispatch)
+'foo {'foo (1) 'bar (2)} (drop 0) match 1 eq assert
+'bar {'foo (1) 'bar (2)} (drop 0) match 2 eq assert
+'baz {'foo (1) 'bar (2)} (drop 0) match 0 eq assert
+2 'foo {'foo (3 plus) 'bar (10 plus)} (drop drop 0) match 5 eq assert
+
+-- bits
+5 bits [1 0 1] eq assert
+10 bits [1 0 1 0] eq assert
+0 bits [0] eq assert
+1 bits [1] eq assert
+
+-- ═══ Array Primitives: rise / fall ═══
+
+-- rise (argsort ascending)
+[30 10 20] rise [1 2 0] eq assert free
+[1 2 3] rise [0 1 2] eq assert free
+[] rise [] eq assert free
+
+-- fall (argsort descending)
+[30 10 20] fall [0 2 1] eq assert free
+[1 2 3] fall [2 1 0] eq assert free
+
+-- rise + select = sort
+[30 10 20] rise select [10 20 30] eq assert
+
+-- ═══ Array Primitives: classify ═══
+
+[1 2 3 1 2 1] classify [0 1 2 0 1 0] eq assert free
+[5 5 5] classify [0 0 0] eq assert free
+[1 2 3] classify [0 1 2] eq assert free
+[] classify [] eq assert free
+
+-- ═══ Array Primitives: occurrences ═══
+
+[1 2 3 1 2 1] occurrences [0 0 0 1 1 2] eq assert free
+[5 5 5] occurrences [0 1 2] eq assert free
+[1 2 3] occurrences [0 0 0] eq assert free
+[] occurrences [] eq assert free
+
+-- ═══ Array Primitives: replicate ═══
+
+[10 20 30] [1 0 2] replicate [10 30 30] eq assert
+[10 20 30] [0 0 0] replicate [] eq assert
+[10 20 30] [1 1 1] replicate [10 20 30] eq assert
+[] [] replicate [] eq assert
+
+-- ═══ Array Primitives: find ═══
+
+[1 2 3 4 2 3] [2 3] find [false true false false true false] eq assert free
+[1 2 3] [9] find [false false false] eq assert free
+[1 2 3] [] find [true true true] eq assert free
+
+-- ═══ Array Primitives: reshape ═══
+
+[1 2 3] 5 reshape [1 2 3 1 2] eq assert
+[1 2 3] 3 reshape [1 2 3] eq assert
+[1 2 3] 1 reshape [1] eq assert
+[1 2 3] 0 reshape [] eq assert
+
+-- ═══ Array Primitives: base ═══
+
+10 2 base [1 0 1 0] eq assert
+255 16 base [15 15] eq assert
+0 2 base [0] eq assert
+7 10 base [7] eq assert
+100 10 base [1 0 0] eq assert
+
+-- ═══ Array Primitives: transpose ═══
+
+[[1 2 3] [4 5 6]] transpose [[1 4] [2 5] [3 6]] eq assert
+[[1 2] [3 4] [5 6]] transpose [[1 3 5] [2 4 6]] eq assert
+[[1] [2] [3]] transpose [[1 2 3]] eq assert
+[] transpose [] eq assert
+
+-- ═══ Argument Combinators ═══
+
+-- self: x (f) → f(x,x)
+3 (mul) self 9 eq assert
+5 (plus) self 10 eq assert
+
+-- backward: x y (f) → f(y,x)
+3 10 (sub) backward 7 eq assert
+2 8 (sub) apply -6 eq assert
+2 8 (sub) backward 6 eq assert
+
+-- gap: x y (f) → f(y)
+99 5 (inc) gap 6 eq assert
+
+-- on: x (f) → x f(x)
+5 (inc) on 6 eq assert 5 eq assert
+
+-- bracket: x y (f) (g) → f(x) g(y)
+3 10 (inc) (dec) bracket 9 eq assert 4 eq assert
+
+-- ═══ Composition: New Ops ═══
+
+-- distance via sqrt
+3.0 4.0 (dup fmul) both fadd sqrt 5.0 eq assert
+
+-- angle via atan2
+1.0 1.0 atan2 pi 4.0 fdiv fsub fabs 0.001 flt assert
+
+-- argsort then select
+[30 10 50 20 40] rise select [10 20 30 40 50] eq assert
+
+-- classify + occurrences combo
+'hello [104 101 108 108 111] classify [0 1 2 2 3] eq assert free
+
+-- ═══ Math: pow / log / trig ═══
+
+-- pow
+2.0 10.0 pow 1024.0 eq assert
+3.0 2.0 pow 9.0 eq assert
+4.0 0.5 pow 2.0 eq assert
+
+-- log / exp round-trip
+1.0 exp log 1.0 fsub fabs 0.0001 flt assert
+2.718281828 log 1.0 fsub fabs 0.001 flt assert
+
+-- tan
+0.0 tan 0.0 eq assert
+
+-- asin / acos
+0.0 asin 0.0 eq assert
+1.0 acos 0.0 eq assert
+
+-- ═══ Float Comparisons ═══
+
+-- fgt
+5.0 3.0 fgt assert
+3.0 5.0 fgt not assert
+3.0 3.0 fgt not assert
+
+-- fge
+5.0 3.0 fge assert
+3.0 3.0 fge assert
+2.0 3.0 fge not assert
+
+-- fle
+3.0 5.0 fle assert
+3.0 3.0 fle assert
+5.0 3.0 fle not assert
+
+-- feq / fneq
+3.14 3.14 feq assert
+3.14 2.71 feq not assert
+3.14 2.71 fneq assert
+3.14 3.14 fneq not assert
+
+-- fmin / fmax
+3.0 7.0 fmin 3.0 eq assert
+3.0 7.0 fmax 7.0 eq assert
+-1.0 1.0 fmin -1.0 eq assert
+-1.0 1.0 fmax 1.0 eq assert
+
+-- ═══ Float Prelude ═══
+
+-- fclamp
+15.0 0.0 10.0 fclamp 10.0 eq assert
+-5.0 0.0 10.0 fclamp 0.0 eq assert
+5.0 0.0 10.0 fclamp 5.0 eq assert
+
+-- fbetween?
+5.0 0.0 10.0 fbetween? assert
+-1.0 0.0 10.0 fbetween? not assert
+11.0 0.0 10.0 fbetween? not assert
+
+-- fsign
+5.0 fsign 1.0 eq assert
+-3.0 fsign -1.0 eq assert
+0.0 fsign 0.0 eq assert
+
+-- degrees / radians
+pi degrees 180.0 fsub fabs 0.001 flt assert
+180.0 radians pi fsub fabs 0.001 flt assert
+
+-- hypot
+3.0 4.0 hypot 5.0 eq assert
+5.0 12.0 hypot 13.0 eq assert
+
+-- ═══ Higher-Order Array Ops ═══
+
+-- group
+[0 1 0 1 0] [10 20 30 40 50] (sum) group [90 60] eq assert
+[0 1 2 0] [1 2 3 4] (len swap free) group [2 1 1] eq assert
+
+-- partition
+[1 1 0 2 2] [10 20 30 40 50] (sum) partition [30 90] eq assert
+[1 1 1] [5 6 7] (sum) partition [18] eq assert
+
+-- reduce
+[1 2 3 4 5] (plus) reduce 15 eq assert
+[3 1 4 1 5] (max) reduce 5 eq assert
+[7] (plus) reduce 7 eq assert
+
+-- ═══ Composition: New Ops ═══
+
+-- pow for integer exponent via itof
+2 itof 8 itof pow ftoi 256 eq assert
+
+-- sort by custom key (argsort pattern)
+[30 10 50 20 40] fall select [50 40 30 20 10] eq assert
+
+-- reduce vs fold equivalence
+[1 2 3 4 5] (plus) reduce [1 2 3 4 5] 0 (plus) fold eq assert
+
+-- ═══ Quotation Push/Pop ═══
+
+-- pop: extract last literal
+(1 2 3) pop 3 eq assert apply 2 eq assert 1 eq assert
+
+-- pop: multiple pops
+(1 2 3) pop 3 eq assert pop 2 eq assert pop 1 eq assert apply
+
+-- pop: extract nested quotation
+((1 2) (3 4)) pop apply 4 eq assert 3 eq assert pop apply 2 eq assert 1 eq assert apply
+
+-- pop: from quote-created (captured) quotation
+42 quote pop 42 eq assert apply
+
+-- push: add value to quotation
+(1 2) 3 push apply 3 eq assert 2 eq assert 1 eq assert
+
+-- push: chained pushes (tests compose fix)
+() 1 push 2 push 3 push apply 3 eq assert 2 eq assert 1 eq assert
+
+-- pop after push roundtrip
+(1) 2 push pop 2 eq assert pop 1 eq assert apply
+
+-- quotation as tuple: extract pair
+((10 plus) (20 plus)) pop swap pop swap apply
+-- stack: (20 plus) (10 plus) — top is first-pushed
+5 swap apply 15 eq assert
+5 swap apply 25 eq assert
+
+-- ═══ Cond ═══
+
+-- cond: basic match on second predicate
+2 [((1 eq) (drop 'one)) ((2 eq) (drop 'two)) ((3 eq) (drop 'three))] (drop 'other) cond 'two eq assert
+
+-- cond: falls through to default
+99 [((1 eq) (drop 'one))] (drop 'other) cond 'other eq assert
+
+-- cond: first match wins
+1 [((1 eq) (drop 'one)) ((1 eq) (drop 'also-one))] (drop 'default) cond 'one eq assert
+
+-- cond: empty clauses
+42 [] (drop 'default) cond 'default eq assert
+
+-- cond: scrutinee passed to body
+10 [((5 lt) (2 mul)) ((20 lt) (3 mul))] (drop 0) cond 30 eq assert

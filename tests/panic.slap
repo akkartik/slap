@@ -1,0 +1,46 @@
+-- division by zero
+10 0 divmod drop drop
+-- array index out of bounds
+[1 2 3] 5 nth drop free
+-- negative array index
+[1 2 3] -1 nth drop free
+-- uncons on empty array
+[] uncons free free
+-- get on missing record key
+{'x 1} 'y get drop free
+-- remove on missing record key
+{'x 1} 'z remove drop free
+-- assertion failure
+false assert
+-- set-nth out of bounds
+[1 2 3] 10 99 set-nth free
+-- array-remove out of bounds
+[1 2] 5 array-remove drop free
+-- array-insert out of bounds
+[1 2] -1 99 array-insert free
+-- float division by zero
+1.0 0.0 fdiv drop
+-- fmod division by zero
+1.0 0.0 fmod drop
+-- base radix < 2
+10 1 base free
+-- reshape empty to non-zero
+[] 5 reshape free
+-- reshape negative length
+[1] -1 reshape free
+-- replicate mismatched lengths
+[1 2] [1] replicate free
+-- replicate negative count
+[1] [-1] replicate free
+-- windows size zero
+[1 2 3] 0 windows free
+-- transpose non-uniform inner lengths
+[[1 2] [3]] transpose free
+-- log of non-positive
+0.0 log drop
+-- reduce on empty array
+[] (plus) reduce drop
+-- group mismatched lengths
+[0 1] [1 2 3] (len swap free) group free
+-- partition mismatched lengths
+[1 1] [1 2 3] (len swap free) partition free

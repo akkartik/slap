@@ -1,0 +1,50 @@
+-- dup on linear Array
+[1 2 3] dup free free
+-- dup on linear Record
+{'x 1} dup free free
+-- dup on linear Quotation
+(1 plus) dup free free
+-- drop on linear Array (use free instead)
+[1 2 3] drop
+-- drop on linear Record (use free instead)
+{'x 1} drop
+-- drop on linear Quotation (use free instead)
+(1 plus) drop
+-- borrow escape: identity quot leaks linear ref
+[1 2 3] box () borrow free free
+-- if branches produce different types
+true () (drop 1) (drop 'hello) if drop
+-- wrong argument type for plus
+true 1 plus drop
+-- undefined word
+1 frobnicate
+-- cons element type doesn't match array
+true [1 2 3] cons free
+-- set with wrong type for box contents
+42 box true set free
+-- double free on box
+42 box 'b let b free b free
+-- use after free on box
+42 box 'b let b free b clone nip drop
+-- float where int expected
+1.0 2 plus drop
+-- int where float expected
+1 2.0 fadd drop
+-- fmul with mixed types
+1.0 2 fmul drop
+-- sort on linear array elements (records not sortable)
+[{'x 1}] sort free
+-- filter on linear elements (dup requires Copy)
+[{'x 1}] (true) filter free
+-- sqrt on Int (expects Float)
+4 sqrt drop
+-- rise on linear elements
+[[1] [2]] rise free free
+-- replicate on linear elements
+[[1] [2]] [1 1] replicate free
+-- classify on linear elements
+[[1] [2]] classify free free
+-- pow on Int (expects Float)
+2 3 pow drop
+-- fgt on Int (expects Float)
+1 2 fgt drop

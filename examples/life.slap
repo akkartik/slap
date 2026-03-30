@@ -1,0 +1,86 @@
+-- Conway's Game of Life — Interactive
+-- DENO_SDL2_PATH=/opt/homebrew/lib SLAP_W=400 SLAP_H=400 SLAP_SCALE=2 deno run --allow-all examples/console.js examples/life.slap
+--
+-- Click/drag to draw cells. C to clear. R for random.
+
+screen-w 'SW let  screen-h 'SH let
+'CS 4 def
+SW CS divmod drop 'GW let
+SH CS divmod drop 'GH let
+GW GH mul 'SIZE let
+
+-- State
+'set! ('val let 'y let 'x let y GW mul x plus val set-nth) def
+
+-- Random initial grid (~25% density)
+SIZE range (drop 4 random 0 eq (1) (0) choose) each box 'grid let
+
+-- Grid helpers
+'gcell ('y let 'x let
+  x GW plus GW divmod nip 'wx let
+  y GH plus GH divmod nip 'wy let
+  grid (wy GW mul wx plus nth swap free) borrow nip
+) def
+
+'gset ('val let 'y let 'x let
+  grid (y GW mul x plus val set-nth) modify
+) def
+
+-- Neighbor count
+'nbrs ('y let 'x let
+  x 1 sub y 1 sub gcell  x y 1 sub gcell plus  x 1 plus y 1 sub gcell plus
+  x 1 sub y gcell plus  x 1 plus y gcell plus
+  x 1 sub y 1 plus gcell plus  x y 1 plus gcell plus  x 1 plus y 1 plus gcell plus
+) def
+
+-- Step
+'step (
+  SIZE range (
+    'i let  i GW divmod 'x let 'y let
+    x y nbrs 'n let
+    grid (i nth swap free) borrow nip 'alive let
+    alive 1 eq (n 2 eq n 3 eq or) (n 3 eq) choose
+    (1) (0) choose
+  ) each
+  grid swap set drop
+) def
+
+-- Render
+'render (
+  0 clear
+  grid ('g let
+    GH range ('y let
+      GW range ('x let
+        g y GW mul x plus nth swap free
+        1 eq (x CS mul  y CS mul  CS CS 11 rect) () choose
+      ) for-each
+    ) for-each
+    g free 0
+  ) borrow drop drop
+  present
+) def
+
+-- Input
+'handle-input (
+  read-key 'key let
+  key 0 lt not (
+    key 113 eq key 27 eq or (halt) () choose
+    key 99 eq (SIZE range (drop 0) each grid swap set drop) () choose
+    key 114 eq (SIZE range (drop 4 random 0 eq (1) (0) choose) each grid swap set drop) () choose
+    handle-input
+  ) () choose
+) def
+
+-- Main loop
+(
+  render
+  handle-input
+  -- hover cursor
+  mouse-x CS divmod drop 0 max GW 1 sub min 'mx let
+  mouse-y CS divmod drop 0 max GH 1 sub min 'my let
+  mx CS mul my CS mul CS CS 8 rect
+  -- click to place (pauses sim while drawing)
+  mouse-down? (mx my 1 gset) (step) choose
+  30 sleep
+  true
+) loop
