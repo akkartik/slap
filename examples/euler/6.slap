@@ -1,0 +1,5 @@
+-- Project Euler 6: Difference between sum-of-squares and square-of-sum for 1..100
+1 101 range dup
+(sqr) map sum swap
+sum sqr swap sub
+25164150 eq assert

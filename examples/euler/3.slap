@@ -1,0 +1,11 @@
+-- Project Euler 3: Largest prime factor of 600851475143
+600851475143 2
+(
+  over over mod 0 eq
+  ('d let d div d)
+  (1 plus)
+  if
+  over over sqr swap le
+) loop
+drop
+6857 eq assert

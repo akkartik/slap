@@ -4,23 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Slap
 
-A minimal concatenative language with linear types, row polymorphism, and a fantasy console runtime. Single-file C implementation (~2200 lines in `slap.c`).
+A minimal concatenative language with linear types and row polymorphism. Single-file C implementation (`slap.c`).
 
 ## Build & Test
 
 ```bash
-# Build
-gcc -std=c99 -O2 $(pkg-config --cflags --libs sdl2 2>/dev/null || echo "-lSDL2") -lm slap.c -o slap
+# Build (no SDL needed for headless)
+gcc -std=c99 -O2 -lm slap.c -o slap
 
 # Run all tests (builds first)
 ./run-tests.sh
 
 # Run a single program
-./slap program.slap          # with SDL window
-./slap program.slap --test   # headless (no SDL)
-
-# Screen size override
-SLAP_W=400 SLAP_H=400 SLAP_SCALE=2 ./slap program.slap
+./slap program.slap --test   # headless
 ```
 
 Tests have three categories:
@@ -30,35 +26,104 @@ Tests have three categories:
 
 ## Architecture (slap.c)
 
-The implementation flows as: **Parse → Type Check → Evaluate**.
+The implementation flows as: **Parse -> Type Check -> Evaluate**.
 
-**Values**: Tagged union (`Val`) with types: INT, BOOL, FLOAT, SYM, ARR, REC, QUOT, BOX. Copy types (Int, Bool, Float, Symbol) can be freely duplicated. Linear types (Array, Record, Quotation, Box) must be consumed exactly once — enforced by the type checker.
+### Values
 
-**AST**: Flat array of `Node` structs (not a tree). Body offsets index into the same array. Node types: N_PUSH, N_WORD, N_ARRAY, N_QUOTE, N_RECORD.
+Tagged union (`Val`) with 11 types split into **Stackable** (copyable) and **Linear**:
 
-**Memory**: Pool-based allocation with freelists for arrays, records, quotations, heap slots, and scopes. Symbol interning via linear search.
+**Stackable** (freely duplicated with `dup`):
+- Int, Float, Symbol — scalars (`true`/`false` are sugar for `1`/`0`; conditionals use zero/nonzero)
+- Tuple — code/data `(1 2 iplus)`, refcounted
+- Record — symbol-keyed `{'a 1 'b 2}`, refcounted
+- Slice — immutable array `[1 2 3]` or string `"hello"`, refcounted
+- Dice — key-value lookup, created via `dice` from slice of tuples, refcounted
 
-**Type Checker** (~950 lines): Hindley-Milner-style inference with row polymorphism for both stack effects and records. Tracks Copy/Linear constraints. Runs before evaluation; errors halt before any code executes.
+**Linear** (must be consumed exactly once via `free`, or mutated in place):
+- Box — wraps single value, heap-allocated
+- List — mutable list, created from slice via `list`
+- Dict — mutable hash table, created from dice via `dict`
+- String — mutable byte array, created from slice via `str`
 
-**Evaluator**: Stack machine. Word lookup auto-executes quotations (like Forth). 89 primitives + prelude stdlib. Prelude is a C string literal parsed before user code.
+### AST
 
-**Primitives** (92 total): Stack: dup, drop, swap, nip, over, rot. Logic: not, and, or, choose. Control: dip, apply, if, loop, cond, match. Heap: box, borrow, clone, free, set. Data: quote, compose, cons, uncons, pop, def, let. Array: len, nth, set-nth, cat, slice, array-insert, array-remove, range, for-each, sort, scan, zip-with, windows, table, select, where, rotate, unique, member, index-of, flatten, rise, fall, classify, occurrences, replicate, find, reshape, base, transpose, group, partition, reduce. Records: get, put, remove. Math: plus, sub, mul, divmod, eq, lt, random. Float: fadd, fsub, fmul, fdiv, flt, fgt, fge, fle, feq, fneq, fmin, fmax, itof, ftoi, sqrt, sin, cos, tan, asin, acos, floor, ceil, round, atan2, fmod, pow, log, exp. Combinator: both. I/O: clear, rect, draw-char, present, read-key, halt, sleep, mouse-x, mouse-y, mouse-down?, screen-w, screen-h, assert, print-stack, print.
+Flat array of `Node` structs. Node types: N_PUSH, N_WORD, N_SLICE, N_TUPLE, N_RECORD. Bracket nodes (tuple/slice/record) store body offset+length into the same array.
 
-**Prelude** (65 words): inc, dec, neg, abs, empty?, max, min, modify, bf, update, fold, reverse, each, sum, keep, bi, div, mod, gt, ge, le, neq, zero?, pos?, neg?, even?, odd?, filter, first, last, take, drop-n, couple, product, sort-desc, stencil, repeat, sign, clamp, gcd, pi, tau, fneg, fabs, any?, all?, count, zip, bits, fix, push, self, backward, gap, on, bracket, lerp, between?, fclamp, fbetween?, fsign, degrees, radians, hypot.
+### Memory
 
-**Fantasy Console**: SDL2 framebuffer (256x200 default, 3x scaled). Embedded 6x8 monospace font. PICO-8 16-color palette. Event-driven via `on` word.
+Pool-based allocation with freelists for slices, tuples, records, lists, dicts, strings, heap slots, and scopes. Copyable compound types (Tuple, Slice, Record) use reference counting. Symbol interning via linear search.
 
-## Key Semantics (diverge from readme.md)
+### Type Checker
 
-The readme.md is an aspirational spec. Actual implementation differs:
+Hindley-Milner-style inference with row polymorphism for records and stack effects. Tracks Copy/Linear constraints. `get`/`set` are row-aware (field lookup on closed rows catches missing fields and type mismatches). `match`/`cond` unify branch effects. `clone`/`free`/`lend` require linear types. No escape constraints needed — `lend` and `cond` only expose stackable values to borrowing contexts. Runs before evaluation; errors halt before any code executes.
 
-- Box handles are **Linear** (not Copy as readme says)
-- `let` is a distinct primitive from `def`: `let` pushes at lookup, `def` auto-executes quotations at lookup
-- `if` is scrutinee-aware: predicate borrows scrutinee, both branches receive the original
-- `cond` is multi-way `if`: `value [((pred) (body)) ...] (default) cond` — uses quotation-tuples as clauses
-- `match` dispatches on symbol key in record: `key {k1 (body1) k2 (body2)} (default) match`
-- `pop` extracts last element from quotation without executing: `(a b c) pop → (a b) c`
-- `push` (prelude) appends value to quotation: `(a b) c push → (a b c)`
-- `compose` preserves the full compose chain (mutates in place)
-- Closures capture creation-site scope
+### Evaluator
+
+Stack machine. Word lookup: `def` bindings auto-execute tuples, `let` bindings push values. Prelude is a C string literal parsed before user code.
+
+### Primitives (~62)
+
+**Meta**: `def` (`'name val def`), `let` (`val 'name let`), `recur` (`'name recur (body) def` — enables self-recursion in body)
+
+**Stack**: `dup`, `drop` (stackable only), `swap`, `dip`
+
+**Control**: `apply`, `if` (zero/nonzero), `loop`, `while` (`(pred) (body) while`), `cond`, `match`
+
+**Logic**: `not` (0→1, nonzero→0), `and`, `or` — all operate on integers
+
+**Compare**: `eq`, `lt` — return Int 0/1
+
+**Polymorphic Math**: `plus`, `sub`, `mul`, `div`, `mod` — dispatch on Int/Float (mod is Int-only)
+
+**Int Math**: `iplus`, `isub`, `imul`, `idiv`, `imod` (concrete-typed aliases)
+
+**Float Math**: `fplus`, `fsub`, `fmul`, `fdiv`
+
+**Conversion**: `itof`, `ftoi`
+
+**Tuples**: `compose`, `cons`, `car` (car is lossy for word nodes — returns symbol)
+
+**Records**: `rec`, `get`, `set`
+
+**Slices**: `len`, `fold`, `reduce` (fold without init), `at` (with default), `put`, `reshape`, `transpose`, `shape`, `classify`, `pick`, `group`, `partition`
+
+**Dices**: `dice`, `grab` (with default), `ifsert`
+
+**Memory**: `lend` (borrow snapshot), `clone` (deep copy), `free`
+
+**Box**: `box`
+
+**Lists**: `list`, `list-concat`, `list-assign`
+
+**Dicts**: `dict`, `dict-insert`, `dict-remove`
+
+**Strings**: `str`, `str-concat`, `str-assign`
+
+**IO**: `print`, `print-stack`, `assert`, `halt`, `random` (`max random` — int in [0,max))
+
+**Console** (requires `-DSLAP_SDL`): `on` (`model 'event (handler) on` — register event handler), `show` (`model (render) show` — start SDL loop), `clear` (`color clear` — fill canvas), `pixel` (`x y color pixel` — set pixel), `millis` (push SDL ticks)
+
+### Prelude (~35 words)
+
+peek, inc, dec, neg, abs, over, nip, rot, keep, bi, iszero, ispos, isneg, iseven, isodd, max, min, neq, gt, ge, le, reverse, flatten, zip, where, dedup, member, table, sum, product, isany, isall, count, first, last, repeat, sort-desc, max-of, min-of, clamp, isbetween, sign, lerp, fclamp, fneg, fabs, frecip, fsign, div, mod, sqr, cube, couple, rows, find
+
+### Key Semantics
+
+- No Bool type — `true`/`false` are `1`/`0`. Conditionals (`if`, `loop`, `while`, `cond`, `filter`) branch on zero/nonzero. Comparisons (`eq`, `lt`) return Int 0/1. This enables APL-style boolean mask arithmetic: `(3 mod 0 eq) map sum`
+- `def` is `'name val def` — auto-executes tuples on lookup
+- `let` is `val 'name let` — pushes value on lookup (no auto-exec); value must be copyable
+- `recur` is `'name recur (body) def` — marks name for self-recursion before the tuple literal; the TC pre-binds the name with a polymorphic tuple type so the body can call itself
+- `lend` borrows a stackable snapshot from a linear value: Box yields inner value, List yields slice, Dict yields dice, String yields slice of char codes
+- `cond` predicates receive borrowed snapshot of scrutinee; matching body consumes the original
+- `cons`/`car` operate on tuple AST nodes — `car` is lossy for word nodes (returns symbol), `compose` is the lossless way to combine code
+- String literals `"hello"` create slices of int char codes
+- Closures capture creation-site scope via snapshot
 - Runtime errors are panics with Elm-style messages, no recovery
+
+### Fantasy Console (`-DSLAP_SDL`)
+
+640×480 canvas, 2-bit grayscale (0-3). C-side framebuffer — drawing via `pixel`/`clear` primitives, not a first-class value.
+
+- `on` registers event handlers: `model 'event-name (handler) on → model`. Handlers: `event-data model → model`. Events: `'keydown` (Int keycode), `'tick` (Int frame count).
+- `show` starts the render loop: `model (render) show`. Render receives readonly model snapshot, draws via `pixel`/`clear`. Never returns.
+- `--test` flag: `show` runs one tick + one render, then exits (headless).

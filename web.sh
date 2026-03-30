@@ -10,7 +10,7 @@ emcc -std=c99 -O2 \
   -s EXPORTED_RUNTIME_METHODS='["callMain","ENV"]' \
   -s INVOKE_RUN=0 \
   --preload-file examples/life.slap@/life.slap \
-  --shell-file web/index.template.html \
+  --shell-file template.html \
   slap.c -o web/index.html
 
 echo "Built: web/index.html, web/index.js, web/index.wasm, web/index.data"

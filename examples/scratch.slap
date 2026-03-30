@@ -1,63 +1,117 @@
--- Scratch — Simple Notepad
--- Type text. Left/Right arrows move cursor. Backspace deletes. Enter for newline. Esc quits.
+-- Scratch Pad — Tiny Text Editor
+-- Build: gcc -std=c99 -O2 -DSLAP_SDL $(sdl2-config --cflags --libs) -lm slap.c -o slap
+-- Run:   ./slap examples/scratch.slap
+--
+-- Type text. Arrow keys move cursor. Backspace deletes. Enter for newline.
 
-'FW 6 def  'FH 8 def
-'MX 2 def  'MY 2 def
+'FW 4 def  'FH 6 def
+'COLS 640 FW div def
+'ROWS 480 FH div def
 
--- Editor state: flat buffer of char codes + cursor index
-{ 'buf [] 'cur 0 } box 'ed let
-'eg ('k let ed (k get swap free) borrow nip) def
-'es! ('k let 'v let ed (v k put) modify) def
+-- powers of 2 for bit extraction
+[1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192 16384] 'POW2 let
 
--- Insert character at cursor
-'insert-ch ('ch let
-  'buf eg 'cur eg ch array-insert 'buf es!
-  'cur eg inc 'cur es!
+-- 3x5 bitmap font, ASCII 32-126 (lowercase = uppercase)
+-- each glyph packed as 15-bit int: row0*4096 + row1*512 + row2*64 + row3*8 + row4
+-- row bits: MSB=left pixel, LSB=right pixel (3 bits per row)
+[0 9346 23040 24445 9906 21157 10987 9216
+ 10530 8778 21973 1488 20 448 2 4772
+ 31599 11415 29671 29647 23497 31183 31215 29330
+ 31727 31695 1040 1044 5393 3640 17492 29378
+ 15331 11245 27566 14627 27502 31207 31204 14699
+ 23533 29847 29290 23469 18727 24429 24557 11114
+ 31716 11089 27565 14478 29842 23402 23378 23421
+ 23213 23186 29351 13459 18569 25750 10752 7
+ 17408 11245 27566 14627 27502 31207 31204 14699
+ 23533 29847 29290 23469 18727 24429 24557 11114
+ 31716 11089 27565 14478 29842 23402 23378 23421
+ 23213 23186 29351 9490 9362 9298 1920] 'FONT let
+
+-- draw one glyph at pixel coords (sx, sy) in given color
+'draw-glyph ('color let 'sy let 'sx let 'ch let
+  ch 32 sub 'idx let
+  idx 0 lt idx 94 gt or (0) (FONT idx 0 at) if 'glyph let
+  glyph 0 eq not
+  (0 5 range ('row let
+    0 3 range ('col let
+      glyph  POW2 14 row 3 mul sub col sub 0 at  div 2 mod
+      0 eq not (sx col plus  sy row plus  color pixel) () if
+    ) each
+  ) each) () if
 ) def
 
--- Backspace: delete char before cursor
-'do-bs (
-  0 'cur eg lt (
-    'cur eg dec dup 'cur es!
-    'buf eg swap array-remove drop 'buf es!
-  ) () choose
+-- insert char at cursor
+'insert-at ('ch let 'model let
+  model 'buf get 'b let  model 'cur get 'c let
+  b c take [ch] cat b c drop-n cat 'nb let
+  model nb 'buf set  c 1 plus 'cur set
 ) def
 
-'move-left  (0 'cur eg lt  ('cur eg dec 'cur es!) () choose) def
-'move-right ('cur eg 'buf eg len swap free lt ('cur eg inc 'cur es!) () choose) def
+-- backspace
+'do-bs ('model let
+  model 'cur get 'c let
+  c 0 gt
+  (model 'buf get 'b let
+   b c 1 sub take  b c drop-n  cat 'nb let
+   model nb 'buf set  c 1 sub 'cur set)
+  (model) if
+) def
 
--- Render buffer and cursor
-'render (
-  1 clear
-  'cur eg 'c let
-  'buf eg 'b let
-  b len swap free 'n let
-  MX MY
-  n range ('i let 'y let 'x let
-    i c eq (x y FW FH 12 rect) () choose
-    b i nth swap free 'ch let
+-- cursor movement
+'move-left ('model let
+  model 'cur get 0 gt
+  (model  model 'cur get 1 sub  'cur set) (model) if
+) def
+
+'move-right ('model let
+  model 'cur get  model 'buf get len  lt
+  (model  model 'cur get 1 plus  'cur set) (model) if
+) def
+
+-- SDL keycodes
+'KLEFT 1073741904 def  'KRIGHT 1073741903 def
+
+-- initial model: empty buffer, cursor at 0
+{'buf [] 'cur 0}
+
+-- keydown
+'keydown ('model let 'key let
+  key
+  [((dup 32 ge swap 126 le and) (model swap insert-at))
+   ((8 eq)       (drop model do-bs))
+   ((13 eq)      (drop model 10 insert-at))
+   ((KLEFT eq)   (drop model move-left))
+   ((KRIGHT eq)  (drop model move-right))]
+  (drop model) cond
+) on
+
+-- render
+('model let
+  0 clear
+  model 'buf get 'buf let
+  model 'cur get 'cur let
+  0 buf len range
+  0
+  ('pos let 'i let
+    pos COLS mod 'tx let  pos COLS div 'ty let
+    tx FW mul 'px let  ty FH mul 'py let
+    -- draw cursor block
+    i cur eq (0 FH 1 sub range ('dy let 0 FW 1 sub range ('dx let
+      px dx plus  py dy plus  1 pixel
+    ) each) each) () if
+    -- draw character or advance line
+    i buf swap 0 at 'ch let
     ch 10 eq
-      (MX y FH plus)
-      (ch x y 6 draw-char  x FW plus y)
-    choose
-  ) for-each
-  'y let 'x let
-  c n eq (x y FW FH 12 rect) () choose
-  present
-) def
-
--- Drain key buffer, dispatch each key
-'handle-input (
-  read-key 'key let
-  key 0 lt not (
-    key 27 eq (halt) () choose
-    key 32 lt not key 127 lt and (key insert-ch) () choose
-    key 8 eq (do-bs) () choose
-    key 13 eq (10 insert-ch) () choose
-    key 1001 eq (move-left) () choose
-    key 1000 eq (move-right) () choose
-    handle-input
-  ) () choose
-) def
-
-(render handle-input 16 sleep true) loop
+      (pos COLS div 1 plus COLS mul)
+      (ch px py  i cur eq (0) (3) if  draw-glyph
+       pos 1 plus) if
+  ) fold
+  drop
+  -- cursor at end of buffer
+  buf len cur eq
+  (buf len 'pos let
+   pos COLS mod FW mul 'px let  pos COLS div FH mul 'py let
+   0 FH 1 sub range ('dy let 0 FW 1 sub range ('dx let
+     px dx plus  py dy plus  1 pixel
+   ) each) each) () if
+) show

@@ -1,0 +1,23 @@
+-- Project Euler 20: Sum of digits of 100!
+-- Base-10^9 representation
+1000000000 'B let
+
+'digit-sum (
+  0 swap
+  (dup 0 gt) (dup 10 imod rot iplus swap 10 idiv) while
+  drop
+) def
+
+0 20 range (drop 0) map 0 1 put
+2 101 range ('n let
+  0 0
+  (dup 20 lt) (
+    'i let 'c let
+    dup i -1 at n imul c iplus
+    dup B imod 'd let B idiv 'c2 let
+    i d put c2 i inc
+  ) while
+  drop drop
+) each
+(digit-sum) map sum
+648 eq assert

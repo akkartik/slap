@@ -1,0 +1,20 @@
+-- Project Euler 10: Sum of all primes below 2,000,000
+2000000 'n let
+
+-- Sieve of Eratosthenes
+0 n range (2 ge) map list
+
+2
+(dup sqr n lt) (
+  'p let
+  p 0 list-at 0 neq
+  (
+    p sqr (dup n lt) ('m let m 0 list-assign m p plus) while drop
+  ) () if
+  p inc
+) while
+drop
+
+-- Sum: index * flag for each entry
+('s let 0 n range (dup s swap 0 at mul) map sum) lend swap free
+142913828922 eq assert

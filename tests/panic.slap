@@ -1,46 +1,42 @@
 -- division by zero
-10 0 divmod drop drop
--- array index out of bounds
-[1 2 3] 5 nth drop free
--- negative array index
-[1 2 3] -1 nth drop free
--- uncons on empty array
-[] uncons free free
--- get on missing record key
-{'x 1} 'y get drop free
--- remove on missing record key
-{'x 1} 'z remove drop free
+10 0 idiv
+10 0 imod
+10.0 0.0 fdiv
+-- slice put out of bounds
+[1 2 3] 5 99 put
+[1 2 3] -1 99 put
+-- list-assign out of bounds
+[1 2 3] list 5 99 list-assign free
+-- str-assign out of bounds
+"abc" str 5 122 str-assign free
+-- record get missing key
+(('a 1)) rec 'z get
 -- assertion failure
 false assert
--- set-nth out of bounds
-[1 2 3] 10 99 set-nth free
--- array-remove out of bounds
-[1 2] 5 array-remove drop free
--- array-insert out of bounds
-[1 2] -1 99 array-insert free
--- float division by zero
-1.0 0.0 fdiv drop
--- fmod division by zero
-1.0 0.0 fmod drop
--- base radix < 2
-10 1 base free
--- reshape empty to non-zero
-[] 5 reshape free
--- reshape negative length
-[1] -1 reshape free
--- replicate mismatched lengths
-[1 2] [1] replicate free
--- replicate negative count
-[1] [-1] replicate free
--- windows size zero
-[1 2 3] 0 windows free
--- transpose non-uniform inner lengths
-[[1 2] [3]] transpose free
--- log of non-positive
-0.0 log drop
--- reduce on empty array
-[] (plus) reduce drop
--- group mismatched lengths
-[0 1] [1 2 3] (len swap free) group free
--- partition mismatched lengths
-[1 1] [1 2 3] (len swap free) partition free
+-- stack underflow
+drop
+-- car empty tuple
+() car
+-- lt on Symbol (not supported)
+'a 'b lt
+-- (map/filter/each on non-slice caught by type checker, see type-err.slap)
+-- dice element not a tuple
+[1 2 3] dice
+-- rec element not a tuple
+(1 2 3) rec
+-- select out of bounds
+[1 2 3] [5] select
+-- keep-mask length mismatch
+[1 2 3] [true false] keep-mask
+-- windows size must be positive
+[1 2 3] 0 windows
+-- reshape: not divisible
+[1 2 3 4 5] 2 reshape
+-- reshape: cols must be positive
+[1 2 3] 0 reshape
+-- transpose: ragged array
+[[1 2] [3 4 5]] transpose
+-- group: length mismatch
+[1 2 3] [0 1] group
+-- partition: length mismatch
+[1 2 3] [1 1] partition

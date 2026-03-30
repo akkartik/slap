@@ -1,0 +1,33 @@
+-- Project Euler 14: Longest Collatz sequence starting under 1,000,000
+
+1000000 list-zero
+
+1 1 2
+(
+  'n let 'best-len let 'best-n let
+
+  0 n
+  (
+    dup 2 imod
+    over over
+    2 imul inc imul
+    swap iplus 2 idiv
+    swap 2 imod inc
+    rot iplus swap
+    dup n lt iszero
+  ) loop
+
+  rot swap 0 list-at
+  rot iplus
+
+  n swap dup (list-assign) dip
+
+  dup best-len gt
+  (n swap n inc)
+  (drop best-n best-len n inc) if
+
+  dup 1000000 lt
+) loop
+drop drop
+swap free
+837799 eq assert

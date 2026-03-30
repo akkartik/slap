@@ -1,136 +1,110 @@
--- Snake — Fantasy Console
--- DENO_SDL2_PATH=/opt/homebrew/lib deno run --allow-all examples/console.js examples/snake.slap
+-- Snake
+-- Build: gcc -std=c99 -O2 -DSLAP_SDL $(sdl2-config --cflags --libs) -lm slap.c -o slap
+-- Run:   ./slap examples/snake.slap
+--
+-- Arrow keys to move. Grows when eating food.
 
-'CW 8 def  'CH 8 def  -- cell size
-'GW 20 def 'GH 20 def -- grid (20*8=160, 20*8=160, centered in 256x200)
-'OX 48 def 'OY 20 def -- offset to center grid
+'CW 32 def  'CH 32 def
+'GW 20 def  'GH 15 def
+'CELLS GW GH mul def
 
--- State
-{ 'dir 1000  'score 0  'dead false  'food 42  'started false
-  'sx [210 211 212]  -- snake at (10,10)-(12,10)
-} box 'st let
+-- direction: 0=right 1=down 2=left 3=up
+[1 0 -1 0] 'DX let
+[0 1 0 -1] 'DY let
 
-'sg ('k let st (k get swap free) borrow nip) def
-'ss! ('k let 'v let st (v k put) modify) def
-'px (GW divmod nip) def
-'py (GW divmod drop) def
+-- SDL arrow keycodes
+'KRIGHT 1073741903 def  'KLEFT 1073741904 def
+'KDOWN 1073741905 def  'KUP 1073741906 def
 
--- Reset to initial state
-'reset (
-  [210 211 212] 'sx ss!
-  1000 'dir ss!
-  0 'score ss!
-  false 'dead ss!
-  false 'started ss!
-  place-food
+'key>dir (
+  [((KRIGHT eq) (drop 0))
+   ((KDOWN eq)  (drop 1))
+   ((KLEFT eq)  (drop 2))
+   ((KUP eq)    (drop 3))]
+  (drop -1) cond
 ) def
 
--- Movement: return -1 if wall hit, else new position
--- Compute dx,dy from direction, then bounds-check
-'dir-dx ('d let d 1000 eq (1) (d 1001 eq (-1) (0) choose) choose) def
-'dir-dy ('d let d 1002 eq (1) (d 1003 eq (-1) (0) choose) choose) def
-
-'move-head ('dir let 'head let
-  head px dir dir-dx plus 'nx let
-  head py dir dir-dy plus 'ny let
-  nx 0 lt nx GW lt not or ny 0 lt or ny GH lt not or
-    (-1)
-    (ny GW mul nx plus)
-  choose
+-- find a random empty cell
+'gen-food recur ('sx let
+  CELLS random 'pos let
+  sx (pos eq) isany (sx gen-food) (pos) if
 ) def
 
-'in-snake? ('pos let
-  'sx sg false (pos eq (drop true) () choose) fold
+-- starting snake
+'start-sx [GH 2 div GW mul GW 2 div plus
+           GH 2 div GW mul GW 2 div 1 sub plus
+           GH 2 div GW mul GW 2 div 2 sub plus] def
+
+-- fill a CW x CH cell
+'draw-cell ('c let 'gy let 'gx let
+  0 CH range ('dy let 0 CW range ('dx let
+    gx CW mul dx plus  gy CH mul dy plus  c pixel
+  ) each) each
 ) def
 
-'place-food (
-  GW GH mul random 'pos let
-  pos in-snake? (place-food) (pos 'food ss!) choose
+-- move snake one step (compute all values, set unconditionally)
+'snake-step ('model let
+  model 'sx get 'sx let
+  model 'dir get 'd let
+  sx 0 0 at 'head let
+  head GW mod  DX d 0 at  plus 'nx let
+  head GW div  DY d 0 at  plus 'ny let
+  ny GW mul nx plus 'nh let
+  nx 0 lt nx GW ge or ny 0 lt or ny GH ge or 'hit-wall let
+  hit-wall not (sx (nh eq) isany) (0) if 'hit-self let
+  hit-wall hit-self or 'died let
+  model 'food get nh eq 'ate let
+  -- new body: grow if ate, else move; keep old if died
+  died
+    (sx)
+    (ate ([nh] sx cat) ([nh]  sx  sx len 1 sub take  cat) if)
+  if 'nsx let
+  -- new food: regenerate if ate and didn't die
+  died not ate and (nsx gen-food) (model 'food get) if 'nfood let
+  model nsx 'sx set nfood 'food set  died (1) (model 'dead get) if  'dead set
 ) def
 
--- Append to end
-'snoc ('v let reverse v swap cons reverse) def
+-- initial model
+start-sx 'isx let
+{'sx isx  'dir 0  'food isx gen-food  'dead 0}
 
-'tick (
-  'dead sg not (
-    'sx sg 'snk let
-    'dir sg 'dir let
-    snk len swap free 1 sub snk swap nth swap free 'head let
-    snk free
-    head dir move-head 'nh let
-    -- die on wall hit or self hit
-    nh 0 lt nh in-snake? or
-      (true 'dead ss!)
-      (
-        'sx sg nh snoc 'snk let
-        'food sg nh eq
-          ('score sg inc 'score ss! place-food snk)
-          (snk uncons swap free)
-        choose
-        'sx ss!
-      )
-    choose
-  ) () choose
-) def
+-- tick: move every 8 frames; auto-reset 2s after death
+'tick ('model let 'frame let
+  model 'dead get 0 eq 'alive let
+  alive frame 8 mod 0 eq and (model snake-step) (model) if
+  alive not frame 60 mod 0 eq and 'do-reset let
+  do-reset (start-sx) (dup 'sx get) if 'nsx let
+  do-reset (0) (dup 'dir get) if 'ndir let
+  do-reset (0) (dup 'dead get) if 'ndead let
+  do-reset (nsx gen-food) (dup 'food get) if 'nfood let
+  nsx 'sx set ndir 'dir set ndead 'dead set nfood 'food set
+) on
 
--- Drawing
-'draw-cell ('ci let 'y let 'x let
-  x CW mul OX plus  y CH mul OY plus  CW CH ci rect
-) def
+-- keydown: set direction (prevent 180 reversal)
+'keydown ('model let 'key let
+  key key>dir 'nd let
+  nd -1 eq not
+  (model 'dir get 'od let
+   nd od sub abs 2 eq not (nd) (od) if)
+  (model 'dir get) if 'ndir let
+  model ndir 'dir set
+) on
 
-'draw (
+-- render
+('model let
   0 clear
   -- border
-  OX 1 sub  OY 1 sub  GW CW mul 2 plus  GH CH mul 2 plus  5 rect
-  OX OY GW CW mul GH CH mul 0 rect
+  0 GH range ('gy let
+    0 GW range ('gx let
+      gx 0 eq gx GW 1 sub eq or gy 0 eq or gy GH 1 sub eq or
+      (gx gy 1 draw-cell) () if
+    ) each
+  ) each
   -- food
-  'food sg 'f let f px f py 8 draw-cell
+  model 'food get 'f let
+  f GW mod  f GW div  2 draw-cell
   -- snake
-  'sx sg (
-    'pos let pos px pos py 11 draw-cell
-  ) for-each
-  -- score bar
-  OX OY GH CH mul plus 10 plus GW CW mul 8 7 rect
-  present
-) def
-
--- Input: drain all buffered keys, apply last direction
-'input (
-  read-key 'key let
-  key 0 lt not (
-    key 113 eq key 27 eq or (halt) () choose
-    key 1000 eq key 1001 eq or key 1002 eq or key 1003 eq or (
-      key 'dir ss!
-      'started sg not (true 'started ss!) () choose
-    ) () choose
-    input
-  ) () choose
-) def
-
--- Wait for first keypress
-'wait-start (
-  draw
-  read-key 'key let
-  key 0 lt not (
-    key 113 eq key 27 eq or (halt) () choose
-    key 1000 eq key 1001 eq or key 1002 eq or key 1003 eq or
-      (key 'dir ss! true 'started ss!) () choose
-  ) () choose
-  'started sg not (50 sleep wait-start) () choose
-) def
-
--- Main
-place-food
-(
-  'started sg not (
-    wait-start
-  ) () choose
-  draw
-  input
-  'dead sg not (
-    tick 120 sleep true
-  ) (
-    -- Dead: show for a moment, then reset
-    500 sleep reset true
-  ) choose
-) loop
+  model 'sx get ('pos let
+    pos GW mod  pos GW div  3 draw-cell
+  ) each
+) show

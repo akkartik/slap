@@ -1,0 +1,69 @@
+-- Langton's Ant
+-- Build: gcc -std=c99 -O2 -DSLAP_SDL $(sdl2-config --cflags --libs) -lm slap.c -o slap
+-- Run:   ./slap examples/ant.slap
+--
+-- Space: pause/unpause. +/- speed. C: clear. R: reset.
+
+'CS 4 def
+'W 640 CS div def  'H 480 CS div def  'N W H mul def
+
+-- direction: 0=right 1=down 2=left 3=up
+[1 0 -1 0] 'DX let
+[0 1 0 -1] 'DY let
+
+'ant-step ('model let
+  model 'ax get 'x let
+  model 'ay get 'y let
+  model 'dir get 'd let
+  model 'grid get 'g let
+  y W mul x plus 'i let
+  g i 0 at 'cell let
+  cell 0 eq (d 1 plus 4 mod) (d 3 plus 4 mod) if 'nd let
+  g i  cell 0 eq (1) (0) if  put 'ng let
+  x DX nd 0 at plus W plus W mod 'nx let
+  y DY nd 0 at plus H plus H mod 'ny let
+  model ng 'grid set nd 'dir set nx 'ax set ny 'ay set
+) def
+
+-- initial model
+{'grid 0 N range (drop 0) map
+ 'ax W 2 div  'ay H 2 div  'dir 0  'spd 10}
+
+-- tick: run spd steps per frame
+'tick ('model let drop
+  0 model 'spd get range  model  (drop ant-step) fold
+) on
+
+-- keydown: compute all new values, then set unconditionally
+'keydown ('model let 'key let
+  model 'spd get 'ospd let
+  key
+  [((32 eq) (drop  ospd 0 eq (10) (0) if))
+   ((61 eq) (drop  ospd 5 plus 50 min))
+   ((45 eq) (drop  ospd 5 sub 1 max))]
+  (drop ospd) cond 'nspd let
+  key 99 eq key 114 eq or
+    (0 N range (drop 0) map) (model 'grid get) if 'ngrid let
+  key 114 eq
+    (W 2 div  H 2 div  0) (model 'ax get  model 'ay get  model 'dir get) if
+    'ndir let 'nay let 'nax let
+  model ngrid 'grid set nspd 'spd set nax 'ax set nay 'ay set ndir 'dir set
+) on
+
+-- render
+('model let
+  0 clear
+  model 'grid get 'g let
+  0 N range ('i let
+    i g swap 0 at (
+      i W mod CS mul 'px let  i W div CS mul 'py let
+      0 CS range ('dy let 0 CS range ('dx let
+        px dx plus  py dy plus  3 pixel
+      ) each) each
+    ) () if
+  ) each
+  model 'ax get CS mul 'apx let  model 'ay get CS mul 'apy let
+  0 CS range ('dy let 0 CS range ('dx let
+    apx dx plus  apy dy plus  2 pixel
+  ) each) each
+) show

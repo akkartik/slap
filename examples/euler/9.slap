@@ -1,0 +1,12 @@
+-- Project Euler 9: Pythagorean triplet where a+b+c=1000, find a*b*c
+0
+1 333 range
+('a let
+  a inc 500 range
+  ('b let
+    1000 a sub b sub 'c let
+    a sqr b sqr plus c sqr eq
+    (a b mul c mul max) () if
+  ) each
+) each
+31875000 eq assert

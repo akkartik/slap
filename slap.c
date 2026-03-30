@@ -1,4 +1,4 @@
-// slap — a minimal concatenative language with linear types and a fantasy console
+// slap — a minimal concatenative language with linear types
 // C99 + SDL2. Single file.
 
 #include <stdio.h>
@@ -7,220 +7,57 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <string.h>
-#include <time.h>
 #include <math.h>
+#include <ctype.h>
 #include <unistd.h>
+#include <time.h>
+
+#ifdef SLAP_SDL
 #include <SDL.h>
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
 #endif
 
 // ── Limits ──────────────────────────────────────────────────────────────────
 
-#define STACK_MAX   8192
-#define MAX_SYMS    4096
-#define MAX_ARRS    65536
-#define MAX_RECS    16384
-#define MAX_QUOTS   131072
-#define MAX_HEAP    262144
-#define MAX_SCOPES  524288
-#define MAX_NODES   131072
+#define STACK_MAX    8192
+#define MAX_SYMS     4096
+#define MAX_NODES    131072
+#define MAX_SLICES   65536
+#define MAX_TUPLES   131072
+#define MAX_RECS     16384
+#define MAX_LISTS    16384
+#define MAX_DICTS    4096
+#define MAX_STRS     4096
+#define MAX_HEAP     65536
+#define MAX_SCOPES   262144
 #define SYM_NAME_MAX 128
+#define NONE         UINT32_MAX
 
-// ── PICO-8 Palette ─────────────────────────────────────────────────────────
+// ── Forward declarations ────────────────────────────────────────────────────
 
-static const uint32_t palette[16] = {
-    0xFF000000, 0xFF1D2B53, 0xFF7E2553, 0xFF008751,
-    0xFFAB5236, 0xFF5F574F, 0xFFC2C3C7, 0xFFFFF1E8,
-    0xFFFF004D, 0xFFFFA300, 0xFFFFEC27, 0xFF00E436,
-    0xFF29ADFF, 0xFF83769C, 0xFFFF77A8, 0xFFFFCCAA,
-};
-
-// ── 6×8 Bitmap Font (ASCII 32–126) ─────────────────────────────────────────
-
-static uint8_t font_data[95][8];
-static const char *font_hex =
-    "0000000000000000202020202000200050505000000000005050f850f85050002078a07028f0"
-    "2000c0c810204098180040a0a040a89068002020400000000000102040404020100040201010"
-    "102040000020a870a8200000002020f8202000000000000000202040000000f8000000000000"
-    "0000000020000008102040800000708898a8c88870002060202020207000708808102040f800"
-    "f81020100888700010305090f8101000f880f00808887000304080f088887000f80810204040"
-    "4000708888708888700070888878081060000000200000200000000020000020204008102040"
-    "201008000000f800f8000000804020102040800070880810200020007088b8a8b88070007088"
-    "88f888888800f08888f08888f0007088808080887000e09088888890e000f88080f08080f800"
-    "f88080f080808000708880b888887000888888f8888888007020202020207000381010101090"
-    "60008890a0c0a0908800808080808080f80088d8a8a8888888008888c8a89888880070888888"
-    "88887000f08888f08080800070888888a8906800f08888f0a09088007088807008887000f820"
-    "20202020200088888888888870008888888888502000888888a8a8d888008888502050888800"
-    "8888502020202000f80810204080f80070404040404070000080402010080000701010101010"
-    "70002050880000000000000000000000f800402010000000000000007008788878008080f088"
-    "8888f0000000708080807000080878888888780000007088f8807000304840e0404040000000"
-    "7888780870008080b0c88888880020006020202070001000301010906000808090a0c0a09000"
-    "60202020202070000000d0a8a8a8a8000000b0c88888880000007088888870000000f088f080"
-    "800000007888780808000000b0c880808000000078807008f0004040e0404048300000008888"
-    "88986800000088888850200000008888a8a85000000088502050880000008888780870000000"
-    "f8102040f80018202040202018002020202020202000c02020102020c000000040a810000000";
-static void init_font(void) {
-    for (int i = 0; i < 95 * 8; i++) {
-        int hi = font_hex[i*2], lo = font_hex[i*2+1];
-        ((uint8_t*)font_data)[i] = (uint8_t)(((hi>='a'?hi-'a'+10:hi-'0')<<4) | (lo>='a'?lo-'a'+10:lo-'0'));
-    }
-}
-
-// ── Types ───────────────────────────────────────────────────────────────────
-
-typedef enum { T_INT, T_BOOL, T_FLOAT, T_SYM, T_ARR, T_REC, T_QUOT, T_BOX, T_DICT } ValType;
-
-typedef struct {
-    ValType type;
-    bool borrowed; // if true, val_free is a no-op
-    union {
-        int64_t  ival;
-        bool     bval;
-        double   fval;
-        uint32_t sym;
-        uint32_t arr;
-        uint32_t rec;
-        uint32_t quot;
-        uint32_t box;
-        uint32_t dict;
-    };
-} Val;
-
-#define VAL_INT(v)  ((Val){.type = T_INT,  .ival = (v)})
-#define VAL_BOOL(v) ((Val){.type = T_BOOL, .bval = (v)})
-#define VAL_FLOAT(v) ((Val){.type = T_FLOAT, .fval = (v)})
-#define VAL_ARR(a)  ((Val){.type = T_ARR,  .arr  = (a)})
-#define VAL_REC(r)  ((Val){.type = T_REC,  .rec  = (r)})
-#define VAL_QUOT(q) ((Val){.type = T_QUOT, .quot = (q)})
-#define VAL_SYM(s)  ((Val){.type = T_SYM,  .sym  = (s)})
-#define VAL_BOX(b)  ((Val){.type = T_BOX,  .box  = (b)})
-#define VAL_DICT(d) ((Val){.type = T_DICT, .dict = (d)})
-
-typedef enum { N_PUSH, N_WORD, N_ARRAY, N_QUOTE, N_RECORD } NodeType;
-
-typedef struct {
-    NodeType type;
-    int line, col;
-    union {
-        Val      literal;
-        uint32_t sym;
-        struct { int start; int len; } body;
-    };
-} Node;
-
-typedef struct {
-    Val *data;
-    int  len, cap;
-} Arr;
-
-typedef struct {
-    Val *fields; // [sym, val, sym, val, ...]
-    int  count;  // number of pairs
-    int  cap;
-} Rec;
-
-typedef struct {
-    int      body_start, body_len;
-    uint32_t env;
-    bool     owns_env;
-    bool     has_capture;
-    Val      capture;
-    uint32_t compose_with; // UINT32_MAX = none
-} Quot;
-
-typedef struct {
-    Val  val;
-    bool alive;
-} HeapSlot;
-
-#define MAX_DICTS   4096
-#define DICT_INIT_CAP 16
-typedef struct {
-    Val  *keys;
-    Val  *vals;
-    bool *used;
-    int   count, cap;
-} DictObj;
-
-typedef struct { uint32_t key; Val val; } ScopeEntry;
-
-typedef struct {
-    uint32_t parent; // UINT32_MAX = none
-    ScopeEntry *entries;
-    int count, cap;
-} Scope;
-
-// ── Globals ─────────────────────────────────────────────────────────────────
-
-static Val   stack[STACK_MAX];
-static int   sp;
-
-static char  sym_names[MAX_SYMS][SYM_NAME_MAX];
-static int   sym_count;
-
-static Arr   arrs[MAX_ARRS];
-static int   arr_count, arr_free_count, arr_freelist[MAX_ARRS];
-static Rec   recs[MAX_RECS];
-static int   rec_count, rec_free_count, rec_freelist[MAX_RECS];
-static Quot  quots[MAX_QUOTS];
-static int   quot_count, quot_free_count, quot_freelist[MAX_QUOTS];
-static HeapSlot heap[MAX_HEAP];
-static int   heap_count;
-static DictObj dicts[MAX_DICTS];
-static int   dict_count, dict_free_count, dict_freelist[MAX_DICTS];
-static Scope scopes[MAX_SCOPES];
-static int   scope_count, scope_free_count, scope_freelist[MAX_SCOPES];
-
-static Node  nodes[MAX_NODES];
-static int   node_count;
-
-static bool  test_mode;
-static int   screen_w = 256, screen_h = 200, screen_scale = 3;
-static uint32_t *pixels;
-static SDL_Window   *window;
-static SDL_Renderer *renderer;
-static SDL_Texture  *texture;
-
-// key buffer
-#define KEY_BUF_SIZE 256
-static int key_buf[KEY_BUF_SIZE];
-static int key_head, key_tail;
-
-static const char *current_word = "";
-static int current_line = 0;
-static int current_col = 0;
-static int prelude_lines = 0;
-static const char *user_src = NULL;
-
-static bool use_color;
-#define C_RESET  (use_color ? "\033[0m"  : "")
-#define C_RED    (use_color ? "\033[31m" : "")
-#define C_BOLD   (use_color ? "\033[1m"  : "")
-#define C_DIM    (use_color ? "\033[2m"  : "")
-#define C_CYAN   (use_color ? "\033[36m" : "")
-static uint32_t g_scope;        // current eval scope
-static uint32_t global_scope;   // never freed — quotations can reference directly
-
-// forward decls
+typedef struct Val Val;
 static void eval(int start, int len, uint32_t scope);
+static void exec_tuple(Val t);
 static Val val_clone(Val v);
 static void val_free(Val v);
-static bool val_eq(Val a, Val b);
-static void exec_quot(Val q);
+static void val_print(Val v, FILE *f);
+static Val linear_snapshot(Val v);
+static uint32_t scope_new(uint32_t parent);
+static void scope_release(uint32_t sc);
+static uint32_t scope_snapshot(uint32_t sc);
 
 // ── Panic ───────────────────────────────────────────────────────────────────
 
-static const char *type_name(ValType t) {
-    switch (t) {
-    case T_INT: return "Int"; case T_BOOL: return "Bool"; case T_FLOAT: return "Float"; case T_SYM: return "Symbol";
-    case T_ARR: return "Array"; case T_REC: return "Record"; case T_QUOT: return "Quotation";
-    case T_BOX: return "Box"; case T_DICT: return "Dict";
-    }
-    return "?";
-}
+static int panic_line = 0, panic_col = 0;
+static const char *current_word = "";
+static const char *user_src = NULL;
+static bool use_color;
+#define C_RESET (use_color ? "\033[0m"  : "")
+#define C_RED   (use_color ? "\033[31m" : "")
+#define C_BOLD  (use_color ? "\033[1m"  : "")
+#define C_DIM   (use_color ? "\033[2m"  : "")
+#define C_CYAN  (use_color ? "\033[36m" : "")
 
-static void val_print(Val v, FILE *f);
+static void (*panic_stack_printer)(void);
 
 static void get_src_line(int line, const char **start, int *len) {
     *start = NULL; *len = 0;
@@ -240,17 +77,16 @@ __attribute__((noreturn, format(printf, 1, 2)))
 static void slap_panic(const char *fmt, ...) {
     fprintf(stderr, "\n%s── SLAP PANIC ──────────────────────────────────────%s\n\n",
         C_RED, C_RESET);
-    int line = current_line > prelude_lines ? current_line - prelude_lines : current_line;
     const char *src_line; int src_len;
-    get_src_line(line, &src_line, &src_len);
-    if (src_line && src_len > 0 && line > 0) {
-        int gw = snprintf(NULL, 0, "%d", line);
+    get_src_line(panic_line, &src_line, &src_len);
+    if (src_line && src_len > 0 && panic_line > 0) {
+        int gw = snprintf(NULL, 0, "%d", panic_line);
         fprintf(stderr, "  %s%d%s %s│%s %.*s\n",
-            C_CYAN, line, C_RESET, C_DIM, C_RESET, src_len, src_line);
-        if (current_col > 0 && current_word[0]) {
+            C_CYAN, panic_line, C_RESET, C_DIM, C_RESET, src_len, src_line);
+        if (panic_col > 0 && current_word[0]) {
             int span = (int)strlen(current_word);
             fprintf(stderr, "  %*s %s│%s ", gw, "", C_DIM, C_RESET);
-            for (int c = 1; c < current_col; c++) fputc(' ', stderr);
+            for (int c = 1; c < panic_col; c++) fputc(' ', stderr);
             fprintf(stderr, "%s", C_RED);
             for (int c = 0; c < span; c++) fputc('^', stderr);
             fprintf(stderr, "%s\n", C_RESET);
@@ -263,6 +99,504 @@ static void slap_panic(const char *fmt, ...) {
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     fprintf(stderr, "  %s%s%s\n", C_BOLD, msg, C_RESET);
+    if (panic_stack_printer) panic_stack_printer();
+    fprintf(stderr, "\n");
+    exit(1);
+}
+
+// ── Symbols ─────────────────────────────────────────────────────────────────
+
+static char sym_names[MAX_SYMS][SYM_NAME_MAX];
+static int sym_count;
+
+static uint32_t sym_intern(const char *name) {
+    for (int i = 0; i < sym_count; i++)
+        if (strcmp(sym_names[i], name) == 0) return (uint32_t)i;
+    if (sym_count >= MAX_SYMS) slap_panic("symbol table full");
+    strncpy(sym_names[sym_count], name, SYM_NAME_MAX - 1);
+    sym_names[sym_count][SYM_NAME_MAX - 1] = '\0';
+    return (uint32_t)sym_count++;
+}
+
+// ── Value types ─────────────────────────────────────────────────────────────
+
+typedef enum {
+    T_INT, T_FLOAT, T_SYM,                    // scalar (copyable)
+    T_TUPLE, T_REC, T_SLICE, T_DICE,         // compound copyable
+    T_BOX, T_LIST, T_DICT, T_STR             // linear
+} ValType;
+
+struct Val {
+    ValType type;
+    union {
+        int64_t ival;
+        double fval;
+        uint32_t sym;
+        uint32_t tuple;
+        uint32_t rec;
+        uint32_t slice; // also used by T_DICE
+        uint32_t box;
+        uint32_t list;
+        uint32_t dict;
+        uint32_t str;
+    };
+};
+
+#define VAL_INT(v)   ((Val){.type = T_INT,   .ival  = (v)})
+#define VAL_FLOAT(v) ((Val){.type = T_FLOAT, .fval  = (v)})
+#define VAL_SYM(v)   ((Val){.type = T_SYM,   .sym   = (v)})
+#define VAL_TUPLE(v) ((Val){.type = T_TUPLE, .tuple = (v)})
+#define VAL_REC(v)   ((Val){.type = T_REC,   .rec   = (v)})
+#define VAL_SLICE(v) ((Val){.type = T_SLICE, .slice = (v)})
+#define VAL_DICE(v)  ((Val){.type = T_DICE,  .slice = (v)})
+#define VAL_BOX(v)   ((Val){.type = T_BOX,   .box   = (v)})
+#define VAL_LIST(v)  ((Val){.type = T_LIST,  .list  = (v)})
+#define VAL_DICT(v)  ((Val){.type = T_DICT,  .dict  = (v)})
+#define VAL_STR(v)   ((Val){.type = T_STR,   .str   = (v)})
+
+static const char *type_name(ValType t) {
+    switch (t) {
+        case T_INT: return "Int";
+        case T_FLOAT: return "Float"; case T_SYM: return "Symbol";
+        case T_TUPLE: return "Tuple"; case T_REC: return "Record";
+        case T_SLICE: return "Slice"; case T_DICE: return "Dice";
+        case T_BOX: return "Box"; case T_LIST: return "List";
+        case T_DICT: return "Dict"; case T_STR: return "String";
+    }
+    return "?";
+}
+
+static bool val_is_linear(Val v) {
+    return v.type >= T_BOX;
+}
+
+// ── Pool allocation ────────────────────────────────────────────────────────
+
+#define POOL_ALLOC(idx, count, flist, fcnt, max, label) \
+    do { if ((fcnt) > 0) (idx) = (uint32_t)(flist)[--(fcnt)]; \
+    else { if ((count) >= (max)) slap_panic(label " pool full"); \
+    (idx) = (uint32_t)(count)++; } } while(0)
+
+// ── Pool: Slices (shared by T_SLICE and T_DICE) ────────────────────────────
+
+typedef struct { Val *data; int len; int rc; } SliceObj;
+static SliceObj slices[MAX_SLICES];
+static int slice_count = 1; // 0 unused
+static int slice_freelist[MAX_SLICES], slice_free_count;
+
+static uint32_t slice_new(Val *data, int len) {
+    uint32_t idx;
+    POOL_ALLOC(idx, slice_count, slice_freelist, slice_free_count, MAX_SLICES, "slice");
+    slices[idx].len = len;
+    slices[idx].rc = 1;
+    slices[idx].data = NULL;
+    if (len > 0) {
+        slices[idx].data = malloc((size_t)len * sizeof(Val));
+        if (data) memcpy(slices[idx].data, data, (size_t)len * sizeof(Val));
+    }
+    return idx;
+}
+
+static uint32_t slice_clone_range(SliceObj *sl, int start, int len) {
+    Val *data = len > 0 ? malloc((size_t)len * sizeof(Val)) : NULL;
+    for (int i = 0; i < len; i++) data[i] = val_clone(sl->data[start + i]);
+    uint32_t s = slice_new(data, len);
+    free(data);
+    return s;
+}
+
+// ── Pool: Tuples ────────────────────────────────────────────────────────────
+
+typedef struct {
+    int body_start, body_len;
+    uint32_t env;
+    bool owns_env;
+    bool needs_scope;
+    uint32_t compose_with;
+    int rc;
+} TupleObj;
+static TupleObj tuples[MAX_TUPLES];
+static int tuple_count = 1;
+static int tuple_freelist[MAX_TUPLES], tuple_free_count;
+
+static uint32_t sym_def_id, sym_let_id, sym_recur_id;
+static bool tuple_body_needs_scope(int start, int len); // defined after Node
+
+static uint32_t tuple_new(int start, int len, uint32_t env, bool owns) {
+    uint32_t idx;
+    POOL_ALLOC(idx, tuple_count, tuple_freelist, tuple_free_count, MAX_TUPLES, "tuple");
+    bool ns = (sym_def_id == 0) ? true : tuple_body_needs_scope(start, len);
+    tuples[idx] = (TupleObj){start, len, env, owns, ns, NONE, 1};
+    return idx;
+}
+
+// ── Pool: Records ───────────────────────────────────────────────────────────
+
+typedef struct { uint32_t *keys; Val *vals; int count, cap, rc; } RecObj;
+static RecObj recs[MAX_RECS];
+static int rec_count = 1;
+static int rec_freelist[MAX_RECS], rec_free_count;
+
+static uint32_t rec_new(void) {
+    uint32_t idx;
+    POOL_ALLOC(idx, rec_count, rec_freelist, rec_free_count, MAX_RECS, "record");
+    recs[idx] = (RecObj){NULL, NULL, 0, 0, 1};
+    return idx;
+}
+
+static void rec_set(uint32_t r, uint32_t key, Val val) {
+    RecObj *rc = &recs[r];
+    for (int i = 0; i < rc->count; i++) {
+        if (rc->keys[i] == key) { val_free(rc->vals[i]); rc->vals[i] = val; return; }
+    }
+    if (rc->count >= rc->cap) {
+        rc->cap = rc->cap ? rc->cap * 2 : 4;
+        rc->keys = realloc(rc->keys, (size_t)rc->cap * sizeof(uint32_t));
+        rc->vals = realloc(rc->vals, (size_t)rc->cap * sizeof(Val));
+    }
+    rc->keys[rc->count] = key;
+    rc->vals[rc->count] = val;
+    rc->count++;
+}
+
+static bool rec_get(uint32_t r, uint32_t key, Val *out) {
+    RecObj *rc = &recs[r];
+    for (int i = 0; i < rc->count; i++) {
+        if (rc->keys[i] == key) { *out = rc->vals[i]; return true; }
+    }
+    return false;
+}
+
+// ── Pool: Lists (mutable) ──────────────────────────────────────────────────
+
+typedef struct { Val *data; int len, cap; } ListObj;
+static ListObj lists[MAX_LISTS];
+static int list_count = 1;
+static int list_freelist[MAX_LISTS], list_free_count;
+
+static uint32_t list_new(Val *data, int len) {
+    uint32_t idx;
+    POOL_ALLOC(idx, list_count, list_freelist, list_free_count, MAX_LISTS, "list");
+    int cap = len > 8 ? len : 8;
+    lists[idx].data = malloc((size_t)cap * sizeof(Val));
+    lists[idx].len = len;
+    lists[idx].cap = cap;
+    if (data && len > 0) memcpy(lists[idx].data, data, (size_t)len * sizeof(Val));
+    return idx;
+}
+
+// ── Pool: Dicts (hash table, mutable) ──────────────────────────────────────
+
+#define DICT_INIT_CAP 16
+
+typedef struct { Val *keys; Val *vals; bool *used; int count, cap; } DictObj;
+static DictObj dicts[MAX_DICTS];
+static int dict_count = 1;
+static int dict_freelist[MAX_DICTS], dict_free_count;
+
+static uint32_t val_hash(Val v) {
+    switch (v.type) {
+        case T_INT:   { uint64_t x = (uint64_t)v.ival; return (uint32_t)(x ^ (x >> 32)); }
+        case T_SYM:   return v.sym * 2654435761u;
+        case T_FLOAT: { uint64_t x; memcpy(&x, &v.fval, 8); return (uint32_t)(x ^ (x >> 32)); }
+        case T_SLICE: case T_DICE: {
+            SliceObj *sl = &slices[v.slice];
+            uint32_t h = 2166136261u;
+            for (int i = 0; i < sl->len; i++) { h ^= val_hash(sl->data[i]); h *= 16777619u; }
+            return h;
+        }
+        default: return 0;
+    }
+}
+
+static bool val_eq(Val a, Val b) {
+    if (a.type != b.type) return false;
+    switch (a.type) {
+        case T_INT:   return a.ival == b.ival;
+        case T_FLOAT: return a.fval == b.fval;
+        case T_SYM:   return a.sym == b.sym;
+        case T_SLICE: case T_DICE: {
+            if (a.slice == b.slice) return true;
+            SliceObj *sa = &slices[a.slice], *sb = &slices[b.slice];
+            if (sa->len != sb->len) return false;
+            for (int i = 0; i < sa->len; i++)
+                if (!val_eq(sa->data[i], sb->data[i])) return false;
+            return true;
+        }
+        case T_REC: {
+            if (a.rec == b.rec) return true;
+            RecObj *ra = &recs[a.rec], *rb = &recs[b.rec];
+            if (ra->count != rb->count) return false;
+            for (int i = 0; i < ra->count; i++) {
+                Val bv;
+                if (!rec_get(b.rec, ra->keys[i], &bv)) return false;
+                if (!val_eq(ra->vals[i], bv)) return false;
+            }
+            return true;
+        }
+        default: return false;
+    }
+}
+
+static uint32_t dict_new(void) {
+    uint32_t idx;
+    POOL_ALLOC(idx, dict_count, dict_freelist, dict_free_count, MAX_DICTS, "dict");
+    dicts[idx].cap = DICT_INIT_CAP;
+    dicts[idx].count = 0;
+    dicts[idx].keys = malloc(DICT_INIT_CAP * sizeof(Val));
+    dicts[idx].vals = malloc(DICT_INIT_CAP * sizeof(Val));
+    dicts[idx].used = calloc(DICT_INIT_CAP, sizeof(bool));
+    return idx;
+}
+
+static void dict_resize(uint32_t di) {
+    DictObj *d = &dicts[di];
+    int old_cap = d->cap;
+    Val *ok = d->keys; Val *ov = d->vals; bool *ou = d->used;
+    d->cap *= 2;
+    d->keys = malloc((size_t)d->cap * sizeof(Val));
+    d->vals = malloc((size_t)d->cap * sizeof(Val));
+    d->used = calloc((size_t)d->cap, sizeof(bool));
+    d->count = 0;
+    for (int i = 0; i < old_cap; i++) {
+        if (ou[i]) {
+            uint32_t h = val_hash(ok[i]) & (uint32_t)(d->cap - 1);
+            while (d->used[h]) h = (h + 1) & (uint32_t)(d->cap - 1);
+            d->keys[h] = ok[i]; d->vals[h] = ov[i]; d->used[h] = true; d->count++;
+        }
+    }
+    free(ok); free(ov); free(ou);
+}
+
+static void dict_set(uint32_t di, Val key, Val val) {
+    DictObj *d = &dicts[di];
+    if (d->count * 2 >= d->cap) dict_resize(di);
+    d = &dicts[di]; // refresh after resize
+    uint32_t h = val_hash(key) & (uint32_t)(d->cap - 1);
+    while (d->used[h]) {
+        if (val_eq(d->keys[h], key)) {
+            val_free(d->keys[h]); val_free(d->vals[h]);
+            d->keys[h] = key; d->vals[h] = val; return;
+        }
+        h = (h + 1) & (uint32_t)(d->cap - 1);
+    }
+    d->keys[h] = key; d->vals[h] = val; d->used[h] = true; d->count++;
+}
+
+static bool dict_lookup(uint32_t di, Val key, Val *out) {
+    DictObj *d = &dicts[di];
+    uint32_t h = val_hash(key) & (uint32_t)(d->cap - 1);
+    for (int i = 0; i < d->cap; i++) {
+        if (!d->used[h]) return false;
+        if (val_eq(d->keys[h], key)) { *out = d->vals[h]; return true; }
+        h = (h + 1) & (uint32_t)(d->cap - 1);
+    }
+    return false;
+}
+
+static bool dict_remove(uint32_t di, Val key) {
+    DictObj *d = &dicts[di];
+    uint32_t h = val_hash(key) & (uint32_t)(d->cap - 1);
+    for (int i = 0; i < d->cap; i++) {
+        if (!d->used[h]) return false;
+        if (val_eq(d->keys[h], key)) {
+            val_free(d->keys[h]); val_free(d->vals[h]);
+            d->used[h] = false; d->count--;
+            // rehash following entries
+            uint32_t j = (h + 1) & (uint32_t)(d->cap - 1);
+            while (d->used[j]) {
+                Val rk = d->keys[j], rv = d->vals[j];
+                d->used[j] = false; d->count--;
+                dict_set(di, rk, rv);
+                j = (j + 1) & (uint32_t)(d->cap - 1);
+            }
+            return true;
+        }
+        h = (h + 1) & (uint32_t)(d->cap - 1);
+    }
+    return false;
+}
+
+// ── Pool: Strings (mutable byte array) ─────────────────────────────────────
+
+typedef struct { uint8_t *data; int len, cap; } StrObj;
+static StrObj strs[MAX_STRS];
+static int str_count = 1;
+static int str_freelist[MAX_STRS], str_free_count;
+
+static uint32_t str_new(const uint8_t *data, int len) {
+    uint32_t idx;
+    POOL_ALLOC(idx, str_count, str_freelist, str_free_count, MAX_STRS, "string");
+    int cap = len > 16 ? len : 16;
+    strs[idx].data = malloc((size_t)cap);
+    strs[idx].len = len;
+    strs[idx].cap = cap;
+    if (data && len > 0) memcpy(strs[idx].data, data, (size_t)len);
+    return idx;
+}
+
+// ── Heap (Boxes) ────────────────────────────────────────────────────────────
+
+typedef struct { Val val; bool alive; } HeapSlot;
+static HeapSlot heap[MAX_HEAP];
+static int heap_count;
+
+static uint32_t heap_alloc(Val v) {
+    if (heap_count >= MAX_HEAP) slap_panic("heap full");
+    uint32_t idx = (uint32_t)heap_count++;
+    heap[idx] = (HeapSlot){v, true};
+    return idx;
+}
+
+// ── val_clone ───────────────────────────────────────────────────────────────
+
+static Val val_clone(Val v) {
+    switch (v.type) {
+        case T_INT: case T_FLOAT: case T_SYM:
+            return v;
+        case T_TUPLE:
+            tuples[v.tuple].rc++;
+            return v;
+        case T_SLICE: case T_DICE:
+            slices[v.slice].rc++;
+            return v;
+        case T_REC:
+            recs[v.rec].rc++;
+            return v;
+        default:
+            slap_panic("val_clone: cannot clone linear type %s\n\n"
+                        "  Linear values (Box, List, Dict, String) must be consumed\n"
+                        "  exactly once. Use 'lend' to borrow or 'clone' for an\n"
+                        "  explicit deep copy.", type_name(v.type));
+    }
+}
+
+// ── val_free ────────────────────────────────────────────────────────────────
+
+static void val_free(Val v) {
+    switch (v.type) {
+        case T_INT: case T_FLOAT: case T_SYM:
+            return;
+        case T_TUPLE: {
+            TupleObj *tu = &tuples[v.tuple];
+            if (--tu->rc <= 0) {
+                if (tu->owns_env) scope_release(tu->env);
+                if (tu->compose_with != NONE) val_free(VAL_TUPLE(tu->compose_with));
+                tu->body_start = 0; tu->body_len = 0; tu->env = NONE;
+                tu->owns_env = false; tu->compose_with = NONE;
+                tuple_freelist[tuple_free_count++] = (int)v.tuple;
+            }
+            return;
+        }
+        case T_SLICE: case T_DICE: {
+            SliceObj *sl = &slices[v.slice];
+            if (--sl->rc <= 0) {
+                for (int i = 0; i < sl->len; i++) val_free(sl->data[i]);
+                free(sl->data); sl->data = NULL; sl->len = 0;
+                slice_freelist[slice_free_count++] = (int)v.slice;
+            }
+            return;
+        }
+        case T_REC: {
+            RecObj *rc = &recs[v.rec];
+            if (--rc->rc <= 0) {
+                for (int i = 0; i < rc->count; i++) val_free(rc->vals[i]);
+                free(rc->keys); free(rc->vals);
+                rc->keys = NULL; rc->vals = NULL; rc->count = 0; rc->cap = 0;
+                rec_freelist[rec_free_count++] = (int)v.rec;
+            }
+            return;
+        }
+        case T_BOX:
+            if (!heap[v.box].alive) slap_panic("double-free on Box %u", v.box);
+            val_free(heap[v.box].val);
+            heap[v.box].alive = false;
+            return;
+        case T_LIST: {
+            ListObj *li = &lists[v.list];
+            for (int i = 0; i < li->len; i++) val_free(li->data[i]);
+            free(li->data); li->data = NULL; li->len = 0; li->cap = 0;
+            list_freelist[list_free_count++] = (int)v.list;
+            return;
+        }
+        case T_DICT: {
+            DictObj *d = &dicts[v.dict];
+            for (int i = 0; i < d->cap; i++) {
+                if (d->used[i]) { val_free(d->keys[i]); val_free(d->vals[i]); }
+            }
+            free(d->keys); free(d->vals); free(d->used);
+            d->keys = NULL; d->vals = NULL; d->used = NULL; d->count = 0; d->cap = 0;
+            dict_freelist[dict_free_count++] = (int)v.dict;
+            return;
+        }
+        case T_STR: {
+            StrObj *st = &strs[v.str];
+            free(st->data); st->data = NULL; st->len = 0; st->cap = 0;
+            str_freelist[str_free_count++] = (int)v.str;
+            return;
+        }
+    }
+}
+
+// ── val_print ───────────────────────────────────────────────────────────────
+
+static void val_print(Val v, FILE *f) {
+    switch (v.type) {
+        case T_INT:   fprintf(f, "%lld", (long long)v.ival); break;
+        case T_FLOAT: fprintf(f, "%g", v.fval); break;
+        case T_SYM:   fprintf(f, "'%s", sym_names[v.sym]); break;
+        case T_TUPLE: fprintf(f, "(...)"); break;
+        case T_SLICE: {
+            SliceObj *sl = &slices[v.slice];
+            bool is_str = sl->len > 0;
+            for (int i = 0; i < sl->len && is_str; i++)
+                is_str = sl->data[i].type == T_INT && sl->data[i].ival >= 0 && sl->data[i].ival <= 127;
+            if (is_str) {
+                fputc('"', f);
+                for (int i = 0; i < sl->len; i++) fputc((char)sl->data[i].ival, f);
+                fputc('"', f);
+            } else {
+                fputc('[', f);
+                for (int i = 0; i < sl->len; i++) { if (i) fputc(' ', f); val_print(sl->data[i], f); }
+                fputc(']', f);
+            }
+            break;
+        }
+        case T_DICE: {
+            SliceObj *sl = &slices[v.slice];
+            fprintf(f, "<dice:%d>", sl->len / 2);
+            break;
+        }
+        case T_REC: {
+            RecObj *rc = &recs[v.rec];
+            fputc('{', f);
+            for (int i = 0; i < rc->count; i++) {
+                if (i) fputc(' ', f);
+                fprintf(f, "'%s ", sym_names[rc->keys[i]]);
+                val_print(rc->vals[i], f);
+            }
+            fputc('}', f);
+            break;
+        }
+        case T_BOX:  fprintf(f, "Box<%u>", v.box); break;
+        case T_LIST: fprintf(f, "List<%u>", v.list); break;
+        case T_DICT: fprintf(f, "Dict<%u>", v.dict); break;
+        case T_STR: {
+            StrObj *st = &strs[v.str];
+            fprintf(f, "Str<\"");
+            for (int i = 0; i < st->len; i++) fputc(st->data[i], f);
+            fprintf(f, "\">");
+            break;
+        }
+    }
+}
+
+// ── Stack ───────────────────────────────────────────────────────────────────
+
+static Val stack[STACK_MAX];
+static int sp;
+
+static void print_stack_top(void) {
     if (sp > 0) {
         fprintf(stderr, "\n  %sstack top:%s", C_DIM, C_RESET);
         int show = sp < 5 ? sp : 5;
@@ -272,440 +606,176 @@ static void slap_panic(const char *fmt, ...) {
         }
         fprintf(stderr, "\n");
     }
-    fprintf(stderr, "\n");
-    exit(1);
 }
-
-// ── Symbol Interning ────────────────────────────────────────────────────────
-
-static uint32_t sym_intern(const char *name) {
-    for (int i = 0; i < sym_count; i++)
-        if (strcmp(sym_names[i], name) == 0) return (uint32_t)i;
-    if (sym_count >= MAX_SYMS) slap_panic("symbol table full");
-    int idx = sym_count++;
-    strncpy(sym_names[idx], name, SYM_NAME_MAX - 1);
-    sym_names[idx][SYM_NAME_MAX - 1] = 0;
-    return (uint32_t)idx;
-}
-
-// ── Pool Operations ─────────────────────────────────────────────────────────
-
-static int pool_alloc(int *freelist, int *free_count, int *count, int max, const char *msg) {
-    if (*free_count > 0) return freelist[--(*free_count)];
-    if (*count >= max) slap_panic("%s", msg);
-    return (*count)++;
-}
-
-static void pool_free(int *freelist, int *free_count, int max, int idx) {
-    if (*free_count < max) freelist[(*free_count)++] = idx;
-}
-
-static uint32_t arr_new(void) {
-    int idx = pool_alloc(arr_freelist, &arr_free_count, &arr_count, MAX_ARRS, "array pool full");
-    arrs[idx].len = 0;
-    return (uint32_t)idx;
-}
-
-static void arr_ensure(Arr *a) {
-    if (a->len >= a->cap) { a->cap = a->cap ? a->cap * 2 : 8; a->data = realloc(a->data, a->cap * sizeof(Val)); }
-}
-
-static void arr_push(uint32_t a, Val v) {
-    Arr *ar = &arrs[a];
-    arr_ensure(ar);
-    ar->data[ar->len++] = v;
-}
-
-static uint32_t rec_new(void) {
-    int idx = pool_alloc(rec_freelist, &rec_free_count, &rec_count, MAX_RECS, "record pool full");
-    recs[idx].count = 0;
-    return (uint32_t)idx;
-}
-
-static int rec_find(Rec *rc, uint32_t key) {
-    for (int i = 0; i < rc->count; i++)
-        if (rc->fields[i * 2].sym == key) return i;
-    return -1;
-}
-
-static void rec_add(uint32_t r, uint32_t key, Val val) {
-    Rec *rc = &recs[r];
-    int idx = rec_find(rc, key);
-    if (idx >= 0) { val_free(rc->fields[idx * 2 + 1]); rc->fields[idx * 2 + 1] = val; return; }
-    if (rc->count >= rc->cap) {
-        rc->cap = rc->cap ? rc->cap * 2 : 8;
-        rc->fields = realloc(rc->fields, rc->cap * 2 * sizeof(Val));
-    }
-    rc->fields[rc->count * 2] = VAL_SYM(key);
-    rc->fields[rc->count * 2 + 1] = val;
-    rc->count++;
-}
-
-// ── Dict ────────────────────────────────────────────────────────────────────
-
-static uint64_t val_hash(Val v) {
-    switch (v.type) {
-    case T_INT:   return (uint64_t)(v.ival * 2654435761ULL);
-    case T_BOOL:  return v.bval ? 1 : 0;
-    case T_SYM:   return (uint64_t)(v.sym * 2654435761ULL);
-    case T_FLOAT: { uint64_t bits; memcpy(&bits, &v.fval, 8); return bits * 2654435761ULL; }
-    default: slap_panic("dict: unhashable key type %s", type_name(v.type)); return 0;
-    }
-}
-
-static uint32_t dict_new(void) {
-    int idx = pool_alloc(dict_freelist, &dict_free_count, &dict_count, MAX_DICTS, "dict pool full");
-    DictObj *d = &dicts[idx];
-    d->cap = DICT_INIT_CAP;
-    d->count = 0;
-    d->keys = calloc(d->cap, sizeof(Val));
-    d->vals = calloc(d->cap, sizeof(Val));
-    d->used = calloc(d->cap, sizeof(bool));
-    return (uint32_t)idx;
-}
-
-static void dict_resize(DictObj *d) {
-    int old_cap = d->cap;
-    Val *old_keys = d->keys;
-    Val *old_vals = d->vals;
-    bool *old_used = d->used;
-    d->cap *= 2;
-    d->keys = calloc(d->cap, sizeof(Val));
-    d->vals = calloc(d->cap, sizeof(Val));
-    d->used = calloc(d->cap, sizeof(bool));
-    d->count = 0;
-    for (int i = 0; i < old_cap; i++) {
-        if (old_used[i]) {
-            uint64_t h = val_hash(old_keys[i]);
-            int slot = (int)(h & (uint64_t)(d->cap - 1));
-            while (d->used[slot]) slot = (slot + 1) & (d->cap - 1);
-            d->keys[slot] = old_keys[i];
-            d->vals[slot] = old_vals[i];
-            d->used[slot] = true;
-            d->count++;
-        }
-    }
-    free(old_keys); free(old_vals); free(old_used);
-}
-
-static void dict_set(uint32_t di, Val key, Val val) {
-    DictObj *d = &dicts[di];
-    if (d->count * 4 >= d->cap * 3) dict_resize(d);
-    uint64_t h = val_hash(key);
-    int slot = (int)(h & (uint64_t)(d->cap - 1));
-    while (d->used[slot]) {
-        if (val_eq(d->keys[slot], key)) { val_free(d->vals[slot]); d->vals[slot] = val; return; }
-        slot = (slot + 1) & (d->cap - 1);
-    }
-    d->keys[slot] = key; d->vals[slot] = val; d->used[slot] = true; d->count++;
-}
-
-static bool dict_lookup(uint32_t di, Val key, Val *out) {
-    DictObj *d = &dicts[di];
-    uint64_t h = val_hash(key);
-    int slot = (int)(h & (uint64_t)(d->cap - 1));
-    for (int i = 0; i < d->cap; i++) {
-        if (!d->used[slot]) return false;
-        if (val_eq(d->keys[slot], key)) { *out = d->vals[slot]; return true; }
-        slot = (slot + 1) & (d->cap - 1);
-    }
-    return false;
-}
-
-static uint32_t quot_new(int body_start, int body_len, uint32_t env, bool owns_env) {
-    int idx = pool_alloc(quot_freelist, &quot_free_count, &quot_count, MAX_QUOTS, "quotation pool full");
-    quots[idx] = (Quot){body_start, body_len, env, owns_env, false, {0}, UINT32_MAX};
-    return (uint32_t)idx;
-}
-
-static uint32_t heap_alloc(Val v) {
-    if (heap_count >= MAX_HEAP) slap_panic("heap full");
-    int idx = heap_count++;
-    heap[idx] = (HeapSlot){v, true};
-    return (uint32_t)idx;
-}
-
-static uint32_t scope_new(uint32_t parent) {
-    int idx = pool_alloc(scope_freelist, &scope_free_count, &scope_count, MAX_SCOPES, "scope table full (deep recursion?)");
-    scopes[idx].parent = parent;
-    scopes[idx].count = 0;
-    return (uint32_t)idx;
-}
-
-static void scope_release(uint32_t sc) {
-    Scope *s = &scopes[sc];
-    for (int i = 0; i < s->count; i++) val_free(s->entries[i].val);
-    s->count = 0;
-    pool_free(scope_freelist, &scope_free_count, MAX_SCOPES, (int)sc);
-}
-
-static void scope_bind(uint32_t sc, uint32_t sym, Val v) {
-    Scope *s = &scopes[sc];
-    for (int i = 0; i < s->count; i++)
-        if (s->entries[i].key == sym) { s->entries[i].val = v; return; }
-    if (s->count >= s->cap) {
-        s->cap = s->cap ? s->cap * 2 : 8;
-        s->entries = realloc(s->entries, s->cap * sizeof(ScopeEntry));
-    }
-    s->entries[s->count++] = (ScopeEntry){sym, v};
-}
-
-static uint32_t scope_snapshot(uint32_t sc) {
-    Scope *s = &scopes[sc];
-    uint32_t snap = scope_new(s->parent);
-    for (int i = 0; i < s->count; i++)
-        scope_bind(snap, s->entries[i].key, val_clone(s->entries[i].val));
-    return snap;
-}
-
-static bool scope_lookup(uint32_t sc, uint32_t sym, Val *out) {
-    while (sc != UINT32_MAX) {
-        Scope *s = &scopes[sc];
-        for (int i = 0; i < s->count; i++)
-            if (s->entries[i].key == sym) { *out = s->entries[i].val; return true; }
-        sc = s->parent;
-    }
-    return false;
-}
-
-static bool scope_lookup_local(uint32_t sc, uint32_t sym, Val *out) {
-    Scope *s = &scopes[sc];
-    for (int i = 0; i < s->count; i++)
-        if (s->entries[i].key == sym) { *out = s->entries[i].val; return true; }
-    return false;
-}
-
-// ── Val Utilities ───────────────────────────────────────────────────────────
-
-static Val val_clone(Val v) {
-    switch (v.type) {
-    case T_INT: case T_BOOL: case T_FLOAT: case T_SYM: case T_BOX:
-        return v;
-    case T_DICT: {
-        uint32_t nd = dict_new();
-        DictObj *src = &dicts[v.dict];
-        for (int i = 0; i < src->cap; i++)
-            if (src->used[i]) dict_set(nd, val_clone(src->keys[i]), val_clone(src->vals[i]));
-        return VAL_DICT(nd);
-    }
-    case T_ARR: {
-        uint32_t na = arr_new();
-        Arr *src = &arrs[v.arr];
-        for (int i = 0; i < src->len; i++) arr_push(na, val_clone(src->data[i]));
-        return VAL_ARR(na);
-    }
-    case T_REC: {
-        uint32_t nr = rec_new();
-        Rec *src = &recs[v.rec];
-        for (int i = 0; i < src->count; i++)
-            rec_add(nr, src->fields[i * 2].sym, val_clone(src->fields[i * 2 + 1]));
-        return VAL_REC(nr);
-    }
-    case T_QUOT: {
-        Quot *src = &quots[v.quot];
-        uint32_t env = src->owns_env ? scope_snapshot(src->env) : src->env;
-        uint32_t nq = quot_new(src->body_start, src->body_len, env, src->owns_env);
-        quots[nq].has_capture = src->has_capture;
-        if (src->has_capture) quots[nq].capture = val_clone(src->capture);
-        if (src->compose_with != UINT32_MAX)
-            quots[nq].compose_with = val_clone(VAL_QUOT(src->compose_with)).quot;
-        return VAL_QUOT(nq);
-    }
-    }
-    return v;
-}
-
-static void val_free(Val v) {
-    if (v.borrowed) return;
-    switch (v.type) {
-    case T_INT: case T_BOOL: case T_FLOAT: case T_SYM: case T_BOX: break;
-    case T_DICT: {
-        DictObj *d = &dicts[v.dict];
-        for (int i = 0; i < d->cap; i++) {
-            if (d->used[i]) { val_free(d->keys[i]); val_free(d->vals[i]); }
-        }
-        free(d->keys); free(d->vals); free(d->used);
-        d->keys = NULL; d->vals = NULL; d->used = NULL; d->count = 0; d->cap = 0;
-        pool_free(dict_freelist, &dict_free_count, MAX_DICTS, (int)v.dict);
-        break;
-    }
-    case T_ARR: {
-        Arr *a = &arrs[v.arr];
-        for (int i = 0; i < a->len; i++) val_free(a->data[i]);
-        a->len = 0;
-        pool_free(arr_freelist, &arr_free_count, MAX_ARRS, (int)v.arr);
-        break;
-    }
-    case T_REC: {
-        Rec *r = &recs[v.rec];
-        for (int i = 0; i < r->count; i++) val_free(r->fields[i * 2 + 1]);
-        r->count = 0;
-        pool_free(rec_freelist, &rec_free_count, MAX_RECS, (int)v.rec);
-        break;
-    }
-    case T_QUOT: {
-        Quot *q = &quots[v.quot];
-        if (q->has_capture) val_free(q->capture);
-        if (q->compose_with != UINT32_MAX)
-            val_free(VAL_QUOT(q->compose_with));
-        if (q->owns_env) scope_release(q->env);
-        pool_free(quot_freelist, &quot_free_count, MAX_QUOTS, (int)v.quot);
-        break;
-    }
-    }
-}
-
-static bool val_eq(Val a, Val b) {
-    if (a.type != b.type) slap_panic("eq: cannot compare %s with %s", type_name(a.type), type_name(b.type));
-    switch (a.type) {
-    case T_INT:   return a.ival == b.ival;
-    case T_BOOL:  return a.bval == b.bval;
-    case T_FLOAT: return a.fval == b.fval;
-    case T_SYM:  return a.sym == b.sym;
-    case T_BOX:  return a.box == b.box;
-    case T_ARR: {
-        Arr *la = &arrs[a.arr], *lb = &arrs[b.arr];
-        if (la->len != lb->len) return false;
-        for (int i = 0; i < la->len; i++)
-            if (!val_eq(la->data[i], lb->data[i])) return false;
-        return true;
-    }
-    case T_REC: {
-        Rec *ra = &recs[a.rec], *rb = &recs[b.rec];
-        if (ra->count != rb->count) return false;
-        for (int i = 0; i < ra->count; i++) {
-            bool found = false;
-            for (int j = 0; j < rb->count; j++) {
-                if (ra->fields[i*2].sym == rb->fields[j*2].sym) {
-                    if (!val_eq(ra->fields[i*2+1], rb->fields[j*2+1])) return false;
-                    found = true; break;
-                }
-            }
-            if (!found) return false;
-        }
-        return true;
-    }
-    case T_QUOT: return a.quot == b.quot;
-    case T_DICT: {
-        DictObj *da = &dicts[a.dict], *db = &dicts[b.dict];
-        if (da->count != db->count) return false;
-        for (int i = 0; i < da->cap; i++) {
-            if (!da->used[i]) continue;
-            Val found;
-            if (!dict_lookup(b.dict, da->keys[i], &found)) return false;
-            if (!val_eq(da->vals[i], found)) return false;
-        }
-        return true;
-    }
-    }
-    return false;
-}
-
-static void val_print(Val v, FILE *f) {
-    switch (v.type) {
-    case T_INT:   fprintf(f, "%lld", (long long)v.ival); break;
-    case T_BOOL:  fprintf(f, "%s", v.bval ? "true" : "false"); break;
-    case T_FLOAT: fprintf(f, "%g", v.fval); break;
-    case T_SYM:  fprintf(f, "'%s", sym_names[v.sym]); break;
-    case T_BOX:  fprintf(f, "<box:%u>", v.box); break;
-    case T_DICT: {
-        DictObj *d = &dicts[v.dict];
-        fprintf(f, "<dict:%d>", d->count);
-        break;
-    }
-    case T_ARR: {
-        Arr *a = &arrs[v.arr];
-        fprintf(f, "[");
-        for (int i = 0; i < a->len; i++) { if (i) fprintf(f, " "); val_print(a->data[i], f); }
-        fprintf(f, "]");
-        break;
-    }
-    case T_REC: {
-        Rec *r = &recs[v.rec];
-        fprintf(f, "{");
-        for (int i = 0; i < r->count; i++) {
-            if (i) fprintf(f, " ");
-            fprintf(f, "'%s ", sym_names[r->fields[i*2].sym]);
-            val_print(r->fields[i*2+1], f);
-        }
-        fprintf(f, "}");
-        break;
-    }
-    case T_QUOT: fprintf(f, "<quot:%u>", v.quot); break;
-    }
-}
-
-// ── Stack ───────────────────────────────────────────────────────────────────
 
 static void push(Val v) {
     if (sp >= STACK_MAX) slap_panic("stack overflow");
     stack[sp++] = v;
 }
-
 static Val pop(void) {
     if (sp <= 0) slap_panic("stack underflow");
     return stack[--sp];
 }
-
 static Val peek(void) {
     if (sp <= 0) slap_panic("stack underflow (peek)");
     return stack[sp - 1];
 }
+static inline int64_t  pop_int(void)   { Val v=pop(); if(v.type!=T_INT)   slap_panic("expected Int, got %s",   type_name(v.type)); return v.ival; }
+static inline double   pop_float(void) { Val v=pop(); if(v.type!=T_FLOAT) slap_panic("expected Float, got %s", type_name(v.type)); return v.fval; }
+static inline uint32_t pop_sym(void)   { Val v=pop(); if(v.type!=T_SYM)   slap_panic("expected Symbol, got %s",type_name(v.type)); return v.sym; }
+static inline Val      pop_tuple(void) { Val v=pop(); if(v.type!=T_TUPLE) slap_panic("expected Tuple, got %s", type_name(v.type)); return v; }
+static inline Val      pop_slice(void) { Val v=pop(); if(v.type!=T_SLICE) slap_panic("expected Slice, got %s", type_name(v.type)); return v; }
 
-static Val pop_typed(ValType t) {
-    Val v = pop();
-    if (v.type != t) slap_panic("expected %s, got %s", type_name(t), type_name(v.type));
-    return v;
+#define EXPECT(v, t) do { if ((v).type != (t)) \
+    slap_panic("%s: expected %s, got %s", current_word, type_name(t), type_name((v).type)); } while(0)
+#define EXPECT2(v, t1, t2) do { if ((v).type != (t1) && (v).type != (t2)) \
+    slap_panic("%s: expected %s or %s, got %s", current_word, type_name(t1), type_name(t2), type_name((v).type)); } while(0)
+
+// ── Nodes ───────────────────────────────────────────────────────────────────
+
+typedef void (*PrimFn)(void);
+
+typedef enum { N_PUSH, N_WORD, N_SLICE, N_TUPLE, N_RECORD } NodeType;
+
+typedef struct {
+    NodeType type;
+    int line, col;
+    union {
+        Val literal;       // N_PUSH
+        uint32_t sym;      // N_WORD
+        struct { int start, len; } body; // N_SLICE, N_TUPLE, N_RECORD
+    };
+    PrimFn cached_prim;    // N_WORD: resolved primitive (NULL if user-bound)
+} Node;
+
+static Node nodes[MAX_NODES];
+static int node_count;
+
+static bool tuple_body_needs_scope(int start, int len) {
+    for (int i = start; i < start + len; ) {
+        Node *n = &nodes[i];
+        if (n->type == N_WORD) {
+            if (n->sym == sym_def_id || n->sym == sym_let_id || n->sym == sym_recur_id)
+                return true;
+            i++;
+        } else if (n->type == N_TUPLE || n->type == N_SLICE || n->type == N_RECORD) {
+            i += 1 + n->body.len;
+        } else {
+            i++;
+        }
+    }
+    return false;
 }
-#define pop_int()   pop_typed(T_INT).ival
-#define pop_bool()  pop_typed(T_BOOL).bval
-#define pop_float() pop_typed(T_FLOAT).fval
-#define pop_sym()  pop_typed(T_SYM).sym
-#define pop_quot() pop_typed(T_QUOT)
-#define pop_arr()  pop_typed(T_ARR)
-#define pop_rec()  pop_typed(T_REC)
 
-static Val pop_box(void) {
-    Val v = pop();
-    if (v.type != T_BOX) slap_panic("expected Box, got %s", type_name(v.type));
-    if (!heap[v.box].alive) slap_panic("use-after-free on box %u", v.box);
-    return v;
+// ── Scopes ──────────────────────────────────────────────────────────────────
+
+typedef struct { uint32_t name; Val val; bool is_def; } Binding;
+typedef struct { uint32_t parent; Binding *binds; int count, cap; bool owns_parent; } Scope;
+static Scope scopes[MAX_SCOPES];
+static int scope_count = 1; // 0 unused
+static int scope_freelist[MAX_SCOPES], scope_free_count;
+static uint32_t global_scope;
+
+// Fast lookup table for global scope: indexed by symbol ID
+static Binding *global_lookup[MAX_SYMS];
+
+static uint32_t scope_new(uint32_t parent) {
+    uint32_t idx;
+    POOL_ALLOC(idx, scope_count, scope_freelist, scope_free_count, MAX_SCOPES, "scope");
+    Scope *s = &scopes[idx];
+    s->parent = parent;
+    s->count = 0;          // keep binds+cap from previous use
+    s->owns_parent = false;
+    return idx;
 }
 
-// ── Lexer ───────────────────────────────────────────────────────────────────
+static void scope_release(uint32_t sc) {
+    if (sc == NONE) return;
+    Scope *s = &scopes[sc];
+    uint32_t parent = s->parent;
+    bool owns = s->owns_parent;
+    for (int i = 0; i < s->count; i++)
+        if (s->binds[i].val.type >= T_TUPLE) val_free(s->binds[i].val);
+    s->count = 0;           // keep binds+cap for reuse
+    s->owns_parent = false;
+    scope_freelist[scope_free_count++] = (int)sc;
+    if (owns) scope_release(parent);
+}
+
+static void scope_bind(uint32_t sc, uint32_t name, Val val, bool is_def) {
+    Scope *s = &scopes[sc];
+    for (int i = 0; i < s->count; i++) {
+        if (s->binds[i].name == name) {
+            val_free(s->binds[i].val);
+            s->binds[i].val = val;
+            s->binds[i].is_def = is_def;
+            if (sc == global_scope) global_lookup[name] = &s->binds[i];
+            return;
+        }
+    }
+    if (s->count >= s->cap) {
+        s->cap = s->cap ? s->cap * 2 : 4;
+        s->binds = realloc(s->binds, (size_t)s->cap * sizeof(Binding));
+        // Realloc may move binds — rebuild global_lookup pointers
+        if (sc == global_scope) {
+            for (int i = 0; i < s->count; i++)
+                global_lookup[s->binds[i].name] = &s->binds[i];
+        }
+    }
+    s->binds[s->count] = (Binding){name, val, is_def};
+    if (sc == global_scope) global_lookup[name] = &s->binds[s->count];
+    s->count++;
+}
+
+static Binding *scope_find(uint32_t sc, uint32_t name) {
+    while (sc != NONE && sc != 0) {
+        if (sc == global_scope) return global_lookup[name];
+        Scope *s = &scopes[sc];
+        for (int i = s->count - 1; i >= 0; i--)
+            if (s->binds[i].name == name) return &s->binds[i];
+        sc = s->parent;
+    }
+    return NULL;
+}
+
+static uint32_t scope_snapshot(uint32_t sc) {
+    if (sc == NONE || sc == 0 || sc == global_scope) return sc;
+    uint32_t parent_copy = scope_snapshot(scopes[sc].parent);
+    uint32_t copy = scope_new(parent_copy);
+    if (parent_copy != NONE && parent_copy != 0 && parent_copy != global_scope)
+        scopes[copy].owns_parent = true;
+    Scope *orig = &scopes[sc];
+    for (int i = 0; i < orig->count; i++)
+        scope_bind(copy, orig->binds[i].name, val_clone(orig->binds[i].val), orig->binds[i].is_def);
+    return copy;
+}
+
+// ── Tokenizer ───────────────────────────────────────────────────────────────
 
 typedef enum {
-    TOK_INT, TOK_FLOAT, TOK_TRUE, TOK_FALSE, TOK_SYM, TOK_STR, TOK_WORD,
-    TOK_LBRACKET, TOK_RBRACKET, TOK_LPAREN, TOK_RPAREN,
+    TOK_INT, TOK_FLOAT, TOK_TRUE, TOK_FALSE, TOK_SYMBOL, TOK_STRING,
+    TOK_WORD, TOK_LPAREN, TOK_RPAREN, TOK_LBRACKET, TOK_RBRACKET,
     TOK_LBRACE, TOK_RBRACE, TOK_EOF
 } TokType;
 
-typedef struct {
-    TokType type;
-    int64_t ival;
-    double  fval;
-    char    sval[SYM_NAME_MAX];
-    int     line, col;
-} Token;
+typedef struct { TokType type; int line, col; union { int64_t ival; double fval; char word[SYM_NAME_MAX]; }; } Token;
 
-typedef struct {
-    const char *src;
-    int pos, len, line, line_start;
-} Lexer;
+static const char *src;
+static int src_pos, src_line, src_col;
 
-static Lexer lexer;
-
-static void lex_init(const char *src) {
-    lexer = (Lexer){src, 0, (int)strlen(src), 1, 0};
+static char src_peek(void) { return src[src_pos]; }
+static char src_next(void) {
+    char c = src[src_pos++];
+    if (c == '\n') { src_line++; src_col = 1; } else src_col++;
+    return c;
 }
+static bool src_eof(void) { return src[src_pos] == '\0'; }
 
 static void skip_ws(void) {
-    while (lexer.pos < lexer.len) {
-        char c = lexer.src[lexer.pos];
-        if (c == '\n') { lexer.pos++; lexer.line++; lexer.line_start = lexer.pos; continue; }
-        if (c == ' ' || c == '\t' || c == '\r') { lexer.pos++; continue; }
-        if (c == '-' && lexer.pos + 1 < lexer.len && lexer.src[lexer.pos + 1] == '-') {
-            while (lexer.pos < lexer.len && lexer.src[lexer.pos] != '\n') lexer.pos++;
+    while (!src_eof()) {
+        if (isspace((unsigned char)src_peek())) { src_next(); continue; }
+        if (src_peek() == '-' && src_pos + 1 < (int)strlen(src) && src[src_pos + 1] == '-') {
+            while (!src_eof() && src_peek() != '\n') src_next();
             continue;
         }
         break;
@@ -713,86 +783,86 @@ static void skip_ws(void) {
 }
 
 static bool is_word_char(char c) {
-    return c && c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
-           c != '(' && c != ')' && c != '[' && c != ']' && c != '{' && c != '}';
+    return c && !isspace((unsigned char)c) && c != '(' && c != ')' &&
+           c != '[' && c != ']' && c != '{' && c != '}' && c != '"';
 }
 
 static Token next_token(void) {
     skip_ws();
-    Token t = {.line = lexer.line, .col = lexer.pos - lexer.line_start + 1};
-    if (lexer.pos >= lexer.len) { t.type = TOK_EOF; return t; }
-    char c = lexer.src[lexer.pos];
+    Token t = {0};
+    t.line = src_line; t.col = src_col;
+    if (src_eof()) { t.type = TOK_EOF; return t; }
+    char c = src_peek();
 
-    if (c == '[') { t.type = TOK_LBRACKET; lexer.pos++; return t; }
-    if (c == ']') { t.type = TOK_RBRACKET; lexer.pos++; return t; }
-    if (c == '(') { t.type = TOK_LPAREN;   lexer.pos++; return t; }
-    if (c == ')') { t.type = TOK_RPAREN;   lexer.pos++; return t; }
-    if (c == '{') { t.type = TOK_LBRACE;   lexer.pos++; return t; }
-    if (c == '}') { t.type = TOK_RBRACE;   lexer.pos++; return t; }
+    if (c == '(') { src_next(); t.type = TOK_LPAREN; return t; }
+    if (c == ')') { src_next(); t.type = TOK_RPAREN; return t; }
+    if (c == '[') { src_next(); t.type = TOK_LBRACKET; return t; }
+    if (c == ']') { src_next(); t.type = TOK_RBRACKET; return t; }
+    if (c == '{') { src_next(); t.type = TOK_LBRACE; return t; }
+    if (c == '}') { src_next(); t.type = TOK_RBRACE; return t; }
 
     // string literal
     if (c == '"') {
-        lexer.pos++;
+        src_next(); // skip opening "
         int i = 0;
-        while (lexer.pos < lexer.len && lexer.src[lexer.pos] != '"') {
-            if (i < SYM_NAME_MAX - 1) t.sval[i++] = lexer.src[lexer.pos];
-            lexer.pos++;
-        }
-        t.sval[i] = 0;
-        if (lexer.pos < lexer.len) lexer.pos++; // skip closing "
-        t.type = TOK_STR;
-        return t;
-    }
-
-    // symbol literal
-    if (c == '\'') {
-        lexer.pos++;
-        int i = 0;
-        while (lexer.pos < lexer.len && is_word_char(lexer.src[lexer.pos])) {
-            if (i < SYM_NAME_MAX - 1) t.sval[i++] = lexer.src[lexer.pos];
-            lexer.pos++;
-        }
-        t.sval[i] = 0;
-        t.type = TOK_SYM;
-        return t;
-    }
-
-    // number or negative number or word starting with -
-    if ((c >= '0' && c <= '9') || (c == '-' && lexer.pos + 1 < lexer.len && lexer.src[lexer.pos+1] >= '0' && lexer.src[lexer.pos+1] <= '9')) {
-        int sign = 1;
-        if (c == '-') { sign = -1; lexer.pos++; }
-        int64_t n = 0;
-        while (lexer.pos < lexer.len && lexer.src[lexer.pos] >= '0' && lexer.src[lexer.pos] <= '9') {
-            n = n * 10 + (lexer.src[lexer.pos] - '0');
-            lexer.pos++;
-        }
-        if (lexer.pos < lexer.len && lexer.src[lexer.pos] == '.') {
-            lexer.pos++;
-            double frac = 0, scale = 0.1;
-            while (lexer.pos < lexer.len && lexer.src[lexer.pos] >= '0' && lexer.src[lexer.pos] <= '9') {
-                frac += (lexer.src[lexer.pos] - '0') * scale;
-                scale *= 0.1;
-                lexer.pos++;
+        while (!src_eof() && src_peek() != '"') {
+            char ch = src_next();
+            if (ch == '\\' && !src_eof()) {
+                ch = src_next();
+                switch (ch) {
+                    case 'n': ch = '\n'; break;
+                    case 't': ch = '\t'; break;
+                    case '\\': ch = '\\'; break;
+                    case '"': ch = '"'; break;
+                    default: break;
+                }
             }
-            t.type = TOK_FLOAT;
-            t.fval = ((double)n + frac) * sign;
-            return t;
+            if (i < SYM_NAME_MAX - 1) t.word[i++] = ch;
         }
-        t.type = TOK_INT;
-        t.ival = n * sign;
+        if (!src_eof()) src_next(); // skip closing "
+        t.word[i] = '\0';
+        t.type = TOK_STRING;
+        return t;
+    }
+
+    // symbol: 'name
+    if (c == '\'') {
+        src_next(); // skip '
+        int i = 0;
+        while (!src_eof() && is_word_char(src_peek()))
+            if (i < SYM_NAME_MAX - 1) t.word[i++] = src_next();
+            else src_next();
+        t.word[i] = '\0';
+        t.type = TOK_SYMBOL;
+        return t;
+    }
+
+    // number or negative number
+    if (isdigit((unsigned char)c) ||
+        (c == '-' && src_pos + 1 < (int)strlen(src) && (isdigit((unsigned char)src[src_pos + 1]) || src[src_pos + 1] == '.'))) {
+        int i = 0;
+        bool is_float = false;
+        if (c == '-') { t.word[i++] = src_next(); }
+        while (!src_eof() && (isdigit((unsigned char)src_peek()) || src_peek() == '.')) {
+            if (src_peek() == '.') is_float = true;
+            if (i < SYM_NAME_MAX - 1) t.word[i++] = src_next();
+            else src_next();
+        }
+        t.word[i] = '\0';
+        if (is_float) { t.type = TOK_FLOAT; t.fval = strtod(t.word, NULL); }
+        else { t.type = TOK_INT; t.ival = strtoll(t.word, NULL, 10); }
         return t;
     }
 
     // word
     {
         int i = 0;
-        while (lexer.pos < lexer.len && is_word_char(lexer.src[lexer.pos])) {
-            if (i < SYM_NAME_MAX - 1) t.sval[i++] = lexer.src[lexer.pos];
-            lexer.pos++;
-        }
-        t.sval[i] = 0;
-        if (strcmp(t.sval, "true") == 0) { t.type = TOK_TRUE; return t; }
-        if (strcmp(t.sval, "false") == 0) { t.type = TOK_FALSE; return t; }
+        while (!src_eof() && is_word_char(src_peek()))
+            if (i < SYM_NAME_MAX - 1) t.word[i++] = src_next();
+            else src_next();
+        t.word[i] = '\0';
+        if (strcmp(t.word, "true") == 0) { t.type = TOK_INT; t.ival = 1; return t; }
+        if (strcmp(t.word, "false") == 0) { t.type = TOK_INT; t.ival = 0; return t; }
         t.type = TOK_WORD;
         return t;
     }
@@ -800,1046 +870,1770 @@ static Token next_token(void) {
 
 // ── Parser ──────────────────────────────────────────────────────────────────
 
-static Token peeked;
-static bool  has_peeked;
+static Token curtok;
+static void advance(void) { curtok = next_token(); }
 
-static Token peek_token(void) {
-    if (!has_peeked) { peeked = next_token(); has_peeked = true; }
-    return peeked;
+static void parse_body(TokType close);
+
+static void emit_push(Val v, int line, int col) {
+    if (node_count >= MAX_NODES) slap_panic("node overflow");
+    nodes[node_count++] = (Node){.type = N_PUSH, .line = line, .col = col, .literal = v};
 }
 
-static Token eat_token(void) {
-    if (has_peeked) { has_peeked = false; return peeked; }
-    return next_token();
+static void emit_word(uint32_t sym, int line, int col) {
+    if (node_count >= MAX_NODES) slap_panic("node overflow");
+    nodes[node_count++] = (Node){.type = N_WORD, .line = line, .col = col, .sym = sym, .cached_prim = NULL};
 }
 
-static void emit_node(Node n) {
-    if (node_count >= MAX_NODES) slap_panic("AST too large");
-    nodes[node_count++] = n;
-}
-
-static void parse_body(TokType terminator);
-
-static void parse_bracket(int line, int col, NodeType ntype, TokType terminator) {
-    int idx = node_count;
-    emit_node((Node){0});
-    int child_start = node_count;
-    parse_body(terminator);
-    nodes[idx] = (Node){.type = ntype, .line = line, .col = col, .body = {child_start, node_count - child_start}};
-}
-
-static void parse_one(Token t) {
-    Node n = {.line = t.line, .col = t.col};
+static void parse_one(void) {
+    Token t = curtok;
     switch (t.type) {
-    case TOK_INT:   n.type = N_PUSH; n.literal = VAL_INT(t.ival); emit_node(n); break;
-    case TOK_FLOAT: n.type = N_PUSH; n.literal = VAL_FLOAT(t.fval); emit_node(n); break;
-    case TOK_TRUE:  n.type = N_PUSH; n.literal = VAL_BOOL(true); emit_node(n); break;
-    case TOK_FALSE: n.type = N_PUSH; n.literal = VAL_BOOL(false); emit_node(n); break;
-    case TOK_SYM:   n.type = N_PUSH; n.literal = VAL_SYM(sym_intern(t.sval)); emit_node(n); break;
-    case TOK_WORD:  n.type = N_WORD; n.sym = sym_intern(t.sval); emit_node(n); break;
-    case TOK_STR: {
-        int idx = node_count;
-        emit_node((Node){0});
-        int child_start = node_count;
-        for (int i = 0; t.sval[i]; i++) {
-            Node cn = {.type = N_PUSH, .line = t.line, .col = t.col};
-            cn.literal = VAL_INT((uint8_t)t.sval[i]);
-            emit_node(cn);
+        case TOK_INT:
+            emit_push(VAL_INT(t.ival), t.line, t.col);
+            advance();
+            break;
+        case TOK_FLOAT:
+            emit_push(VAL_FLOAT(t.fval), t.line, t.col);
+            advance();
+            break;
+        case TOK_SYMBOL:
+            emit_push(VAL_SYM(sym_intern(t.word)), t.line, t.col);
+            advance();
+            break;
+        case TOK_STRING: {
+            int slen = (int)strlen(t.word);
+            Val *data = NULL;
+            if (slen > 0) {
+                data = malloc((size_t)slen * sizeof(Val));
+                for (int i = 0; i < slen; i++) data[i] = VAL_INT((uint8_t)t.word[i]);
+            }
+            uint32_t s = slice_new(data, slen);
+            free(data);
+            emit_push(VAL_SLICE(s), t.line, t.col);
+            advance();
+            break;
         }
-        nodes[idx] = (Node){.type = N_ARRAY, .line = t.line, .col = t.col, .body = {child_start, node_count - child_start}};
-        break;
-    }
-    case TOK_LBRACKET: parse_bracket(t.line, t.col, N_ARRAY, TOK_RBRACKET); break;
-    case TOK_LPAREN:   parse_bracket(t.line, t.col, N_QUOTE, TOK_RPAREN); break;
-    case TOK_LBRACE:   parse_bracket(t.line, t.col, N_RECORD, TOK_RBRACE); break;
-    default: slap_panic("unexpected token at line %d", t.line);
+        case TOK_WORD:
+            emit_word(sym_intern(t.word), t.line, t.col);
+            advance();
+            break;
+        case TOK_LPAREN: case TOK_LBRACKET: case TOK_LBRACE: {
+            static const struct { TokType close; const char *ch; NodeType nt; }
+                bk[] = { [TOK_LPAREN]={TOK_RPAREN,")",N_TUPLE}, [TOK_LBRACKET]={TOK_RBRACKET,"]",N_SLICE}, [TOK_LBRACE]={TOK_RBRACE,"}",N_RECORD} };
+            advance();
+            int placeholder = node_count++;
+            if (placeholder >= MAX_NODES) slap_panic("node overflow");
+            int body_start = node_count;
+            parse_body(bk[t.type].close);
+            if (curtok.type != bk[t.type].close) slap_panic("expected '%s' at line %d, col %d", bk[t.type].ch, curtok.line, curtok.col);
+            advance();
+            nodes[placeholder] = (Node){.type = bk[t.type].nt, .line = t.line, .col = t.col,
+                                         .body = {body_start, node_count - body_start}};
+            break;
+        }
+        default:
+            slap_panic("unexpected token at line %d, col %d", t.line, t.col);
     }
 }
 
-static void parse_body(TokType terminator) {
-    while (true) {
-        Token t = peek_token();
-        if (t.type == terminator) { eat_token(); return; }
-        if (t.type == TOK_EOF) {
-            if (terminator == TOK_EOF) return;
-            slap_panic("unexpected end of input (missing closing bracket) at line %d", t.line);
-        }
-        eat_token();
-        parse_one(t);
-    }
+static void parse_body(TokType close) {
+    while (curtok.type != close && curtok.type != TOK_EOF)
+        parse_one();
 }
 
-static int parse_source(const char *src) {
-    lex_init(src);
-    has_peeked = false;
+static int parse_source(const char *source) {
+    src = source; src_pos = 0; src_line = 1; src_col = 1;
+    node_count = 0;
+    advance();
     int start = node_count;
     parse_body(TOK_EOF);
-    return start;
+    return node_count - start;
+}
+
+// ── exec_tuple ──────────────────────────────────────────────────────────────
+
+static uint32_t g_scope; // current scope for primitives like def/let
+static uint32_t g_lazy_parent = NONE; // deferred scope creation: parent env awaiting first let/def
+static uint32_t recur_pending = NONE; // set by 'recur' primitive, consumed by N_TUPLE
+
+static void ensure_own_scope(void) {
+    if (g_lazy_parent != NONE) {
+        g_scope = scope_new(g_lazy_parent);
+        g_lazy_parent = NONE;
+    }
+}
+
+static void exec_tuple(Val t) {
+    TupleObj *tu = &tuples[t.tuple];
+    if (tu->body_len > 0) {
+        uint32_t saved_lazy = g_lazy_parent;
+        g_lazy_parent = tu->env;
+        eval(tu->body_start, tu->body_len, tu->env);
+        g_lazy_parent = saved_lazy;
+    }
+    if (tu->compose_with != NONE) {
+        exec_tuple(VAL_TUPLE(tu->compose_with));
+    }
 }
 
 // ── Primitives ──────────────────────────────────────────────────────────────
 
-typedef void (*PrimFn)(void);
 static PrimFn prim_table[MAX_SYMS];
 
-static void exec_quot(Val q) {
-    Quot *qu = &quots[q.quot];
-    if (qu->compose_with != UINT32_MAX) {
-        uint32_t second_idx = qu->compose_with;
-        qu->compose_with = UINT32_MAX;
-        exec_quot(VAL_QUOT(q.quot));
-        qu->compose_with = second_idx;
-        exec_quot(VAL_QUOT(second_idx));
-        return;
-    }
-    if (qu->has_capture) {
-        push(val_clone(qu->capture));
-        return;
-    }
-    uint32_t child = scope_new(qu->env);
-    eval(qu->body_start, qu->body_len, child);
-    scope_release(child);
-}
-
-static void key_buf_push(int code) {
-    int next = (key_head + 1) % KEY_BUF_SIZE;
-    if (next != key_tail) { key_buf[key_head] = code; key_head = next; }
-}
-
-static void pump_events(void) {
-    if (test_mode) return;
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) {
-#ifdef __EMSCRIPTEN__
-            emscripten_force_exit(0);
-#else
-            exit(0);
-#endif
-        }
-        if (e.type == SDL_TEXTINPUT) {
-            for (int i = 0; e.text.text[i]; i++) {
-                unsigned char ch = e.text.text[i];
-                if (ch >= 32 && ch < 127) key_buf_push(ch);
-            }
-        }
-        if (e.type == SDL_KEYDOWN && e.key.repeat == 0) {
-            int code = -1;
-            switch (e.key.keysym.sym) {
-            case SDLK_RIGHT:     code = 1000; break;
-            case SDLK_LEFT:      code = 1001; break;
-            case SDLK_DOWN:      code = 1002; break;
-            case SDLK_UP:        code = 1003; break;
-            case SDLK_BACKSPACE: code = 8;    break;
-            case SDLK_RETURN:    code = 13;   break;
-            case SDLK_ESCAPE:    code = 27;   break;
-            case SDLK_TAB:       code = 9;    break;
-            default: break;
-            }
-            if (code >= 0) key_buf_push(code);
-        }
-    }
-}
-
-// -- stack
-static void p_dup(void)  { push(val_clone(peek())); }
-static void p_drop(void) { val_free(pop()); }
+// -- Stack --
+static void p_dup(void) { push(val_clone(peek())); }
+static void p_drop(void) { Val v = pop(); val_free(v); }
 static void p_swap(void) { Val b = pop(), a = pop(); push(b); push(a); }
-static void p_nip(void)  { Val b = pop(), a = pop(); val_free(a); push(b); }
-static void p_over(void) { if (sp < 2) slap_panic("over: stack underflow"); push(val_clone(stack[sp - 2])); }
-static void p_rot(void)  { Val c = pop(), b = pop(), a = pop(); push(b); push(c); push(a); }
-static void p_not(void)  { push(VAL_BOOL(!pop_bool())); }
-static void p_and(void)  { bool b = pop_bool(), a = pop_bool(); push(VAL_BOOL(a && b)); }
-static void p_or(void)   { bool b = pop_bool(), a = pop_bool(); push(VAL_BOOL(a || b)); }
-static void p_choose(void) {
-    Val else_q = pop_quot(), then_q = pop_quot();
-    bool cond = pop_bool();
-    if (cond) { exec_quot(then_q); val_free(then_q); val_free(else_q); }
-    else      { exec_quot(else_q); val_free(else_q); val_free(then_q); }
-}
-static void p_dip(void) {
-    Val q = pop_quot(), stash = pop();
-    exec_quot(q); val_free(q); push(stash);
-}
-// -- control
-static void p_apply(void) { Val q = pop_quot(); exec_quot(q); val_free(q); }
+static void p_dip(void) { Val body = pop_tuple(); Val stash = pop(); exec_tuple(body); val_free(body); push(stash); }
+
+// -- Control --
+static void p_apply(void) { Val t = pop_tuple(); exec_tuple(t); val_free(t); }
+
 static void p_if(void) {
-    Val else_q = pop_quot(), then_q = pop_quot(), pred_q = pop_quot(), scrutinee = pop();
-    push(val_clone(scrutinee));
-    exec_quot(pred_q); val_free(pred_q);
-    bool cond = pop_bool();
-    push(scrutinee);
-    if (cond) { exec_quot(then_q); val_free(then_q); val_free(else_q); }
-    else      { exec_quot(else_q); val_free(else_q); val_free(then_q); }
+    Val fb = pop_tuple(), tb = pop_tuple();
+    int64_t c = pop_int();
+    exec_tuple(c != 0 ? tb : fb);
+    val_free(tb); val_free(fb);
 }
+
 static void p_loop(void) {
-    Val q = pop_quot();
-    while (true) { exec_quot(q); if (!pop_bool()) break; }
-    val_free(q);
+    Val body = pop_tuple();
+    while (true) { exec_tuple(body); if (pop_int() == 0) break; }
+    val_free(body);
 }
+
+static void p_while(void) {
+    Val body = pop_tuple(), pred = pop_tuple();
+    while (true) {
+        exec_tuple(pred);
+        if (pop_int() == 0) break;
+        exec_tuple(body);
+    }
+    val_free(pred);
+    val_free(body);
+}
+
 static void p_cond(void) {
-    Val default_q = pop_quot();
-    Val clauses = pop_arr();
+    Val default_b = pop_tuple();
+    Val clauses = pop_slice();
     Val scrutinee = pop();
-    Arr *ca = &arrs[clauses.arr];
-    int matched = -1;
-    Val matched_body;
-    for (int i = 0; i < ca->len; i++) {
-        if (ca->data[i].type != T_QUOT)
-            slap_panic("cond: clause[%d] is %s, expected Quotation", i, type_name(ca->data[i].type));
-        Val tuple = val_clone(ca->data[i]);
-        exec_quot(tuple);
-        Val body = pop_quot();
-        Val pred = pop_quot();
-        push(val_clone(scrutinee));
-        exec_quot(pred); val_free(pred);
-        val_free(tuple);
-        bool hit = pop_bool();
-        if (hit) { matched = i; matched_body = body; break; }
-        val_free(body);
+    SliceObj *cl = &slices[clauses.slice];
+    bool matched = false;
+
+    for (int i = 0; i < cl->len && !matched; i++) {
+        Val clause = cl->data[i];
+        if (clause.type != T_TUPLE) slap_panic("cond: clauses must be tuples");
+        // execute clause to get (pred, body)
+        int base = sp;
+        exec_tuple(clause);
+        if (sp - base != 2) slap_panic("cond: each clause must produce exactly 2 values (predicate and body), got %d", sp - base);
+        Val pred = stack[base], body = stack[base + 1];
+        sp = base;
+
+        // push snapshot of scrutinee for predicate
+        push(val_is_linear(scrutinee) ? linear_snapshot(scrutinee) : val_clone(scrutinee));
+        exec_tuple(pred); val_free(pred);
+        int64_t result = pop_int();
+
+        if (result != 0) {
+            push(scrutinee);
+            exec_tuple(body); val_free(body);
+            matched = true;
+        } else {
+            val_free(body);
+        }
     }
-    push(scrutinee);
-    if (matched >= 0) {
-        val_free(clauses);
-        val_free(default_q);
-        exec_quot(matched_body); val_free(matched_body);
-    } else {
-        val_free(clauses);
-        exec_quot(default_q); val_free(default_q);
+
+    if (!matched) {
+        push(scrutinee);
+        exec_tuple(default_b);
     }
+    val_free(default_b);
+    val_free(clauses);
 }
+
 static void p_match(void) {
-    Val default_q = pop_quot();
-    Val dispatch = pop_rec();
+    Val default_b = pop_tuple();
+    Val dispatch = pop();
+    EXPECT(dispatch, T_REC);
     uint32_t key = pop_sym();
-    Rec *rc = &recs[dispatch.rec];
-    int idx = rec_find(rc, key);
-    if (idx >= 0) {
-        Val handler = rc->fields[idx * 2 + 1];
-        if (handler.type != T_QUOT)
-            slap_panic("match: value for '%s' is %s, expected Quotation",
-                sym_names[key], type_name(handler.type));
-        Val body = val_clone(handler);
+    Val body;
+    if (rec_get(dispatch.rec, key, &body)) {
+        Val body_c = val_clone(body);
         val_free(dispatch);
-        val_free(default_q);
-        exec_quot(body); val_free(body);
+        exec_tuple(body_c); val_free(body_c);
+        val_free(default_b);
     } else {
         val_free(dispatch);
-        exec_quot(default_q); val_free(default_q);
+        exec_tuple(default_b); val_free(default_b);
     }
 }
-// -- heap
-static void p_box(void) { push(VAL_BOX(heap_alloc(pop()))); }
-static void p_borrow(void) {
-    Val q = pop_quot(), v = pop();
-    int base = sp;
-    if (v.type == T_BOX) {
-        if (!heap[v.box].alive) slap_panic("borrow: use-after-free on box %u", v.box);
-        Val borrowed = heap[v.box].val;
-        borrowed.borrowed = true;
-        push(borrowed);
-    } else {
-        push(val_clone(v));
+
+// -- Bool --
+static void p_not(void) { int64_t v = pop_int(); push(VAL_INT(v == 0 ? 1 : 0)); }
+static void p_and(void) { int64_t b = pop_int(), a = pop_int(); push(VAL_INT((a != 0 && b != 0) ? 1 : 0)); }
+static void p_or(void)  { int64_t b = pop_int(), a = pop_int(); push(VAL_INT((a != 0 || b != 0) ? 1 : 0)); }
+
+// -- Compare --
+static void p_eq(void) {
+    Val b = pop(), a = pop();
+    bool r = val_eq(a, b);
+    val_free(a); val_free(b);
+    push(VAL_INT(r ? 1 : 0));
+}
+
+static void p_lt(void) {
+    Val b = pop(), a = pop();
+    if (a.type != b.type) slap_panic("%s: type mismatch (%s vs %s)", current_word, type_name(a.type), type_name(b.type));
+    bool r;
+    switch (a.type) {
+        case T_INT:   r = a.ival < b.ival; break;
+        case T_FLOAT: r = a.fval < b.fval; break;
+        default: slap_panic("lt: cannot compare %s", type_name(a.type));
     }
-    exec_quot(q); val_free(q);
-    for (int i = sp; i > base; i--) stack[i] = stack[i - 1];
-    stack[base] = v; sp++;
+    push(VAL_INT(r ? 1 : 0));
 }
-static void p_clone(void) {
-    Val b = pop_box();
-    push(b); push(val_clone(heap[b.box].val));
-}
-static void p_free(void) {
-    Val v = pop();
-    if (v.type == T_BOX) {
-        if (!heap[v.box].alive) slap_panic("double-free on box %u", v.box);
-        val_free(heap[v.box].val); heap[v.box].alive = false;
-    } else { val_free(v); }
-}
-static void p_set(void) {
-    Val nv = pop(); Val b = pop_box();
-    val_free(heap[b.box].val); heap[b.box].val = nv; push(b);
-}
-// -- data
-static void p_quote(void) {
-    Val v = pop(); uint32_t q = quot_new(0, 0, g_scope, false);
-    quots[q].has_capture = true; quots[q].capture = v;
-    push(VAL_QUOT(q));
-}
-static void p_compose(void) {
-    Val b = pop_quot(), a = pop_quot();
-    Quot *tail = &quots[a.quot];
-    while (tail->compose_with != UINT32_MAX)
-        tail = &quots[tail->compose_with];
-    tail->compose_with = b.quot;
-    push(a);
-}
-static void p_cons(void) {
-    Val arr = pop_arr(), elem = pop();
-    Arr *a = &arrs[arr.arr];
-    arr_ensure(a);
-    memmove(a->data + 1, a->data, a->len * sizeof(Val));
-    a->data[0] = elem; a->len++; push(arr);
-}
-static void p_uncons(void) {
-    Val arr = pop_arr(); Arr *a = &arrs[arr.arr];
-    if (a->len == 0) slap_panic("uncons: empty array");
-    Val first = a->data[0];
-    memmove(a->data, a->data + 1, (a->len - 1) * sizeof(Val));
-    a->len--; push(first); push(arr);
-}
-static void p_pop(void) {
-    Val q = pop_quot();
-    Quot *qp = &quots[q.quot];
-    Quot *parent = NULL, *target = qp;
-    uint32_t target_idx = q.quot;
-    while (target->compose_with != UINT32_MAX) {
-        parent = target;
-        target_idx = target->compose_with;
-        target = &quots[target_idx];
-    }
-    Val extracted;
-    if (target->has_capture) {
-        extracted = target->capture;
-        target->has_capture = false;
-    } else if (target->body_len > 0) {
-        int i = target->body_start, end = i + target->body_len, last = i;
-        while (i < end) {
-            last = i;
-            if (nodes[i].type == N_PUSH || nodes[i].type == N_WORD) i++;
-            else i += 1 + nodes[i].body.len;
-        }
-        Node *n = &nodes[last];
-        switch (n->type) {
-        case N_PUSH:  extracted = val_clone(n->literal); break;
-        case N_QUOTE: {
-            uint32_t env = target->owns_env ? scope_snapshot(target->env) : target->env;
-            uint32_t nq = quot_new(n->body.start, n->body.len, env, target->owns_env);
-            extracted = VAL_QUOT(nq);
-            break;
-        }
-        case N_WORD:  extracted = VAL_SYM(n->sym); break;
-        default:
-            slap_panic("pop: cannot extract %s from quotation (use apply instead)",
-                n->type == N_ARRAY ? "array literal" : "record literal");
-        }
-        target->body_len = last - target->body_start;
-    } else {
-        slap_panic("pop: empty quotation");
-    }
-    if (parent && target->body_len == 0 && !target->has_capture
-        && target->compose_with == UINT32_MAX) {
-        parent->compose_with = UINT32_MAX;
-        pool_free(quot_freelist, &quot_free_count, MAX_QUOTS, (int)target_idx);
-    }
-    push(q);
-    push(extracted);
-}
-// -- records
-static void p_get(void) {
-    uint32_t key = pop_sym(); Val r = pop_rec(); Rec *rc = &recs[r.rec];
-    int idx = rec_find(rc, key);
-    if (idx < 0) slap_panic("get: key '%s' not found in record", sym_names[key]);
-    push(r); push(val_clone(rc->fields[idx * 2 + 1]));
-}
-static void p_put(void) {
-    uint32_t key = pop_sym(); Val val = pop(); Val r = pop_rec();
-    rec_add(r.rec, key, val); push(r);
-}
-static void p_remove(void) {
-    uint32_t key = pop_sym(); Val r = pop_rec(); Rec *rc = &recs[r.rec];
-    int idx = rec_find(rc, key);
-    if (idx < 0) slap_panic("remove: key '%s' not found", sym_names[key]);
-    Val removed = rc->fields[idx * 2 + 1];
-    rc->count--;
-    if (idx < rc->count) { rc->fields[idx*2] = rc->fields[rc->count*2]; rc->fields[idx*2+1] = rc->fields[rc->count*2+1]; }
-    push(r); push(removed);
-}
-// -- math
-static void p_plus(void)   { int64_t b = pop_int(), a = pop_int(); push(VAL_INT(a + b)); }
-static void p_sub(void)    { int64_t b = pop_int(), a = pop_int(); push(VAL_INT(a - b)); }
-static void p_mul(void)    { int64_t b = pop_int(), a = pop_int(); push(VAL_INT(a * b)); }
-static void p_divmod(void) {
+
+// -- Int Math --
+#define BINOP_INT(name, op) static void p_##name(void) { int64_t b=pop_int(),a=pop_int(); push(VAL_INT(a op b)); }
+BINOP_INT(iplus, +) BINOP_INT(isub, -) BINOP_INT(imul, *)
+static void p_idiv(void) {
     int64_t b = pop_int(), a = pop_int();
-    if (b == 0) slap_panic("divmod: division by zero");
-    int64_t q = a / b, r = a % b;
-    if (r != 0 && (r ^ b) < 0) { q--; r += b; }
-    push(VAL_INT(q)); push(VAL_INT(r));
+    if (b == 0) slap_panic("idiv: division by zero");
+    push(VAL_INT(a / b));
 }
-// -- float math
-static void p_fadd(void) { double b = pop_float(), a = pop_float(); push(VAL_FLOAT(a + b)); }
-static void p_fsub(void) { double b = pop_float(), a = pop_float(); push(VAL_FLOAT(a - b)); }
-static void p_fmul(void) { double b = pop_float(), a = pop_float(); push(VAL_FLOAT(a * b)); }
+static void p_imod(void) {
+    int64_t b = pop_int(), a = pop_int();
+    if (b == 0) slap_panic("imod: division by zero");
+    push(VAL_INT(a % b));
+}
+
+// -- Float Math --
+#define BINOP_FLOAT(name, op) static void p_##name(void) { double b=pop_float(),a=pop_float(); push(VAL_FLOAT(a op b)); }
+#define UNOP_FLOAT(name, fn) static void p_##name(void) { push(VAL_FLOAT(fn(pop_float()))); }
+#define BINOP_FLOAT2(name, fn) static void p_##name(void) { double b=pop_float(),a=pop_float(); push(VAL_FLOAT(fn(a,b))); }
+BINOP_FLOAT(fplus, +) BINOP_FLOAT(fsub, -) BINOP_FLOAT(fmul, *)
 static void p_fdiv(void) {
     double b = pop_float(), a = pop_float();
     if (b == 0.0) slap_panic("fdiv: division by zero");
     push(VAL_FLOAT(a / b));
 }
-static void p_flt(void)  { double b = pop_float(), a = pop_float(); push(VAL_BOOL(a < b)); }
+UNOP_FLOAT(fsqrt, sqrt) UNOP_FLOAT(fsin, sin) UNOP_FLOAT(fcos, cos) UNOP_FLOAT(ftan, tan)
+UNOP_FLOAT(ffloor, floor) UNOP_FLOAT(fceil, ceil) UNOP_FLOAT(fround, round)
+UNOP_FLOAT(fexp, exp) UNOP_FLOAT(flog, log)
+BINOP_FLOAT2(fpow, pow) BINOP_FLOAT2(fatan2, atan2)
+
+// -- Polymorphic arithmetic --
+#define POLY_BINOP(name, op) static void p_##name(void) { \
+    Val b = pop(), a = pop(); \
+    if (a.type != b.type) slap_panic(#name ": type mismatch: %s vs %s", type_name(a.type), type_name(b.type)); \
+    switch (a.type) { \
+        case T_INT:   push(VAL_INT(a.ival op b.ival)); break; \
+        case T_FLOAT: push(VAL_FLOAT(a.fval op b.fval)); break; \
+        default: slap_panic(#name ": unsupported type %s", type_name(a.type)); \
+    } \
+}
+POLY_BINOP(plus, +) POLY_BINOP(sub, -) POLY_BINOP(mul, *)
+static void p_div(void) {
+    Val b = pop(), a = pop();
+    if (a.type != b.type) slap_panic("div: type mismatch: %s vs %s", type_name(a.type), type_name(b.type));
+    switch (a.type) {
+        case T_INT:
+            if (b.ival == 0) slap_panic("div: division by zero");
+            push(VAL_INT(a.ival / b.ival)); break;
+        case T_FLOAT:
+            if (b.fval == 0.0) slap_panic("div: division by zero");
+            push(VAL_FLOAT(a.fval / b.fval)); break;
+        default: slap_panic("div: unsupported type %s", type_name(a.type));
+    }
+}
+static void p_mod(void) {
+    int64_t b = pop_int(), a = pop_int();
+    if (b == 0) slap_panic("mod: division by zero");
+    push(VAL_INT(a % b));
+}
+
+// -- Conversion --
 static void p_itof(void) { push(VAL_FLOAT((double)pop_int())); }
 static void p_ftoi(void) { push(VAL_INT((int64_t)pop_float())); }
-// -- float math extended
-static void p_sqrt(void)  { push(VAL_FLOAT(sqrt(pop_float()))); }
-static void p_sin(void)   { push(VAL_FLOAT(sin(pop_float()))); }
-static void p_cos(void)   { push(VAL_FLOAT(cos(pop_float()))); }
-static void p_floor(void) { push(VAL_FLOAT(floor(pop_float()))); }
-static void p_ceil(void)  { push(VAL_FLOAT(ceil(pop_float()))); }
-static void p_round(void) { push(VAL_FLOAT(round(pop_float()))); }
-static void p_atan2(void) { double b = pop_float(), a = pop_float(); push(VAL_FLOAT(atan2(a, b))); }
-static void p_fmod(void)  { double b = pop_float(), a = pop_float(); if (b == 0.0) slap_panic("fmod: division by zero"); push(VAL_FLOAT(fmod(a, b))); }
-static void p_pow(void)   { double b = pop_float(), a = pop_float(); push(VAL_FLOAT(pow(a, b))); }
-static void p_log(void)   { double a = pop_float(); if (a <= 0.0) slap_panic("log: argument must be positive, got %g", a); push(VAL_FLOAT(log(a))); }
-static void p_tan(void)   { push(VAL_FLOAT(tan(pop_float()))); }
-static void p_asin(void)  { push(VAL_FLOAT(asin(pop_float()))); }
-static void p_acos(void)  { push(VAL_FLOAT(acos(pop_float()))); }
-static void p_exp(void)   { push(VAL_FLOAT(exp(pop_float()))); }
-// -- float compare
-static void p_feq(void)   { double b = pop_float(), a = pop_float(); push(VAL_BOOL(a == b)); }
-// -- compare
-static void p_eq(void) { Val b = pop(), a = pop(); bool eq = val_eq(a, b); val_free(a); val_free(b); push(VAL_BOOL(eq)); }
-static void p_lt(void) { int64_t b = pop_int(), a = pop_int(); push(VAL_BOOL(a < b)); }
-// -- meta
-static void p_def(void) { Val val = pop(); uint32_t name = pop_sym(); scope_bind(g_scope, name, val); }
-static void p_let(void) { uint32_t name = pop_sym(); Val val = pop(); scope_bind(g_scope, name, val); }
-// -- stdlib
-static void p_len(void) { Val a = pop_arr(); push(a); push(VAL_INT(arrs[a.arr].len)); }
-static void p_nth(void) {
-    int64_t idx = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (idx < 0 || idx >= ar->len) slap_panic("nth: index %lld out of bounds (len %d)", (long long)idx, ar->len);
-    push(a); push(val_clone(ar->data[idx]));
-}
-static void p_set_nth(void) {
-    Val val = pop(); int64_t idx = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (idx < 0 || idx >= ar->len) slap_panic("set-nth: index %lld out of bounds (len %d)", (long long)idx, ar->len);
-    val_free(ar->data[idx]); ar->data[idx] = val; push(a);
-}
-static void p_cat(void) {
-    Val b = pop_arr(), a = pop_arr(); Arr *ab = &arrs[b.arr];
-    for (int i = 0; i < ab->len; i++) arr_push(a.arr, val_clone(ab->data[i]));
-    val_free(b); push(a);
-}
-static void p_slice(void) {
-    int64_t end = pop_int(), start = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (start < 0) start = 0; if (end > ar->len) end = ar->len;
-    uint32_t na = arr_new();
-    for (int64_t i = start; i < end; i++) arr_push(na, val_clone(ar->data[i]));
-    push(a); push(VAL_ARR(na));
-}
-static void p_arr_insert(void) {
-    Val val = pop(); int64_t idx = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (idx < 0 || idx > ar->len) slap_panic("array-insert: index out of bounds");
-    arr_ensure(ar);
-    memmove(ar->data + idx + 1, ar->data + idx, (ar->len - idx) * sizeof(Val));
-    ar->data[idx] = val; ar->len++; push(a);
-}
-static void p_arr_remove(void) {
-    int64_t idx = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (idx < 0 || idx >= ar->len) slap_panic("array-remove: index out of bounds");
-    Val removed = ar->data[idx];
-    memmove(ar->data + idx, ar->data + idx + 1, (ar->len - idx - 1) * sizeof(Val));
-    ar->len--; push(a); push(removed);
-}
-// -- extra
-static void p_range(void) {
-    int64_t n = pop_int(); uint32_t a = arr_new();
-    for (int64_t i = 0; i < n; i++) arr_push(a, VAL_INT(i));
-    push(VAL_ARR(a));
-}
-static void p_for_each(void) {
-    Val q = pop_quot(), a = pop_arr(); Arr *ar = &arrs[a.arr];
-    for (int i = 0; i < ar->len; i++) { push(val_clone(ar->data[i])); exec_quot(q); }
-    val_free(a); val_free(q);
-}
-static void p_for_index(void) {
-    Val q = pop_quot(), a = pop_arr(); Arr *ar = &arrs[a.arr];
-    for (int i = 0; i < ar->len; i++) {
-        push(val_clone(ar->data[i]));
-        push(VAL_INT(i));
-        exec_quot(q);
+
+// -- Tuples --
+static void p_compose(void) {
+    Val b = pop_tuple(), a = pop_tuple();
+    TupleObj *ta = &tuples[a.tuple];
+    uint32_t env = ta->env;
+    bool owns = false;
+    if (ta->owns_env && env != NONE && env != 0) { env = scope_snapshot(env); owns = true; }
+    uint32_t result = tuple_new(ta->body_start, ta->body_len, env, owns);
+    // Clone a's compose chain
+    uint32_t *tail = &tuples[result].compose_with;
+    uint32_t cur = ta->compose_with;
+    while (cur != NONE) {
+        TupleObj *tc = &tuples[cur];
+        uint32_t cenv = tc->env; bool cowns = false;
+        if (tc->owns_env && cenv != NONE && cenv != 0) { cenv = scope_snapshot(cenv); cowns = true; }
+        uint32_t link = tuple_new(tc->body_start, tc->body_len, cenv, cowns);
+        *tail = link;
+        tail = &tuples[link].compose_with;
+        cur = tc->compose_with;
     }
-    val_free(a); val_free(q);
-}
-// -- tacit combinators
-static void p_both(void) {
-    Val q = pop_quot(), y = pop(), x = pop();
-    push(x); exec_quot(q);
-    push(y); exec_quot(q);
-    val_free(q);
-}
-// -- array extensions (APL/Uiua-inspired)
-static int sort_cmp(const void *a, const void *b) {
-    const Val *va = a, *vb = b;
-    if (va->type == T_INT && vb->type == T_INT)
-        return (va->ival > vb->ival) - (va->ival < vb->ival);
-    if (va->type == T_FLOAT && vb->type == T_FLOAT)
-        return (va->fval > vb->fval) - (va->fval < vb->fval);
-    slap_panic("sort: expected Int or Float elements, got %s", type_name(va->type));
-    return 0;
-}
-static void p_sort(void) {
-    Val a = pop_arr();
-    qsort(arrs[a.arr].data, arrs[a.arr].len, sizeof(Val), sort_cmp);
-    push(a);
-}
-static void p_scan(void) {
-    Val q = pop_quot(), acc = pop(), a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    arr_push(result, val_clone(acc));
-    for (int i = 0; i < ar->len; i++) {
-        push(acc); push(val_clone(ar->data[i]));
-        exec_quot(q);
-        acc = pop();
-        arr_push(result, val_clone(acc));
-    }
-    val_free(acc); val_free(a); val_free(q);
-    push(VAL_ARR(result));
-}
-static void p_zip_with(void) {
-    Val q = pop_quot(), b = pop_arr(), a = pop_arr();
-    Arr *ar_a = &arrs[a.arr], *ar_b = &arrs[b.arr];
-    int n = ar_a->len < ar_b->len ? ar_a->len : ar_b->len;
-    uint32_t result = arr_new();
-    for (int i = 0; i < n; i++) {
-        push(val_clone(ar_a->data[i]));
-        push(val_clone(ar_b->data[i]));
-        exec_quot(q);
-        arr_push(result, pop());
-    }
-    val_free(a); val_free(b); val_free(q);
-    push(VAL_ARR(result));
-}
-static void p_table(void) {
-    Val q = pop_quot(), b = pop_arr(), a = pop_arr();
-    Arr *ar_a = &arrs[a.arr], *ar_b = &arrs[b.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar_a->len; i++) {
-        uint32_t row = arr_new();
-        for (int j = 0; j < ar_b->len; j++) {
-            push(val_clone(ar_a->data[i]));
-            push(val_clone(ar_b->data[j]));
-            exec_quot(q);
-            arr_push(row, pop());
-        }
-        arr_push(result, VAL_ARR(row));
-    }
-    val_free(a); val_free(b); val_free(q);
-    push(VAL_ARR(result));
-}
-static void p_unique(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar->len; i++) {
-        bool found = false;
-        Arr *res = &arrs[result];
-        for (int j = 0; j < res->len; j++) {
-            if (val_eq(ar->data[i], res->data[j])) { found = true; break; }
-        }
-        if (!found) arr_push(result, val_clone(ar->data[i]));
-    }
+    // Attach b at the end of the chain
+    *tail = b.tuple;
+    tuples[b.tuple].rc++;
     val_free(a);
-    push(VAL_ARR(result));
-}
-static void p_where(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar->len; i++) {
-        Val *v = &ar->data[i];
-        bool truthy = (v->type == T_BOOL && v->bval) || (v->type == T_INT && v->ival != 0);
-        if (truthy) arr_push(result, VAL_INT(i));
-    }
-    val_free(a);
-    push(VAL_ARR(result));
-}
-static void p_rotate(void) {
-    int64_t n = pop_int(); Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (ar->len == 0) { push(a); return; }
-    n = ((n % ar->len) + ar->len) % ar->len;
-    if (n == 0) { push(a); return; }
-    Val *tmp = malloc(n * sizeof(Val));
-    memcpy(tmp, ar->data, n * sizeof(Val));
-    memmove(ar->data, ar->data + n, (ar->len - n) * sizeof(Val));
-    memcpy(ar->data + ar->len - n, tmp, n * sizeof(Val));
-    free(tmp);
-    push(a);
-}
-// -- array extensions 2 (Uiua-inspired)
-static Val *rise_ref_arr;
-static int rise_cmp(const void *a, const void *b) {
-    int64_t ia = ((const Val*)a)->ival, ib = ((const Val*)b)->ival;
-    return sort_cmp(&rise_ref_arr[ia], &rise_ref_arr[ib]);
-}
-static int fall_cmp(const void *a, const void *b) {
-    return -rise_cmp(a, b);
-}
-static void p_rise(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar->len; i++) arr_push(result, VAL_INT(i));
-    rise_ref_arr = ar->data;
-    qsort(arrs[result].data, arrs[result].len, sizeof(Val), rise_cmp);
-    push(a); push(VAL_ARR(result));
-}
-static void p_fall(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar->len; i++) arr_push(result, VAL_INT(i));
-    rise_ref_arr = ar->data;
-    qsort(arrs[result].data, arrs[result].len, sizeof(Val), fall_cmp);
-    push(a); push(VAL_ARR(result));
-}
-static void p_classify(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    int next_class = 0;
-    for (int i = 0; i < ar->len; i++) {
-        int cls = -1;
-        for (int j = 0; j < i; j++) {
-            if (val_eq(ar->data[i], ar->data[j])) {
-                cls = arrs[result].data[j].ival;
-                break;
-            }
-        }
-        if (cls < 0) cls = next_class++;
-        arr_push(result, VAL_INT(cls));
-    }
-    push(a); push(VAL_ARR(result));
-}
-static void p_occurrences(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    uint32_t result = arr_new();
-    for (int i = 0; i < ar->len; i++) {
-        int count = 0;
-        for (int j = 0; j < i; j++) {
-            if (val_eq(ar->data[i], ar->data[j])) count++;
-        }
-        arr_push(result, VAL_INT(count));
-    }
-    push(a); push(VAL_ARR(result));
-}
-static void p_replicate(void) {
-    Val counts = pop_arr(), data = pop_arr();
-    Arr *ac = &arrs[counts.arr], *ad = &arrs[data.arr];
-    if (ac->len != ad->len) slap_panic("replicate: arrays must be same length (got %d and %d)", ac->len, ad->len);
-    uint32_t result = arr_new();
-    for (int i = 0; i < ac->len; i++) {
-        if (ac->data[i].type != T_INT) slap_panic("replicate: counts must be Int");
-        int64_t n = ac->data[i].ival;
-        if (n < 0) slap_panic("replicate: count must be non-negative, got %lld", (long long)n);
-        for (int64_t j = 0; j < n; j++) arr_push(result, val_clone(ad->data[i]));
-    }
-    val_free(counts); val_free(data);
-    push(VAL_ARR(result));
-}
-static void p_find(void) {
-    Val needle = pop_arr(), haystack = pop_arr();
-    Arr *an = &arrs[needle.arr], *ah = &arrs[haystack.arr];
-    uint32_t result = arr_new();
-    if (an->len == 0) {
-        for (int i = 0; i < ah->len; i++) arr_push(result, VAL_BOOL(true));
-    } else {
-        for (int i = 0; i < ah->len; i++) {
-            bool match = false;
-            if (i + an->len <= ah->len) {
-                match = true;
-                for (int j = 0; j < an->len; j++) {
-                    if (!val_eq(ah->data[i + j], an->data[j])) { match = false; break; }
-                }
-            }
-            arr_push(result, VAL_BOOL(match));
-        }
-    }
-    val_free(needle);
-    push(haystack); push(VAL_ARR(result));
-}
-static void p_base(void) {
-    int64_t radix = pop_int(), num = pop_int();
-    if (radix < 2) slap_panic("base: radix must be >= 2, got %lld", (long long)radix);
-    uint32_t result = arr_new();
-    if (num == 0) { arr_push(result, VAL_INT(0)); push(VAL_ARR(result)); return; }
-    bool neg = num < 0; if (neg) num = -num;
-    while (num > 0) { arr_push(result, VAL_INT(num % radix)); num /= radix; }
-    // reverse to get MSB first
-    Arr *ar = &arrs[result];
-    for (int i = 0, j = ar->len - 1; i < j; i++, j--) {
-        Val tmp = ar->data[i]; ar->data[i] = ar->data[j]; ar->data[j] = tmp;
-    }
-    if (neg) ar->data[0].ival = -ar->data[0].ival;
-    push(VAL_ARR(result));
-}
-static void p_transpose(void) {
-    Val a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (ar->len == 0) { push(a); return; }
-    if (ar->data[0].type != T_ARR) slap_panic("transpose: expected array of arrays");
-    int rows = ar->len, cols = arrs[ar->data[0].arr].len;
-    for (int i = 1; i < rows; i++) {
-        if (ar->data[i].type != T_ARR) slap_panic("transpose: expected array of arrays");
-        if (arrs[ar->data[i].arr].len != cols)
-            slap_panic("transpose: inner arrays must be same length (got %d and %d)", cols, arrs[ar->data[i].arr].len);
-    }
-    uint32_t result = arr_new();
-    for (int c = 0; c < cols; c++) {
-        uint32_t row = arr_new();
-        for (int r = 0; r < rows; r++)
-            arr_push(row, val_clone(arrs[ar->data[r].arr].data[c]));
-        arr_push(result, VAL_ARR(row));
-    }
-    val_free(a);
-    push(VAL_ARR(result));
-}
-// -- higher-order array ops
-static void p_group(void) {
-    Val q = pop_quot(), data = pop_arr(), indices = pop_arr();
-    Arr *ai = &arrs[indices.arr], *ad = &arrs[data.arr];
-    if (ai->len != ad->len) slap_panic("group: arrays must be same length (got %d and %d)", ai->len, ad->len);
-    // find max index to determine bucket count
-    int64_t max_idx = -1;
-    for (int i = 0; i < ai->len; i++) {
-        if (ai->data[i].type != T_INT) slap_panic("group: indices must be Int");
-        int64_t idx = ai->data[i].ival;
-        if (idx < 0) continue; // negative indices are dropped
-        if (idx > max_idx) max_idx = idx;
-    }
-    // build buckets
-    uint32_t result = arr_new();
-    for (int64_t b = 0; b <= max_idx; b++) {
-        uint32_t bucket = arr_new();
-        for (int i = 0; i < ai->len; i++) {
-            if (ai->data[i].ival == b)
-                arr_push(bucket, val_clone(ad->data[i]));
-        }
-        push(VAL_ARR(bucket));
-        exec_quot(q);
-        arr_push(result, pop());
-    }
-    val_free(indices); val_free(data); val_free(q);
-    push(VAL_ARR(result));
-}
-static void p_partition(void) {
-    Val q = pop_quot(), data = pop_arr(), markers = pop_arr();
-    Arr *am = &arrs[markers.arr], *ad = &arrs[data.arr];
-    if (am->len != ad->len) slap_panic("partition: arrays must be same length (got %d and %d)", am->len, ad->len);
-    uint32_t result = arr_new();
-    int i = 0;
-    while (i < am->len) {
-        if (am->data[i].type != T_INT) slap_panic("partition: markers must be Int");
-        if (am->data[i].ival <= 0) { i++; continue; } // skip zeros/negatives
-        int64_t cur = am->data[i].ival;
-        uint32_t segment = arr_new();
-        while (i < am->len && am->data[i].type == T_INT && am->data[i].ival == cur) {
-            arr_push(segment, val_clone(ad->data[i]));
-            i++;
-        }
-        push(VAL_ARR(segment));
-        exec_quot(q);
-        arr_push(result, pop());
-    }
-    val_free(markers); val_free(data); val_free(q);
-    push(VAL_ARR(result));
-}
-static void p_reduce(void) {
-    Val q = pop_quot(), a = pop_arr(); Arr *ar = &arrs[a.arr];
-    if (ar->len == 0) slap_panic("reduce: empty array");
-    push(val_clone(ar->data[0]));
-    for (int i = 1; i < ar->len; i++) {
-        push(val_clone(ar->data[i]));
-        exec_quot(q);
-    }
-    val_free(a); val_free(q);
-}
-// -- runtime
-static void p_clear(void) {
-    int64_t c = pop_int(); uint32_t color = palette[c % 16];
-    for (int i = 0; i < screen_w * screen_h; i++) pixels[i] = color;
-}
-static void p_rect(void) {
-    int64_t c = pop_int(), h = pop_int(), w = pop_int(), y = pop_int(), x = pop_int();
-    uint32_t color = palette[((c % 16) + 16) % 16];
-    for (int dy = 0; dy < h; dy++)
-        for (int dx = 0; dx < w; dx++) {
-            int px = (int)x + dx, py = (int)y + dy;
-            if (px >= 0 && px < screen_w && py >= 0 && py < screen_h)
-                pixels[py * screen_w + px] = color;
-        }
-}
-static void p_draw_char(void) {
-    int64_t c = pop_int(), y = pop_int(), x = pop_int(), cp = pop_int();
-    if (cp >= 32 && cp <= 126) {
-        const uint8_t *glyph = font_data[cp - 32];
-        uint32_t color = palette[((c % 16) + 16) % 16];
-        for (int row = 0; row < 8; row++) {
-            uint8_t bits = glyph[row];
-            for (int col = 0; col < 8; col++)
-                if (bits & (0x80 >> col)) {
-                    int px = (int)x + col, py = (int)y + row;
-                    if (px >= 0 && px < screen_w && py >= 0 && py < screen_h)
-                        pixels[py * screen_w + px] = color;
-                }
-        }
-    }
-}
-static void p_present(void) {
-    if (!test_mode) {
-        SDL_UpdateTexture(texture, NULL, pixels, screen_w * sizeof(uint32_t));
-        SDL_RenderClear(renderer); SDL_RenderCopy(renderer, texture, NULL, NULL);
-        SDL_RenderPresent(renderer); pump_events();
-    }
-}
-static void p_read_key(void) {
-    pump_events();
-    int code = -1;
-    if (key_head != key_tail) { code = key_buf[key_tail]; key_tail = (key_tail + 1) % KEY_BUF_SIZE; }
-    push(VAL_INT(code));
-}
-static void p_halt(void) {
-#ifdef __EMSCRIPTEN__
-    emscripten_force_exit(0);
-#else
-    exit(0);
-#endif
-}
-static void p_sleep(void) {
-    int64_t ms = pop_int();
-    if (!test_mode) {
-#ifdef __EMSCRIPTEN__
-        emscripten_sleep((uint32_t)ms);
-#else
-        SDL_Delay((uint32_t)ms);
-#endif
-    }
-}
-static void p_random(void) {
-    int64_t n = pop_int();
-    if (n <= 0) slap_panic("random: argument must be positive, got %lld", (long long)n);
-    push(VAL_INT(rand() % n));
-}
-static void p_mouse_x(void) { int v=0; if(!test_mode){SDL_GetMouseState(&v,NULL); v/=screen_scale;} push(VAL_INT(v)); }
-static void p_mouse_y(void) { int v=0; if(!test_mode){SDL_GetMouseState(NULL,&v); v/=screen_scale;} push(VAL_INT(v)); }
-static void p_mouse_down(void) { push(VAL_BOOL(!test_mode && (SDL_GetMouseState(NULL,NULL)&SDL_BUTTON(1))!=0)); }
-static void p_screen_w(void) { push(VAL_INT(screen_w)); }
-static void p_screen_h(void) { push(VAL_INT(screen_h)); }
-// -- test/debug
-static void p_assert(void) {
-    Val v = pop();
-    if (v.type != T_BOOL) slap_panic("assert: expected Bool, got %s", type_name(v.type));
-    if (!v.bval) slap_panic("assertion failed");
-}
-static void p_print_stack(void) {
-    fprintf(stderr, "stack (%d):", sp);
-    for (int i = 0; i < sp; i++) { fprintf(stderr, " "); val_print(stack[i], stderr); }
-    fprintf(stderr, "\n");
-}
-static void p_print(void) { Val v = pop(); val_print(v, stdout); printf("\n"); val_free(v); }
-// ── Dict primitives ─────────────────────────────────────────────────────────
-static void p_dict_new(void) { push(VAL_DICT(dict_new())); }
-static void p_dict_set(void) {
-    Val val = pop(), key = pop(), d = pop();
-    if (d.type != T_DICT) slap_panic("dict-set: expected Dict");
-    dict_set(d.dict, key, val); push(d);
-}
-static void p_dict_get(void) {
-    Val key = pop(), d = pop();
-    if (d.type != T_DICT) slap_panic("dict-get: expected Dict");
-    Val found;
-    if (!dict_lookup(d.dict, key, &found)) slap_panic("dict-get: key not found");
-    push(d); push(val_clone(found));
-}
-static void p_dict_has(void) {
-    Val key = pop(), d = pop();
-    if (d.type != T_DICT) slap_panic("dict-has: expected Dict");
-    Val found;
-    bool ok = dict_lookup(d.dict, key, &found);
-    push(d); push(VAL_BOOL(ok));
-}
-static void p_dict_keys(void) {
-    Val d = pop();
-    if (d.type != T_DICT) slap_panic("dict-keys: expected Dict");
-    DictObj *di = &dicts[d.dict];
-    uint32_t a = arr_new();
-    for (int i = 0; i < di->cap; i++)
-        if (di->used[i]) arr_push(a, val_clone(di->keys[i]));
-    push(d); push(VAL_ARR(a));
-}
-static void p_dict_count(void) {
-    Val d = pop();
-    if (d.type != T_DICT) slap_panic("dict-count: expected Dict");
-    push(d); push(VAL_INT(dicts[d.dict].count));
-}
-static void p_dict_remove(void) {
-    Val key = pop(), d = pop();
-    if (d.type != T_DICT) slap_panic("dict-remove: expected Dict");
-    DictObj *di = &dicts[d.dict];
-    uint64_t h = val_hash(key);
-    int slot = (int)(h & (uint64_t)(di->cap - 1));
-    bool found = false;
-    for (int i = 0; i < di->cap; i++) {
-        if (!di->used[slot]) break;
-        if (val_eq(di->keys[slot], key)) {
-            Val removed = di->vals[slot];
-            di->used[slot] = false; di->count--;
-            val_free(di->keys[slot]);
-            push(d); push(removed);
-            found = true; break;
-        }
-        slot = (slot + 1) & (di->cap - 1);
-    }
-    if (!found) slap_panic("dict-remove: key not found");
+    val_free(b);
+    push(VAL_TUPLE(result));
 }
 
-// O(1) boxed-array operations for interpreter efficiency
-static void p_box_nth(void) {
-    int64_t idx = pop_int(); Val box = pop();
-    Val arr = heap[box.box].val;
-    if (arr.type != T_ARR) slap_panic("box-nth: box does not contain array");
-    Arr *a = &arrs[arr.arr];
-    if (idx < 0 || idx >= a->len) slap_panic("box-nth: index %lld out of bounds (len %d)", (long long)idx, a->len);
-    push(box); push(val_clone(a->data[idx]));
+static void p_cons(void) {
+    Val elem = pop();
+    Val t = pop_tuple();
+    TupleObj *tu = &tuples[t.tuple];
+    int new_start = node_count;
+    int new_len = tu->body_len + 1;
+    if (node_count + new_len > MAX_NODES) slap_panic("cons: node overflow");
+    memcpy(&nodes[new_start], &nodes[tu->body_start], (size_t)tu->body_len * sizeof(Node));
+    nodes[new_start + tu->body_len] = (Node){.type = N_PUSH, .line = panic_line, .col = panic_col, .literal = elem};
+    node_count += new_len;
+    uint32_t env = tu->env;
+    bool owns = false;
+    if (tu->owns_env && env != NONE && env != 0) { env = scope_snapshot(env); owns = true; }
+    uint32_t result = tuple_new(new_start, new_len, env, owns);
+    if (tu->compose_with != NONE) { tuples[result].compose_with = tu->compose_with; tuples[tu->compose_with].rc++; }
+    val_free(t);
+    push(VAL_TUPLE(result));
 }
-static void p_box_len(void) {
-    Val box = pop(); Val arr = heap[box.box].val;
-    if (arr.type != T_ARR) slap_panic("box-len: box does not contain array");
-    push(box); push(VAL_INT(arrs[arr.arr].len));
+
+static void p_car(void) {
+    Val t = pop_tuple();
+    TupleObj *tu = &tuples[t.tuple];
+    if (tu->body_len == 0) slap_panic("car: empty tuple");
+    int last_idx = tu->body_start;
+    for (int ii = tu->body_start; ii < tu->body_start + tu->body_len; ) {
+        last_idx = ii;
+        Node *nn = &nodes[ii];
+        if (nn->type == N_TUPLE || nn->type == N_SLICE || nn->type == N_RECORD) ii += 1 + nn->body.len;
+        else ii++;
+    }
+    Node *last = &nodes[last_idx];
+    Val extracted;
+    int last_size;
+    switch (last->type) {
+        case N_PUSH:
+            extracted = val_clone(last->literal);
+            last_size = 1;
+            break;
+        case N_WORD:
+            extracted = VAL_SYM(last->sym);
+            last_size = 1;
+            break;
+        default: {
+            // N_TUPLE, N_SLICE, N_RECORD: evaluate to get the value
+            int save_sp = sp;
+            last_size = 1 + last->body.len;
+            uint32_t saved_lazy = g_lazy_parent;
+            uint32_t child = scope_new(tu->env);
+            g_lazy_parent = NONE;
+            eval(last_idx, last_size, child);
+            scope_release(child);
+            g_lazy_parent = saved_lazy;
+            if (sp != save_sp + 1) slap_panic("car: bracket node produced %d values, expected 1", sp - save_sp);
+            extracted = pop();
+            break;
+        }
+    }
+    int shorter_len = tu->body_len - last_size;
+    uint32_t env = tu->env;
+    bool owns = false;
+    if (tu->owns_env && env != NONE && env != 0) { env = scope_snapshot(env); owns = true; }
+    uint32_t result = tuple_new(tu->body_start, shorter_len, env, owns);
+    if (tu->compose_with != NONE) { tuples[result].compose_with = tu->compose_with; tuples[tu->compose_with].rc++; }
+    val_free(t);
+    push(VAL_TUPLE(result));
+    push(extracted);
 }
-static void p_box_set_nth(void) {
-    Val val = pop(); int64_t idx = pop_int(); Val box = pop();
-    Val arr = heap[box.box].val;
-    if (arr.type != T_ARR) slap_panic("box-set-nth: box does not contain array");
-    Arr *a = &arrs[arr.arr];
-    if (idx < 0 || idx >= a->len) slap_panic("box-set-nth: index %lld out of bounds (len %d)", (long long)idx, a->len);
-    val_free(a->data[idx]); a->data[idx] = val; push(box);
+
+// -- Records --
+static void p_rec(void) {
+    Val t = pop_tuple();
+    int base = sp;
+    exec_tuple(t); val_free(t);
+    int n = sp - base;
+    Val *elems = malloc((size_t)n * sizeof(Val));
+    for (int i = 0; i < n; i++) elems[i] = stack[base + i];
+    sp = base;
+    uint32_t r = rec_new();
+    for (int i = 0; i < n; i++) {
+        if (elems[i].type != T_TUPLE) slap_panic("rec: elements must be (key value) tuples, got %s", type_name(elems[i].type));
+        int pair_base = sp;
+        exec_tuple(elems[i]); val_free(elems[i]);
+        if (sp - pair_base != 2) slap_panic("rec: each tuple must produce 2 values (key, value), got %d", sp - pair_base);
+        Val kv = stack[pair_base], vv = stack[pair_base + 1];
+        sp = pair_base;
+        if (kv.type != T_SYM) slap_panic("rec: keys must be symbols, got %s", type_name(kv.type));
+        rec_set(r, kv.sym, vv);
+    }
+    free(elems);
+    push(VAL_REC(r));
 }
-static void p_box_push(void) {
-    Val val = pop(); Val box = pop();
-    Val arr = heap[box.box].val;
-    if (arr.type != T_ARR) slap_panic("box-push: box does not contain array");
-    arr_push(arr.arr, val); push(box);
+
+static void p_get(void) {
+    uint32_t key = pop_sym();
+    Val r = pop();
+    EXPECT(r, T_REC);
+    Val out;
+    if (!rec_get(r.rec, key, &out)) slap_panic("get: key '%s not found in record", sym_names[key]);
+    push(val_clone(out));
+    val_free(r);
 }
-static void p_box_pop(void) {
-    Val box = pop(); Val arr = heap[box.box].val;
-    if (arr.type != T_ARR) slap_panic("box-pop: box does not contain array");
-    Arr *a = &arrs[arr.arr];
-    if (a->len == 0) slap_panic("box-pop: empty array");
-    Val result = a->data[--a->len];
-    push(box); push(result);
+
+static void p_set(void) {
+    uint32_t key = pop_sym();
+    Val val = pop();
+    Val r = pop();
+    EXPECT(r, T_REC);
+    // create new record with updated field
+    RecObj *old = &recs[r.rec];
+    uint32_t nr = rec_new();
+    bool found = false;
+    for (int i = 0; i < old->count; i++) {
+        if (old->keys[i] == key) { rec_set(nr, key, val); found = true; }
+        else rec_set(nr, old->keys[i], val_clone(old->vals[i]));
+    }
+    if (!found) rec_set(nr, key, val);
+    val_free(r);
+    push(VAL_REC(nr));
 }
-static void p_slurp(void) {
-    Val path_arr = pop_arr(); Arr *a = &arrs[path_arr.arr];
-    char *path = malloc(a->len + 1);
-    for (int i = 0; i < a->len; i++) path[i] = (char)a->data[i].ival;
-    path[a->len] = 0; val_free(path_arr);
-    FILE *f = fopen(path, "rb");
-    if (!f) slap_panic("slurp: cannot open '%s'", path);
-    fseek(f, 0, SEEK_END); long len = ftell(f); fseek(f, 0, SEEK_SET);
-    uint32_t result = arr_new();
-    for (long i = 0; i < len; i++) { int ch = fgetc(f); arr_push(result, VAL_INT(ch)); }
-    fclose(f); free(path); push(VAL_ARR(result));
+
+// -- Slices --
+static void p_len(void) {
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    int n = slices[s.slice].len;
+    if (s.type == T_DICE) n /= 2;
+    val_free(s);
+    push(VAL_INT(n));
 }
+
+static void p_fold(void) {
+    Val body = pop_tuple();
+    Val acc = pop();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    push(acc);
+    for (int i = 0; i < sl->len; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+    }
+    val_free(body);
+    val_free(s);
+}
+
+static void p_reduce(void) {
+    Val body = pop_tuple();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    if (sl->len == 0) slap_panic("reduce: empty slice");
+    push(val_clone(sl->data[0]));
+    for (int i = 1; i < sl->len; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+    }
+    val_free(body);
+    val_free(s);
+}
+
+static void p_at(void) {
+    Val def = pop();
+    int64_t idx = pop_int();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    if (idx < 0 || idx >= sl->len) {
+        val_free(s);
+        push(def);
+    } else {
+        push(val_clone(sl->data[idx]));
+        val_free(s);
+        val_free(def);
+    }
+}
+
+static void p_put(void) {
+    Val new_val = pop();
+    int64_t idx = pop_int();
+    Val s = pop();
+    EXPECT(s, T_SLICE);
+    SliceObj *sl = &slices[s.slice];
+    if (idx < 0 || idx >= sl->len) slap_panic("put: index %lld out of bounds [0, %d)", (long long)idx, sl->len);
+    Val *data = malloc((size_t)sl->len * sizeof(Val));
+    for (int i = 0; i < sl->len; i++) {
+        data[i] = (i == (int)idx) ? new_val : val_clone(sl->data[i]);
+    }
+    uint32_t ns = slice_new(data, sl->len);
+    free(data);
+    val_free(s);
+    push(VAL_SLICE(ns));
+}
+
+// -- Slice iteration: each, map, filter, range --
+static void p_each(void) {
+    Val body = pop_tuple();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    for (int i = 0; i < sl->len; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+    }
+    val_free(body);
+    val_free(s);
+}
+
+static void p_map(void) {
+    Val body = pop_tuple();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+        out[i] = pop();
+    }
+    val_free(body);
+    val_free(s);
+    uint32_t ns = slice_new(out, n);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_filter(void) {
+    Val body = pop_tuple();
+    Val s = pop();
+    EXPECT2(s, T_SLICE, T_DICE);
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+        int64_t keep = pop_int();
+        if (keep != 0) out[count++] = val_clone(sl->data[i]);
+    }
+    val_free(body);
+    val_free(s);
+    uint32_t ns = slice_new(out, count);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+
+static void p_sort(void) {
+    Val s = pop();
+    EXPECT(s, T_SLICE);
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    uint32_t ns = slice_clone_range(sl, 0, n);
+    val_free(s);
+    Val *data = slices[ns].data;
+    for (int i = 1; i < n; i++) {
+        Val key = data[i];
+        int j = i - 1;
+        while (j >= 0) {
+            bool gt = false;
+            if (key.type == T_INT && data[j].type == T_INT) gt = data[j].ival > key.ival;
+            else if (key.type == T_FLOAT && data[j].type == T_FLOAT) gt = data[j].fval > key.fval;
+            else slap_panic("sort: elements must be Int or Float");
+            if (!gt) break;
+            data[j + 1] = data[j];
+            j--;
+        }
+        data[j + 1] = key;
+    }
+    push(VAL_SLICE(ns));
+}
+
+static void p_cat(void) {
+    Val b = pop();
+    Val a = pop();
+    EXPECT(a, T_SLICE); EXPECT(b, T_SLICE);
+    SliceObj *sa = &slices[a.slice], *sb = &slices[b.slice];
+    int na = sa->len, nb = sb->len;
+    uint32_t ns = slice_clone_range(sa, 0, na);
+    // append b's elements
+    SliceObj *out = &slices[ns];
+    out->data = realloc(out->data, (size_t)(na + nb) * sizeof(Val));
+    for (int i = 0; i < nb; i++) out->data[na + i] = val_clone(sb->data[i]);
+    out->len = na + nb;
+    val_free(a); val_free(b);
+    push(VAL_SLICE(ns));
+}
+
+static void p_take(void) {
+    int64_t n = pop_int();
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    if (n < 0) n = 0; if (n > sl->len) n = sl->len;
+    uint32_t ns = slice_clone_range(sl, 0, (int)n);
+    val_free(s);
+    push(VAL_SLICE(ns));
+}
+
+static void p_drop_n(void) {
+    int64_t n = pop_int();
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    if (n < 0) n = 0; if (n > sl->len) n = sl->len;
+    uint32_t ns = slice_clone_range(sl, (int)n, sl->len - (int)n);
+    val_free(s);
+    push(VAL_SLICE(ns));
+}
+
+
+
+static void p_range(void) {
+    int64_t hi = pop_int();
+    int64_t lo = pop_int();
+    int n = (hi > lo) ? (int)(hi - lo) : 0;
+    Val *data = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) data[i] = VAL_INT(lo + i);
+    uint32_t s = slice_new(data, n);
+    free(data);
+    push(VAL_SLICE(s));
+}
+
+// -- More Slice ops --
+
+static void p_scan(void) {
+    Val body = pop_tuple();
+    Val acc = pop();
+    Val s = pop();
+    EXPECT(s, T_SLICE);
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *out = (n + 1) > 0 ? malloc((size_t)(n + 1) * sizeof(Val)) : NULL;
+    out[0] = val_clone(acc);
+    push(acc);
+    for (int i = 0; i < n; i++) {
+        push(val_clone(sl->data[i]));
+        exec_tuple(body);
+        out[i + 1] = val_clone(stack[sp - 1]);
+    }
+    Val final_acc = pop(); val_free(final_acc);
+    val_free(body);
+    val_free(s);
+    uint32_t ns = slice_new(out, n + 1);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+
+static void p_rotate(void) {
+    int64_t n = pop_int();
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int len = sl->len;
+    Val *data = len > 0 ? malloc((size_t)len * sizeof(Val)) : NULL;
+    if (len > 0) {
+        int shift = (int)(n % len);
+        if (shift < 0) shift += len;
+        for (int i = 0; i < len; i++) data[i] = val_clone(sl->data[(i + shift) % len]);
+    }
+    val_free(s);
+    uint32_t ns = slice_new(data, len);
+    free(data);
+    push(VAL_SLICE(ns));
+}
+
+static void p_select(void) {
+    Val indices = pop_slice();
+    Val data_s = pop_slice();
+    SliceObj *idx = &slices[indices.slice];
+    SliceObj *src = &slices[data_s.slice];
+    int n = idx->len;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) {
+        if (idx->data[i].type != T_INT) slap_panic("select: indices must be Int, got %s", type_name(idx->data[i].type));
+        int64_t ix = idx->data[i].ival;
+        if (ix < 0 || ix >= src->len) slap_panic("select: index %lld out of bounds [0, %d)", (long long)ix, src->len);
+        out[i] = val_clone(src->data[ix]);
+    }
+    val_free(indices); val_free(data_s);
+    uint32_t ns = slice_new(out, n);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_keep_mask(void) {
+    Val mask = pop_slice();
+    Val data_s = pop_slice();
+    SliceObj *ms = &slices[mask.slice];
+    SliceObj *ds = &slices[data_s.slice];
+    if (ms->len != ds->len) slap_panic("keep-mask: mask length %d != data length %d", ms->len, ds->len);
+    int count = 0;
+    for (int i = 0; i < ms->len; i++) {
+        if (ms->data[i].type != T_INT) slap_panic("keep-mask: mask elements must be Int, got %s", type_name(ms->data[i].type));
+        if (ms->data[i].ival != 0) count++;
+    }
+    Val *out = count > 0 ? malloc((size_t)count * sizeof(Val)) : NULL;
+    int k = 0;
+    for (int i = 0; i < ms->len; i++) {
+        if (ms->data[i].ival != 0) out[k++] = val_clone(ds->data[i]);
+    }
+    val_free(mask); val_free(data_s);
+    uint32_t ns = slice_new(out, count);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_windows(void) {
+    int64_t wn = pop_int();
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    if (wn <= 0) slap_panic("windows: size must be positive, got %lld", (long long)wn);
+    int n = sl->len - (int)wn + 1;
+    if (n < 0) n = 0;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) {
+        Val *win = malloc((size_t)wn * sizeof(Val));
+        for (int j = 0; j < (int)wn; j++) win[j] = val_clone(sl->data[i + j]);
+        out[i] = VAL_SLICE(slice_new(win, (int)wn));
+        free(win);
+    }
+    val_free(s);
+    uint32_t ns = slice_new(out, n);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+
+static void p_index_of(void) {
+    Val s = pop_slice();
+    Val needle = pop();
+    SliceObj *sl = &slices[s.slice];
+    int64_t result = -1;
+    for (int i = 0; i < sl->len; i++) {
+        if (val_eq(sl->data[i], needle)) { result = i; break; }
+    }
+    val_free(needle); val_free(s);
+    push(VAL_INT(result));
+}
+
+static bool val_lt(Val a, Val b) {
+    if (a.type == T_INT && b.type == T_INT) return a.ival < b.ival;
+    if (a.type == T_FLOAT && b.type == T_FLOAT) return a.fval < b.fval;
+    slap_panic("rise/fall: elements must be Int or Float");
+    return false;
+}
+
+static void argsort(bool asc) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) out[i] = VAL_INT(i);
+    for (int i = 1; i < n; i++) {
+        int64_t key = out[i].ival;
+        int j = i - 1;
+        while (j >= 0 && (asc ? val_lt(sl->data[key], sl->data[out[j].ival])
+                               : val_lt(sl->data[out[j].ival], sl->data[key]))) {
+            out[j + 1] = out[j]; j--;
+        }
+        out[j + 1] = VAL_INT(key);
+    }
+    val_free(s);
+    uint32_t ns = slice_new(out, n);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+static void p_rise(void) { argsort(true); }
+static void p_fall(void) { argsort(false); }
+
+static void p_reshape(void) {
+    int64_t cols = pop_int();
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    if (cols <= 0) slap_panic("reshape: column count must be positive, got %lld", (long long)cols);
+    if (sl->len % (int)cols != 0) slap_panic("reshape: slice length %d is not divisible by %lld", sl->len, (long long)cols);
+    int rows = sl->len / (int)cols;
+    Val *out = rows > 0 ? malloc((size_t)rows * sizeof(Val)) : NULL;
+    for (int r = 0; r < rows; r++) {
+        Val *row = malloc((size_t)cols * sizeof(Val));
+        for (int c = 0; c < (int)cols; c++) row[c] = val_clone(sl->data[r * (int)cols + c]);
+        out[r] = VAL_SLICE(slice_new(row, (int)cols));
+        free(row);
+    }
+    val_free(s);
+    uint32_t ns = slice_new(out, rows);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_transpose(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int rows = sl->len;
+    if (rows == 0) { val_free(s); push(VAL_SLICE(slice_new(NULL, 0))); return; }
+    if (sl->data[0].type != T_SLICE) slap_panic("transpose: expected Slice(Slice), got Slice(%s)", type_name(sl->data[0].type));
+    int cols = slices[sl->data[0].slice].len;
+    for (int r = 1; r < rows; r++) {
+        if (sl->data[r].type != T_SLICE) slap_panic("transpose: expected Slice(Slice), got Slice(%s) at row %d", type_name(sl->data[r].type), r);
+        if (slices[sl->data[r].slice].len != cols)
+            slap_panic("transpose: rows have different lengths (%d vs %d) — cannot transpose a ragged array", cols, slices[sl->data[r].slice].len);
+    }
+    Val *out = cols > 0 ? malloc((size_t)cols * sizeof(Val)) : NULL;
+    for (int c = 0; c < cols; c++) {
+        Val *col = malloc((size_t)rows * sizeof(Val));
+        for (int r = 0; r < rows; r++) col[r] = val_clone(slices[sl->data[r].slice].data[c]);
+        out[c] = VAL_SLICE(slice_new(col, rows));
+        free(col);
+    }
+    val_free(s);
+    uint32_t ns = slice_new(out, cols);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_shape(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int outer = sl->len;
+    bool is_2d = outer > 0 && sl->data[0].type == T_SLICE;
+    if (is_2d) {
+        int inner = slices[sl->data[0].slice].len;
+        for (int i = 1; i < outer; i++) {
+            if (sl->data[i].type != T_SLICE || slices[sl->data[i].slice].len != inner) { is_2d = false; break; }
+        }
+        if (is_2d) {
+            val_free(s);
+            Val dims[2] = { VAL_INT(outer), VAL_INT(inner) };
+            push(VAL_SLICE(slice_new(dims, 2)));
+            return;
+        }
+    }
+    val_free(s);
+    Val dim = VAL_INT(outer);
+    push(VAL_SLICE(slice_new(&dim, 1)));
+}
+
+static void p_classify(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *out = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    Val *uniq = n > 0 ? malloc((size_t)n * sizeof(Val)) : NULL;
+    int nuniq = 0;
+    for (int i = 0; i < n; i++) {
+        int found = -1;
+        for (int j = 0; j < nuniq; j++) {
+            if (val_eq(sl->data[i], uniq[j])) { found = j; break; }
+        }
+        if (found < 0) { uniq[nuniq] = sl->data[i]; found = nuniq++; }
+        out[i] = VAL_INT(found);
+    }
+    free(uniq);
+    val_free(s);
+    uint32_t ns = slice_new(out, n);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_pick(void) {
+    Val indices = pop_slice();
+    Val data = pop();
+    SliceObj *idx = &slices[indices.slice];
+    Val cur = val_clone(data);
+    for (int i = 0; i < idx->len; i++) {
+        if (idx->data[i].type != T_INT) slap_panic("pick: indices must be Int, got %s", type_name(idx->data[i].type));
+        if (cur.type != T_SLICE) slap_panic("pick: cannot index into %s at depth %d", type_name(cur.type), i);
+        SliceObj *sl = &slices[cur.slice];
+        int64_t ix = idx->data[i].ival;
+        if (ix < 0 || ix >= sl->len) slap_panic("pick: index %lld out of bounds [0, %d) at depth %d", (long long)ix, sl->len, i);
+        Val next = val_clone(sl->data[ix]);
+        val_free(cur);
+        cur = next;
+    }
+    val_free(indices); val_free(data);
+    push(cur);
+}
+
+static void p_group(void) {
+    Val idx_s = pop_slice();
+    Val data_s = pop_slice();
+    SliceObj *idx = &slices[idx_s.slice];
+    SliceObj *dat = &slices[data_s.slice];
+    if (idx->len != dat->len) slap_panic("group: slices must have equal length (%d vs %d)", idx->len, dat->len);
+    int n = idx->len;
+    int ngroups = 0;
+    for (int i = 0; i < n; i++) {
+        if (idx->data[i].type != T_INT) slap_panic("group: indices must be Int, got %s", type_name(idx->data[i].type));
+        int64_t g = idx->data[i].ival;
+        if (g < 0) continue;
+        if (g + 1 > ngroups) ngroups = (int)(g + 1);
+    }
+    int *counts = calloc((size_t)ngroups, sizeof(int));
+    for (int i = 0; i < n; i++) { int64_t g = idx->data[i].ival; if (g >= 0) counts[g]++; }
+    Val **bufs = malloc((size_t)ngroups * sizeof(Val *));
+    int *pos = calloc((size_t)ngroups, sizeof(int));
+    for (int g = 0; g < ngroups; g++) bufs[g] = counts[g] > 0 ? malloc((size_t)counts[g] * sizeof(Val)) : NULL;
+    for (int i = 0; i < n; i++) {
+        int64_t g = idx->data[i].ival;
+        if (g < 0) continue;
+        bufs[g][pos[g]++] = val_clone(dat->data[i]);
+    }
+    Val *out = ngroups > 0 ? malloc((size_t)ngroups * sizeof(Val)) : NULL;
+    for (int g = 0; g < ngroups; g++) {
+        out[g] = VAL_SLICE(slice_new(bufs[g], counts[g]));
+        free(bufs[g]);
+    }
+    free(bufs); free(pos); free(counts);
+    val_free(idx_s); val_free(data_s);
+    uint32_t ns = slice_new(out, ngroups);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+static void p_partition(void) {
+    Val marks_s = pop_slice();
+    Val data_s = pop_slice();
+    SliceObj *marks = &slices[marks_s.slice];
+    SliceObj *dat = &slices[data_s.slice];
+    if (marks->len != dat->len) slap_panic("partition: slices must have equal length (%d vs %d)", marks->len, dat->len);
+    int n = marks->len;
+    // count groups: a new group starts when marker is nonzero and differs from previous
+    int ngroups = 0;
+    for (int i = 0; i < n; i++) {
+        if (marks->data[i].type != T_INT) slap_panic("partition: markers must be Int, got %s", type_name(marks->data[i].type));
+        int64_t m = marks->data[i].ival;
+        if (m != 0 && (i == 0 || marks->data[i - 1].ival != m)) ngroups++;
+    }
+    Val *out = ngroups > 0 ? malloc((size_t)ngroups * sizeof(Val)) : NULL;
+    int gi = -1;
+    int cap = 0, len = 0;
+    Val *buf = NULL;
+    for (int i = 0; i < n; i++) {
+        int64_t m = marks->data[i].ival;
+        if (m == 0) {
+            if (len > 0) { out[gi] = VAL_SLICE(slice_new(buf, len)); free(buf); buf = NULL; len = 0; cap = 0; }
+            continue;
+        }
+        if (i == 0 || marks->data[i - 1].ival != m) {
+            if (len > 0) { out[gi] = VAL_SLICE(slice_new(buf, len)); free(buf); buf = NULL; len = 0; cap = 0; }
+            gi++;
+        }
+        if (len >= cap) { cap = cap ? cap * 2 : 8; buf = realloc(buf, (size_t)cap * sizeof(Val)); }
+        buf[len++] = val_clone(dat->data[i]);
+    }
+    if (len > 0) { out[gi] = VAL_SLICE(slice_new(buf, len)); free(buf); }
+    val_free(marks_s); val_free(data_s);
+    uint32_t ns = slice_new(out, ngroups);
+    free(out);
+    push(VAL_SLICE(ns));
+}
+
+// -- Dices --
+static void p_dice(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    int n = sl->len;
+    Val *data = malloc((size_t)(2 * n) * sizeof(Val));
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        Val elem = sl->data[i];
+        if (elem.type != T_TUPLE) slap_panic("dice: elements must be tuples, got %s", type_name(elem.type));
+        int base = sp;
+        exec_tuple(val_clone(elem));
+        if (sp - base != 2) slap_panic("dice: each tuple must produce 2 values (key, value), got %d", sp - base);
+        data[count * 2] = stack[base];
+        data[count * 2 + 1] = stack[base + 1];
+        sp = base;
+        count++;
+    }
+    val_free(s);
+    uint32_t di = slice_new(data, count * 2);
+    free(data);
+    push(VAL_DICE(di));
+}
+
+static void p_grab(void) {
+    Val def = pop();
+    Val key = pop();
+    Val d = pop();
+    EXPECT(d, T_DICE);
+    SliceObj *sl = &slices[d.slice];
+    for (int i = 0; i < sl->len; i += 2) {
+        if (val_eq(sl->data[i], key)) {
+            push(val_clone(sl->data[i + 1]));
+            val_free(d); val_free(key); val_free(def);
+            return;
+        }
+    }
+    val_free(d); val_free(key);
+    push(def);
+}
+
+static void p_ifsert(void) {
+    Val val = pop();
+    Val key = pop();
+    Val d = pop();
+    EXPECT(d, T_DICE);
+    SliceObj *sl = &slices[d.slice];
+    // check if key exists
+    for (int i = 0; i < sl->len; i += 2) {
+        if (val_eq(sl->data[i], key)) {
+            // update: create new dice with replaced value
+            Val *data = malloc((size_t)sl->len * sizeof(Val));
+            for (int j = 0; j < sl->len; j++) {
+                if (j == i) data[j] = val_clone(key);
+                else if (j == i + 1) data[j] = val;
+                else data[j] = val_clone(sl->data[j]);
+            }
+            uint32_t nd = slice_new(data, sl->len);
+            free(data);
+            val_free(d); val_free(key);
+            push(VAL_DICE(nd));
+            return;
+        }
+    }
+    // insert: append new key-value pair
+    Val *data = malloc((size_t)(sl->len + 2) * sizeof(Val));
+    for (int j = 0; j < sl->len; j++) data[j] = val_clone(sl->data[j]);
+    data[sl->len] = key;
+    data[sl->len + 1] = val;
+    uint32_t nd = slice_new(data, sl->len + 2);
+    free(data);
+    val_free(d);
+    push(VAL_DICE(nd));
+}
+
+// -- Memory --
+static Val linear_snapshot(Val v) {
+    switch (v.type) {
+        case T_BOX: {
+            if (!heap[v.box].alive) slap_panic("use-after-free on box %u", v.box);
+            return val_clone(heap[v.box].val);
+        }
+        case T_LIST: {
+            ListObj *li = &lists[v.list];
+            SliceObj tmp = {li->data, li->len, 0};
+            return VAL_SLICE(slice_clone_range(&tmp, 0, li->len));
+        }
+        case T_DICT: {
+            DictObj *di = &dicts[v.dict];
+            int n = 0;
+            for (int i = 0; i < di->cap; i++) if (di->used[i]) n++;
+            Val *d = n > 0 ? malloc((size_t)(2 * n) * sizeof(Val)) : NULL;
+            int k = 0;
+            for (int i = 0; i < di->cap; i++) {
+                if (di->used[i]) {
+                    d[k * 2] = val_clone(di->keys[i]);
+                    d[k * 2 + 1] = val_clone(di->vals[i]);
+                    k++;
+                }
+            }
+            uint32_t s = slice_new(d, 2 * n); free(d);
+            return VAL_DICE(s);
+        }
+        case T_STR: {
+            StrObj *st = &strs[v.str];
+            Val *d = st->len > 0 ? malloc((size_t)st->len * sizeof(Val)) : NULL;
+            for (int i = 0; i < st->len; i++) d[i] = VAL_INT(st->data[i]);
+            uint32_t s = slice_new(d, st->len); free(d);
+            return VAL_SLICE(s);
+        }
+        default: slap_panic("linear_snapshot: unreachable"); __builtin_unreachable();
+    }
+}
+
+static void p_lend(void) {
+    Val body = pop_tuple();
+    Val linear = pop();
+    if (!val_is_linear(linear)) slap_panic("%s: expected linear type, got %s", current_word, type_name(linear.type));
+
+    Val snapshot = linear_snapshot(linear);
+
+    int base = sp;
+    push(snapshot);
+    exec_tuple(body); val_free(body);
+    // insert linear below body results
+    if (sp >= STACK_MAX) slap_panic("stack overflow in lend");
+    for (int i = sp; i > base; i--) stack[i] = stack[i - 1];
+    stack[base] = linear;
+    sp++;
+}
+
+static void p_clone(void) {
+    Val v = pop();
+    if (!val_is_linear(v)) slap_panic("%s: expected linear type, got %s", current_word, type_name(v.type));
+    Val copy;
+    switch (v.type) {
+        case T_BOX: {
+            if (!heap[v.box].alive) slap_panic("clone: use-after-free on box %u", v.box);
+            copy = VAL_BOX(heap_alloc(val_clone(heap[v.box].val)));
+            break;
+        }
+        case T_LIST: {
+            ListObj *li = &lists[v.list];
+            uint32_t nl = list_new(NULL, li->len);
+            for (int i = 0; i < li->len; i++) lists[nl].data[i] = val_clone(li->data[i]);
+            copy = VAL_LIST(nl);
+            break;
+        }
+        case T_DICT: {
+            DictObj *di = &dicts[v.dict];
+            uint32_t nd = dict_new();
+            for (int i = 0; i < di->cap; i++)
+                if (di->used[i]) dict_set(nd, val_clone(di->keys[i]), val_clone(di->vals[i]));
+            copy = VAL_DICT(nd);
+            break;
+        }
+        case T_STR: {
+            StrObj *st = &strs[v.str];
+            copy = VAL_STR(str_new(st->data, st->len));
+            break;
+        }
+        default: slap_panic("clone: unreachable");
+    }
+    push(v);
+    push(copy);
+}
+
+static void p_free(void) {
+    Val v = pop();
+    if (!val_is_linear(v)) slap_panic("%s: expected linear type, got %s", current_word, type_name(v.type));
+    val_free(v);
+}
+
+// -- Box --
+static void p_box(void) { push(VAL_BOX(heap_alloc(pop()))); }
+
+// -- Lists --
+static void p_list(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    uint32_t li = list_new(NULL, sl->len);
+    for (int i = 0; i < sl->len; i++) lists[li].data[i] = val_clone(sl->data[i]);
+    val_free(s);
+    push(VAL_LIST(li));
+}
+
+static void p_list_zero(void) {
+    int64_t n = pop_int();
+    if (n < 0) slap_panic("list-zero: negative size %lld", (long long)n);
+    uint32_t li = list_new(NULL, (int)n);
+    for (int i = 0; i < (int)n; i++) lists[li].data[i] = VAL_INT(0);
+    push(VAL_LIST(li));
+}
+
+static void p_list_concat(void) {
+    Val s = pop_slice();
+    Val l = pop();
+    EXPECT(l, T_LIST);
+    SliceObj *sl = &slices[s.slice];
+    ListObj *li = &lists[l.list];
+    int new_len = li->len + sl->len;
+    if (new_len > li->cap) {
+        li->cap = new_len > li->cap * 2 ? new_len : li->cap * 2;
+        li->data = realloc(li->data, (size_t)li->cap * sizeof(Val));
+    }
+    for (int i = 0; i < sl->len; i++) li->data[li->len + i] = val_clone(sl->data[i]);
+    li->len = new_len;
+    val_free(s);
+    push(l);
+}
+
+static void p_list_assign(void) {
+    Val val = pop();
+    int64_t idx = pop_int();
+    Val l = pop();
+    EXPECT(l, T_LIST);
+    ListObj *li = &lists[l.list];
+    if (idx < 0 || idx >= li->len) slap_panic("list-assign: index %lld out of bounds [0, %d)", (long long)idx, li->len);
+    val_free(li->data[idx]);
+    li->data[idx] = val;
+    push(l);
+}
+
+static void p_list_at(void) {
+    Val def = pop();
+    int64_t idx = pop_int();
+    Val l = pop();
+    EXPECT(l, T_LIST);
+    ListObj *li = &lists[l.list];
+    if (idx < 0 || idx >= li->len) {
+        push(l);
+        push(def);
+    } else {
+        val_free(def);
+        push(l);
+        push(val_clone(li->data[idx]));
+    }
+}
+
+// -- Dicts (linear) --
+static void p_dict(void) {
+    Val d = pop();
+    EXPECT(d, T_DICE);
+    SliceObj *sl = &slices[d.slice];
+    uint32_t di = dict_new();
+    for (int i = 0; i < sl->len; i += 2)
+        dict_set(di, val_clone(sl->data[i]), val_clone(sl->data[i + 1]));
+    val_free(d);
+    push(VAL_DICT(di));
+}
+
+static void p_dict_insert(void) {
+    Val val = pop();
+    Val key = pop();
+    Val d = pop();
+    EXPECT(d, T_DICT);
+    dict_set(d.dict, key, val);
+    push(d);
+}
+
+static void p_dict_remove(void) {
+    Val key = pop();
+    Val d = pop();
+    EXPECT(d, T_DICT);
+    if (!dict_remove(d.dict, key)) val_free(key);
+    push(d);
+}
+
+// -- Strings --
+static void p_str(void) {
+    Val s = pop_slice();
+    SliceObj *sl = &slices[s.slice];
+    uint8_t *data = malloc((size_t)sl->len);
+    for (int i = 0; i < sl->len; i++) {
+        if (sl->data[i].type != T_INT) slap_panic("str: slice elements must be Int (char codes), got %s", type_name(sl->data[i].type));
+        data[i] = (uint8_t)sl->data[i].ival;
+    }
+    uint32_t st = str_new(data, sl->len);
+    free(data);
+    val_free(s);
+    push(VAL_STR(st));
+}
+
+static void p_str_concat(void) {
+    Val s = pop_slice();
+    Val st = pop();
+    EXPECT(st, T_STR);
+    SliceObj *sl = &slices[s.slice];
+    StrObj *so = &strs[st.str];
+    int new_len = so->len + sl->len;
+    if (new_len > so->cap) {
+        so->cap = new_len > so->cap * 2 ? new_len : so->cap * 2;
+        so->data = realloc(so->data, (size_t)so->cap);
+    }
+    for (int i = 0; i < sl->len; i++) {
+        if (sl->data[i].type != T_INT) slap_panic("str-concat: elements must be Int, got %s", type_name(sl->data[i].type));
+        so->data[so->len + i] = (uint8_t)sl->data[i].ival;
+    }
+    so->len = new_len;
+    val_free(s);
+    push(st);
+}
+
+static void p_str_assign(void) {
+    int64_t ch = pop_int();
+    int64_t idx = pop_int();
+    Val st = pop();
+    EXPECT(st, T_STR);
+    StrObj *so = &strs[st.str];
+    if (idx < 0 || idx >= so->len) slap_panic("str-assign: index %lld out of bounds [0, %d)", (long long)idx, so->len);
+    so->data[idx] = (uint8_t)ch;
+    push(st);
+}
+
+// -- Meta --
+static void p_def(void) {
+    Val val = pop();
+    uint32_t name = pop_sym();
+    ensure_own_scope();
+    scope_bind(g_scope, name, val, true);
+}
+
+static void p_let(void) {
+    uint32_t name = pop_sym();
+    Val val = pop();
+    ensure_own_scope();
+    scope_bind(g_scope, name, val, false);
+}
+
+static void p_recur(void) {
+    Val sym = peek();
+    EXPECT(sym, T_SYM);
+    recur_pending = sym.sym;
+}
+
+// -- IO --
+static void p_print(void) {
+    Val v = pop();
+    val_print(v, stdout);
+    printf("\n");
+    val_free(v);
+}
+
+static void p_print_stack(void) {
+    printf("<%d> ", sp);
+    for (int i = 0; i < sp; i++) { val_print(stack[i], stdout); printf(" "); }
+    printf("\n");
+}
+
+static void p_assert(void) {
+    int64_t v = pop_int();
+    if (v == 0) slap_panic("assertion failed");
+}
+
+static void p_halt(void) { exit(0); }
+
+// -- Random --
+static void p_random(void) {
+    int64_t max = pop_int();
+    if (max <= 0) slap_panic("random: max must be positive, got %lld", (long long)max);
+    push(VAL_INT((int64_t)(rand() % (unsigned)max)));
+}
+
+// ── Fantasy Console ────────────────────────────────────────────────────────
+
+#ifdef SLAP_SDL
+
+#define CANVAS_W 640
+#define CANVAS_H 480
+#define WINDOW_W 640
+#define WINDOW_H 480
+#define CANVAS_SIZE (CANVAS_W * CANVAS_H)
+
+static uint8_t canvas[CANVAS_W * CANVAS_H];
+
+#define MAX_HANDLERS 16
+typedef struct { uint32_t event_sym; Val handler; } EventHandler;
+static EventHandler sdl_handlers[MAX_HANDLERS];
+static int sdl_handler_count = 0;
+static bool sdl_test_mode = false;
+
+static void p_clear(void) {
+    int64_t color = pop_int();
+    memset(canvas, (uint8_t)(color & 3), CANVAS_SIZE);
+}
+
+static void p_pixel(void) {
+    int64_t color = pop_int();
+    int64_t y = pop_int();
+    int64_t x = pop_int();
+    if (x >= 0 && x < CANVAS_W && y >= 0 && y < CANVAS_H)
+        canvas[y * CANVAS_W + x] = (uint8_t)(color & 3);
+}
+
+static void p_millis(void) {
+    push(VAL_INT((int64_t)SDL_GetTicks()));
+}
+
+static void p_on(void) {
+    Val handler = pop();
+    EXPECT(handler, T_TUPLE);
+    uint32_t event_name = pop_sym();
+    // model stays on stack
+    for (int i = 0; i < sdl_handler_count; i++) {
+        if (sdl_handlers[i].event_sym == event_name) {
+            val_free(sdl_handlers[i].handler);
+            sdl_handlers[i].handler = handler;
+            return;
+        }
+    }
+    if (sdl_handler_count >= MAX_HANDLERS)
+        slap_panic("on: too many event handlers (max %d)", MAX_HANDLERS);
+    sdl_handlers[sdl_handler_count++] = (EventHandler){event_name, handler};
+}
+
+static EventHandler *find_handler(uint32_t sym) {
+    for (int i = 0; i < sdl_handler_count; i++)
+        if (sdl_handlers[i].event_sym == sym) return &sdl_handlers[i];
+    return NULL;
+}
+
+static void p_show(void) {
+    Val render_fn = pop();
+    EXPECT(render_fn, T_TUPLE);
+    Val model = pop();
+
+    uint32_t sym_keydown = sym_intern("keydown");
+    uint32_t sym_tick = sym_intern("tick");
+
+    if (sdl_test_mode) {
+        // headless: run tick + render once, then return
+        EventHandler *tick_h = find_handler(sym_tick);
+        if (tick_h) {
+            push(VAL_INT(0));
+            push(model);
+            exec_tuple(val_clone(tick_h->handler));
+            model = pop();
+        }
+        memset(canvas, 0, CANVAS_SIZE);
+        Val snap = val_is_linear(model) ? linear_snapshot(model) : val_clone(model);
+        push(snap);
+        exec_tuple(val_clone(render_fn));
+        val_free(render_fn);
+        val_free(model);
+        for (int i = 0; i < sdl_handler_count; i++) val_free(sdl_handlers[i].handler);
+        sdl_handler_count = 0;
+        return;
+    }
+
+    // -- SDL init --
+    if (SDL_Init(SDL_INIT_VIDEO) < 0)
+        slap_panic("show: SDL_Init failed: %s", SDL_GetError());
+    SDL_Window *win = SDL_CreateWindow("slap",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        WINDOW_W, WINDOW_H, 0);
+    if (!win) slap_panic("show: SDL_CreateWindow failed: %s", SDL_GetError());
+    SDL_Renderer *ren = SDL_CreateRenderer(win, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!ren) slap_panic("show: SDL_CreateRenderer failed: %s", SDL_GetError());
+    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
+        SDL_TEXTUREACCESS_STREAMING, CANVAS_W, CANVAS_H);
+
+    static const uint32_t palette[4] = {
+        0xFF000000,  // 0: black
+        0xFF555555,  // 1: dark gray
+        0xFFAAAAAA,  // 2: light gray
+        0xFFFFFFFF,  // 3: white
+    };
+    uint32_t *pixels = malloc(CANVAS_SIZE * sizeof(uint32_t));
+    int64_t frame = 0;
+
+    bool running = true;
+    while (running) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_QUIT) { running = false; break; }
+            if (ev.type == SDL_KEYDOWN) {
+                if (ev.key.keysym.sym == SDLK_ESCAPE) { running = false; break; }
+                EventHandler *h = find_handler(sym_keydown);
+                if (h) {
+                    push(VAL_INT((int64_t)ev.key.keysym.sym));
+                    push(model);
+                    exec_tuple(val_clone(h->handler));
+                    model = pop();
+                }
+            }
+        }
+        if (!running) break;
+
+        // tick
+        EventHandler *tick_h = find_handler(sym_tick);
+        if (tick_h) {
+            push(VAL_INT(frame));
+            push(model);
+            exec_tuple(val_clone(tick_h->handler));
+            model = pop();
+        }
+
+        // render
+        memset(canvas, 0, CANVAS_SIZE);
+        Val snap = val_is_linear(model) ? linear_snapshot(model) : val_clone(model);
+        push(snap);
+        exec_tuple(val_clone(render_fn));
+
+        // blit canvas to pixels (upscale handled by SDL_RenderCopy stretching)
+        for (int i = 0; i < CANVAS_SIZE; i++)
+            pixels[i] = palette[canvas[i] & 3];
+        SDL_UpdateTexture(tex, NULL, pixels, CANVAS_W * sizeof(uint32_t));
+        SDL_RenderClear(ren);
+        SDL_RenderCopy(ren, tex, NULL, NULL);
+        SDL_RenderPresent(ren);
+        frame++;
+    }
+
+    free(pixels);
+    val_free(render_fn);
+    val_free(model);
+    for (int i = 0; i < sdl_handler_count; i++) val_free(sdl_handlers[i].handler);
+    sdl_handler_count = 0;
+    SDL_DestroyTexture(tex);
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    exit(0);
+}
+
+#endif // SLAP_SDL
+
+// ── Primitive registration ──────────────────────────────────────────────────
 
 #define PRIMITIVES \
-    X("dup",          p_dup)          X("drop",         p_drop)         \
-    X("swap",         p_swap)         X("nip",          p_nip)          \
-    X("over",         p_over)         X("rot",          p_rot)          \
-    X("not",          p_not)          X("and",          p_and)          \
-    X("or",           p_or)           X("choose",       p_choose)       \
-    X("dip",          p_dip)          \
-    X("apply",        p_apply)        X("if",           p_if)           \
-    X("loop",         p_loop)         X("cond",         p_cond)         \
-    X("match",        p_match)        X("pop",          p_pop)          \
-    X("box",          p_box)          \
-    X("borrow",       p_borrow)       X("clone",        p_clone)        \
-    X("free",         p_free)         X("set",          p_set)          \
-    X("quote",        p_quote)        X("compose",      p_compose)      \
-    X("cons",         p_cons)         X("uncons",        p_uncons)       \
-    X("get",          p_get)          X("put",          p_put)          \
-    X("remove",       p_remove)       X("plus",         p_plus)         \
-    X("sub",          p_sub)          X("mul",          p_mul)          \
-    X("divmod",       p_divmod)       X("eq",           p_eq)           \
-    X("lt",           p_lt)           X("def",          p_def)          \
-    X("let",          p_let)          X("len",          p_len)          \
-    X("nth",          p_nth)          X("set-nth",      p_set_nth)      \
-    X("cat",          p_cat)          X("slice",        p_slice)        \
-    X("array-insert", p_arr_insert)   X("array-remove", p_arr_remove)   \
-    X("range",        p_range)        X("for-each",     p_for_each)     \
-    X("for-index",    p_for_index)                                        \
-    X("clear",        p_clear)        X("rect",         p_rect)         \
-    X("draw-char",    p_draw_char)    X("present",      p_present)      \
-    X("read-key",     p_read_key)     X("halt",         p_halt)         \
-    X("sleep",        p_sleep)        X("random",       p_random)       \
-    X("mouse-x",      p_mouse_x)     X("mouse-y",      p_mouse_y)      \
-    X("mouse-down?",  p_mouse_down)   X("screen-w",     p_screen_w)     \
-    X("screen-h",     p_screen_h)     X("assert",       p_assert)       \
-    X("fadd",         p_fadd)         X("fsub",          p_fsub)         \
-    X("fmul",         p_fmul)         X("fdiv",          p_fdiv)         \
-    X("flt",          p_flt)          X("itof",          p_itof)         \
-    X("ftoi",         p_ftoi)                                            \
-    X("print-stack",  p_print_stack)  X("print",        p_print)        \
-    X("sort",         p_sort)         X("scan",          p_scan)         \
-    X("zip-with",     p_zip_with)                                        \
-    X("table",        p_table)                                           \
-    X("where",        p_where)        X("rotate",        p_rotate)       \
-    X("unique",       p_unique)                                          \
-    X("both",         p_both)                                            \
-    X("sqrt",         p_sqrt)         X("sin",           p_sin)          \
-    X("cos",          p_cos)          X("floor",         p_floor)        \
-    X("ceil",         p_ceil)         X("round",         p_round)        \
-    X("atan2",        p_atan2)        X("fmod",          p_fmod)         \
-    X("rise",         p_rise)         X("fall",          p_fall)         \
-    X("classify",     p_classify)     X("occurrences",   p_occurrences)  \
-    X("replicate",         p_replicate)         X("find",          p_find)         \
-    X("base",          p_base)                                            \
-    X("transpose",    p_transpose)                                   \
-    X("pow",          p_pow)          X("log",           p_log)          \
-    X("tan",          p_tan)          X("asin",          p_asin)         \
-    X("acos",         p_acos)         X("exp",           p_exp)          \
-    X("feq",          p_feq)                                             \
-    X("group",        p_group)        X("partition",     p_partition)    \
-    X("reduce",       p_reduce)                                         \
-    X("slurp",        p_slurp)                                          \
-    X("dict-new",     p_dict_new)     X("dict-set",      p_dict_set)    \
-    X("dict-get",     p_dict_get)     X("dict-has",      p_dict_has)    \
-    X("dict-keys",    p_dict_keys)    X("dict-count",    p_dict_count)  \
-    X("dict-remove",  p_dict_remove)                                    \
-    X("box-nth",      p_box_nth)      X("box-len",       p_box_len)      \
-    X("box-set-nth",  p_box_set_nth)  X("box-push",      p_box_push)     \
-    X("box-pop",      p_box_pop)
+    X("dup", p_dup) X("drop", p_drop) X("swap", p_swap) X("dip", p_dip) \
+    X("apply", p_apply) X("if", p_if) X("loop", p_loop) X("while", p_while) X("cond", p_cond) X("match", p_match) \
+    X("not", p_not) X("and", p_and) X("or", p_or) \
+    X("eq", p_eq) X("lt", p_lt) \
+    X("plus", p_plus) X("sub", p_sub) X("mul", p_mul) X("div", p_div) X("mod", p_mod) \
+    X("iplus", p_iplus) X("isub", p_isub) X("imul", p_imul) X("idiv", p_idiv) X("imod", p_imod) \
+    X("fplus", p_fplus) X("fsub", p_fsub) X("fmul", p_fmul) X("fdiv", p_fdiv) \
+    X("fsqrt", p_fsqrt) X("fsin", p_fsin) X("fcos", p_fcos) X("ftan", p_ftan) \
+    X("ffloor", p_ffloor) X("fceil", p_fceil) X("fround", p_fround) \
+    X("fexp", p_fexp) X("flog", p_flog) X("fpow", p_fpow) X("fatan2", p_fatan2) \
+    X("itof", p_itof) X("ftoi", p_ftoi) \
+    X("compose", p_compose) X("cons", p_cons) X("car", p_car) \
+    X("rec", p_rec) X("get", p_get) X("set", p_set) \
+    X("len", p_len) X("fold", p_fold) X("reduce", p_reduce) X("at", p_at) X("put", p_put) \
+    X("each", p_each) X("map", p_map) X("filter", p_filter) X("range", p_range) \
+    X("sort", p_sort) X("cat", p_cat) \
+    X("take", p_take) X("drop-n", p_drop_n) \
+    X("scan", p_scan) X("rotate", p_rotate) X("select", p_select) \
+    X("keep-mask", p_keep_mask) X("windows", p_windows) \
+    X("rise", p_rise) X("fall", p_fall) X("index-of", p_index_of) \
+    X("reshape", p_reshape) X("transpose", p_transpose) X("shape", p_shape) X("classify", p_classify) X("pick", p_pick) \
+    X("group", p_group) X("partition", p_partition) \
+    X("dice", p_dice) X("grab", p_grab) X("ifsert", p_ifsert) \
+    X("lend", p_lend) X("clone", p_clone) X("free", p_free) \
+    X("box", p_box) \
+    X("list", p_list) X("list-zero", p_list_zero) X("list-concat", p_list_concat) X("list-assign", p_list_assign) X("list-at", p_list_at) \
+    X("dict", p_dict) X("dict-insert", p_dict_insert) X("dict-remove", p_dict_remove) \
+    X("str", p_str) X("str-concat", p_str_concat) X("str-assign", p_str_assign) \
+    X("def", p_def) X("let", p_let) X("recur", p_recur) \
+    X("print", p_print) X("print-stack", p_print_stack) X("assert", p_assert) X("halt", p_halt) \
+    X("random", p_random)
+
+#ifdef SLAP_SDL
+#define SDL_PRIMITIVES \
+    X("clear", p_clear) X("pixel", p_pixel) X("millis", p_millis) \
+    X("on", p_on) X("show", p_show)
+#else
+#define SDL_PRIMITIVES
+#endif
 
 static void init_primitives(void) {
     #define X(name, fn) prim_table[sym_intern(name)] = fn;
     PRIMITIVES
+    SDL_PRIMITIVES
     #undef X
+    sym_def_id = sym_intern("def");
+    sym_let_id = sym_intern("let");
+    sym_recur_id = sym_intern("recur");
 }
 
-static bool try_primitive(uint32_t sym) {
-    if (sym < MAX_SYMS && prim_table[sym]) { prim_table[sym](); return true; }
-    return false;
+
+static void resolve_cached_prims(int start, int len) {
+    for (int i = start; i < start + len; ) {
+        Node *n = &nodes[i];
+        if (n->type == N_WORD) {
+            uint32_t s = n->sym;
+            n->cached_prim = (s < MAX_SYMS && prim_table[s] && !scope_find(global_scope, s))
+                             ? prim_table[s] : NULL;
+            i++;
+        } else if (n->type == N_TUPLE || n->type == N_SLICE || n->type == N_RECORD) {
+            i += 1 + n->body.len;
+        } else {
+            i++;
+        }
+    }
 }
 
-// ── Type Checker ───────────────────────────────────────────────────────────
+// ── Eval ────────────────────────────────────────────────────────────────────
+
+static void eval(int start, int len, uint32_t scope) {
+    uint32_t prev_scope = g_scope;
+    g_scope = scope;
+    for (int i = start; i < start + len; ) {
+        Node *n = &nodes[i];
+        switch (n->type) {
+            case N_PUSH: {
+                Val v = n->literal;
+                if (v.type <= T_SYM) push(v);
+                else push(val_clone(v));
+                i++;
+                break;
+            }
+            case N_WORD: {
+                PrimFn pf = n->cached_prim;
+                if (pf) {
+                    Scope *sc = &scopes[g_scope];
+                    int k = sc->count;
+                    while (k-- > 0) {
+                        if (sc->binds[k].name == n->sym) goto word_slow;
+                    }
+                    pf();
+                    i++;
+                    break;
+                }
+                word_slow:
+                panic_line = n->line;
+                panic_col = n->col;
+                current_word = sym_names[n->sym];
+                Binding *b = scope_find(g_scope, n->sym);
+                if (b) {
+                    if (b->is_def && b->val.type == T_TUPLE) {
+                        exec_tuple(b->val);
+                    } else {
+                        push(val_clone(b->val));
+                    }
+                } else if (n->sym < MAX_SYMS && prim_table[n->sym]) {
+                    prim_table[n->sym]();
+                } else {
+                    slap_panic("unbound word: %s", sym_names[n->sym]);
+                }
+                current_word = "";
+                i++;
+                break;
+            }
+            case N_SLICE: {
+                uint32_t saved_lazy = g_lazy_parent;
+                uint32_t child = scope_new(g_scope);
+                g_lazy_parent = NONE;
+                int base = sp;
+                eval(n->body.start, n->body.len, child);
+                scope_release(child);
+                g_lazy_parent = saved_lazy;
+                int count = sp - base;
+                Val *data = count > 0 ? malloc((size_t)count * sizeof(Val)) : NULL;
+                for (int j = 0; j < count; j++) data[j] = stack[base + j];
+                sp = base;
+                uint32_t s = slice_new(data, count);
+                free(data);
+                push(VAL_SLICE(s));
+                i += 1 + n->body.len;
+                break;
+            }
+            case N_TUPLE: {
+                uint32_t env = g_scope;
+                bool owns = false;
+                if (g_scope != global_scope) { env = scope_snapshot(g_scope); owns = true; }
+                uint32_t t = tuple_new(n->body.start, n->body.len, env, owns);
+                if (recur_pending != NONE) {
+                    if (g_scope != global_scope)
+                        scope_bind(env, recur_pending, val_clone(VAL_TUPLE(t)), true);
+                    recur_pending = NONE;
+                }
+                push(VAL_TUPLE(t));
+                i += 1 + n->body.len;
+                break;
+            }
+            case N_RECORD: {
+                uint32_t saved_lazy = g_lazy_parent;
+                uint32_t child = scope_new(g_scope);
+                g_lazy_parent = NONE;
+                int base = sp;
+                eval(n->body.start, n->body.len, child);
+                scope_release(child);
+                g_lazy_parent = saved_lazy;
+                int count = sp - base;
+                if (count % 2 != 0) slap_panic("record literal must have even number of elements (key-value pairs), got %d", count);
+                uint32_t r = rec_new();
+                for (int j = base; j < sp; j += 2) {
+                    if (stack[j].type != T_SYM) slap_panic("record keys must be symbols, got %s", type_name(stack[j].type));
+                    rec_set(r, stack[j].sym, stack[j + 1]);
+                }
+                sp = base;
+                push(VAL_REC(r));
+                i += 1 + n->body.len;
+                break;
+            }
+        }
+    }
+    // Clean up lazily-created child scope (if any)
+    if (g_scope != scope) scope_release(g_scope);
+    g_scope = prev_scope;
+}
+
+// ── Prelude ─────────────────────────────────────────────────────────────────
+
+static const char *prelude =
+    "'peek   (() lend) def\n"
+    "'inc    (1 iplus) def\n"
+    "'dec    (1 isub) def\n"
+    "'neg    (0 swap isub) def\n"
+    "'abs    (dup 0 lt (neg) () if) def\n"
+    "'over   (swap dup (swap) dip) def\n"
+    "'nip    (swap drop) def\n"
+    "'rot    ((swap) dip swap) def\n"
+    "'keep   (over (apply) dip) def\n"
+    "'bi     ((keep) dip apply) def\n"
+    "'iszero (0 eq) def\n"
+    "'ispos  (0 lt not) def\n"
+    "'isneg  (0 lt) def\n"
+    "'iseven (2 imod 0 eq) def\n"
+    "'isodd  (2 imod 1 eq) def\n"
+    "'max    (over over lt (nip) (drop) if) def\n"
+    "'min    (over over lt (drop) (nip) if) def\n"
+    "'neq    (eq not) def\n"
+    "'gt     (swap lt) def\n"
+    "'ge     (lt not) def\n"
+    "'le     (swap lt not) def\n"
+    // iteration
+    "'sum       (0 (iplus) fold) def\n"
+    "'product   (1 (imul) fold) def\n"
+    "'isany     ('p swap def (p) filter len 0 gt) def\n"
+    "'isall     ('p swap def (p not) filter len iszero) def\n"
+    "'count     ('p swap def (p) filter len) def\n"
+    "'first     (0 swap at) def\n"
+    "'last      (swap dup len 1 isub rot at) def\n"
+    // arithmetic
+    "'sqr       (dup imul) def\n"
+    "'cube      (dup dup imul imul) def\n"
+    // float
+    "'fneg      (0.0 swap fsub) def\n"
+    "'fabs      (dup 0.0 lt (fneg) () if) def\n"
+    "'fclamp    ('hi let 'lo let lo max hi min) def\n"
+    "'lerp      ('t let swap 1.0 t fsub fmul swap t fmul fplus) def\n"
+    // constants
+    "3.14159265358979323846 'pi let\n"
+    "6.28318530717958647692 'tau let\n"
+    // misc
+    "'clamp     ('hi let 'lo let lo max hi min) def\n"
+    "'isbetween ('hi let 'lo let dup lo ge swap hi le and) def\n"
+    "'sign      (dup 0 lt (-1) (dup 0 gt (1) (0) if) if nip) def\n"
+    "'repeat    ('n let 'f swap def n (dup 0 gt (1 isub (f) dip 1) (0) if) loop drop) def\n"
+    "'reverse   ('s let 0 s len range (s len 1 isub swap isub s swap -1 at) map) def\n"
+    "'flatten   ([] (cat) fold) def\n"
+    "'zip       ('b let 'a let 0 a len b len min range ('i let [a i -1 at b i -1 at]) map) def\n"
+    "'where     ('s let 0 s len range (s swap 0 at) filter) def\n"
+    "'member    ('hs let ('n let hs (n eq) isany) map) def\n"
+    "'dedup     ('s let s [] ('e let dup (e eq) isany not ([e] cat) () if) fold) def\n"
+    "'table     ('f let 'bs let ('a let bs (a swap f apply) map) map) def\n"
+    "'sort-desc (sort reverse) def\n"
+    "'max-of    ((max) reduce) def\n"
+    "'min-of    ((min) reduce) def\n"
+    // more float
+    "'frecip  (1.0 swap fdiv) def\n"
+    "'fsign   (dup 0.0 lt (-1.0) (dup 0.0 eq (0.0) (1.0) if) if nip) def\n"
+    // constants
+    "2.71828182845904523536 'e let\n"
+    // 2D array utilities
+    "'couple  ('b let 'a let [a b]) def\n"
+    "'find    ('needle let needle len windows (needle eq) map) def\n"
+;
+
+// ── Type Checker ────────────────────────────────────────────────────────────
 
 #define MAX_TNODES  131072
 #define MAX_TVARS   16384
 #define MAX_TENVS   4096
 #define MAX_TCOPY   4096
-#define MAX_TESC    256
 #define MAX_TERRS   64
 #define TN_NONE     UINT32_MAX
 
 typedef enum {
-    TN_INT, TN_BOOL, TN_FLOAT, TN_SYM,
-    TN_ARR, TN_BOX, TN_REC, TN_DICT,
-    TN_QUOT, TN_VAR,
-    TN_SCONS, TN_SVAR,
-    TN_REMPTY, TN_REXT, TN_RVAR,
+    TN_INT, TN_FLOAT, TN_SYM,
+    TN_TUPLE, TN_REC, TN_SLICE, TN_DICE,
+    TN_BOX, TN_LIST, TN_DICT, TN_STR,
+    TN_VAR, TN_SCONS, TN_SVAR,
+    TN_REMPTY, TN_REXT, TN_RVAR
 } TNodeKind;
 
 typedef struct {
     TNodeKind kind;
     union {
-        uint32_t arg;                          // ARR, BOX, REC (single-param)
-        struct { uint32_t key, val; } dict;    // DICT
-        struct { uint32_t in, out; } quot;     // QUOT
+        uint32_t arg;                          // SLICE, BOX, LIST, REC
+        struct { uint32_t key, val; } kv;      // DICE, DICT
+        struct { uint32_t in, out; } tuple;    // TUPLE (stack effect)
         uint32_t var_id;                       // VAR, SVAR, RVAR
         struct { uint32_t head, tail; } scons; // SCONS
-        struct { uint32_t label, type, tail; } rext; // REXT (label = sym id)
+        struct { uint32_t label, type, tail; } rext; // REXT
     };
 } TNode;
 
@@ -1848,45 +2642,34 @@ static int      tn_count;
 static uint32_t tc_subst[MAX_TVARS];
 static int      tc_next_var;
 
-typedef struct {
-    uint32_t name, type;
-    bool poly, is_quot, freed;
-    int freed_line, freed_col;
-} TBinding;
-
-typedef struct {
-    uint32_t parent;
-    TBinding *binds;
-    int count, cap;
-} TEnv;
-
-static TEnv  tenvs[MAX_TENVS];
-static int   tenv_count;
-
-typedef struct { uint32_t var_node; const char *word; bool allow_box; int line, col; } CopyConst;
-typedef struct { uint32_t a_node; uint32_t b_node; int line, col; const char *word; } EscConst;
-
+typedef struct { uint32_t var_node; const char *word; int line, col; bool handled; } CopyConst;
 static CopyConst tc_cc[MAX_TCOPY];
-static int       tc_cc_count;
-static EscConst  tc_esc[MAX_TESC];
-static int       tc_esc_count;
+static int tc_cc_count;
+static CopyConst tc_lc[MAX_TCOPY];
+static int tc_lc_count;
 
-typedef struct { int line; int col; int span; char label[128]; } TypeErrSpan;
 typedef struct {
-    char msg[512];
-    int line, col, span;
-    TypeErrSpan spans[4];
-    int span_count;
-} TypeError;
-static TypeError tc_errs[MAX_TERRS];
-static int       tc_err_count;
-static bool      tc_had_err;
+    uint32_t name, type; bool poly, is_def, freed, used; int freed_line, freed_col;
+    CopyConst poly_cc[8]; int poly_cc_n;
+    CopyConst poly_lc[8]; int poly_lc_n;
+} TCBinding;
+typedef struct { uint32_t parent; TCBinding *binds; int count, cap; } TCEnv;
+static TCEnv tenvs[MAX_TENVS];
+static int tenv_count;
+
+typedef struct { uint32_t tuple_node; int cc_start, cc_end, lc_start, lc_end; } PendingTupleCC;
+static PendingTupleCC tc_pending[64];
+static int tc_pending_n;
+
+typedef struct { char msg[512]; int line, col, span; } TCError;
+static TCError tc_errs[MAX_TERRS];
+static int tc_err_count;
+static bool tc_had_err;
 static const char *tc_cur_word;
-static int       tc_cur_line, tc_cur_col;
+static int tc_cur_line, tc_cur_col;
 
 typedef struct { uint32_t in, out; } StackEff;
 
-// forward decls
 static void tc_ut(uint32_t a, uint32_t b);
 static void tc_ust(uint32_t a, uint32_t b);
 static void tc_ur(uint32_t a, uint32_t b);
@@ -1894,44 +2677,17 @@ static void tc_ur(uint32_t a, uint32_t b);
 static void tc_err(const char *fmt, ...) {
     tc_had_err = true;
     if (tc_err_count >= MAX_TERRS) return;
-    TypeError *e = &tc_errs[tc_err_count++];
-    e->line = tc_cur_line;
-    e->col = tc_cur_col;
+    TCError *e = &tc_errs[tc_err_count++];
+    e->line = tc_cur_line; e->col = tc_cur_col;
     e->span = (tc_cur_word && tc_cur_word[0]) ? (int)strlen(tc_cur_word) : 1;
-    e->span_count = 0;
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(e->msg, sizeof(e->msg), fmt, ap);
-    va_end(ap);
+    va_list ap; va_start(ap, fmt); vsnprintf(e->msg, sizeof(e->msg), fmt, ap); va_end(ap);
 }
 
-// ── TNode constructors ─────────────────────────────────────────────────────
-
+// TNode constructors
 static uint32_t tn_new(TNodeKind k) {
     if (tn_count >= MAX_TNODES) slap_panic("type node pool full");
     tnodes[tn_count].kind = k;
     return (uint32_t)tn_count++;
-}
-
-#define tn_int()   tn_new(TN_INT)
-#define tn_bool()  tn_new(TN_BOOL)
-#define tn_float() tn_new(TN_FLOAT)
-#define tn_sym()   tn_new(TN_SYM)
-
-static uint32_t tn_arr(uint32_t elem) {
-    uint32_t n = tn_new(TN_ARR); tnodes[n].arg = elem; return n;
-}
-static uint32_t tn_box(uint32_t inner) {
-    uint32_t n = tn_new(TN_BOX); tnodes[n].arg = inner; return n;
-}
-static uint32_t tn_dict(uint32_t key, uint32_t val) {
-    uint32_t n = tn_new(TN_DICT); tnodes[n].dict.key = key; tnodes[n].dict.val = val; return n;
-}
-static uint32_t tn_rec(uint32_t row) {
-    uint32_t n = tn_new(TN_REC); tnodes[n].arg = row; return n;
-}
-static uint32_t tn_quot(uint32_t in, uint32_t out) {
-    uint32_t n = tn_new(TN_QUOT); tnodes[n].quot.in = in; tnodes[n].quot.out = out; return n;
 }
 static uint32_t tn_new_var(TNodeKind k) {
     if (tc_next_var >= MAX_TVARS) slap_panic("type variable pool full");
@@ -1941,220 +2697,90 @@ static uint32_t tn_new_var(TNodeKind k) {
     tc_next_var++;
     return n;
 }
-#define tn_var()  tn_new_var(TN_VAR)
-#define tn_svar() tn_new_var(TN_SVAR)
-#define tn_rvar() tn_new_var(TN_RVAR)
-static uint32_t tn_scons(uint32_t head, uint32_t tail) {
-    uint32_t n = tn_new(TN_SCONS); tnodes[n].scons.head = head; tnodes[n].scons.tail = tail; return n;
-}
-static uint32_t tn_rext(uint32_t label, uint32_t type, uint32_t tail) {
-    uint32_t n = tn_new(TN_REXT);
-    tnodes[n].rext.label = label; tnodes[n].rext.type = type; tnodes[n].rext.tail = tail;
-    return n;
-}
 
-// ── Resolve (follow substitution chains) ────────────────────────────────────
+#define tn_int()   tn_new(TN_INT)
+#define tn_float() tn_new(TN_FLOAT)
+#define tn_sym()   tn_new(TN_SYM)
+#define tn_str()   tn_new(TN_STR)
+#define tn_var()   tn_new_var(TN_VAR)
+#define tn_svar()  tn_new_var(TN_SVAR)
+#define tn_rvar()  tn_new_var(TN_RVAR)
+
+static uint32_t tn_slice(uint32_t e) { uint32_t n=tn_new(TN_SLICE); tnodes[n].arg=e; return n; }
+static uint32_t tn_list(uint32_t e) { uint32_t n=tn_new(TN_LIST); tnodes[n].arg=e; return n; }
+static uint32_t tn_box(uint32_t e) { uint32_t n=tn_new(TN_BOX); tnodes[n].arg=e; return n; }
+static uint32_t tn_rec(uint32_t r) { uint32_t n=tn_new(TN_REC); tnodes[n].arg=r; return n; }
+static uint32_t tn_dice(uint32_t k, uint32_t v) { uint32_t n=tn_new(TN_DICE); tnodes[n].kv.key=k; tnodes[n].kv.val=v; return n; }
+static uint32_t tn_dict_t(uint32_t k, uint32_t v) { uint32_t n=tn_new(TN_DICT); tnodes[n].kv.key=k; tnodes[n].kv.val=v; return n; }
+static uint32_t tn_tuple(uint32_t in, uint32_t out) { uint32_t n=tn_new(TN_TUPLE); tnodes[n].tuple.in=in; tnodes[n].tuple.out=out; return n; }
+static uint32_t tn_scons(uint32_t h, uint32_t t) { uint32_t n=tn_new(TN_SCONS); tnodes[n].scons.head=h; tnodes[n].scons.tail=t; return n; }
+static uint32_t tn_rext(uint32_t l, uint32_t t, uint32_t tl) { uint32_t n=tn_new(TN_REXT); tnodes[n].rext.label=l; tnodes[n].rext.type=t; tnodes[n].rext.tail=tl; return n; }
+static uint32_t tn_rempty(void) { return tn_new(TN_REMPTY); }
 
 static uint32_t tn_resolve(uint32_t t) {
     TNode *n = &tnodes[t];
-    if ((n->kind == TN_VAR || n->kind == TN_SVAR || n->kind == TN_RVAR)
-        && tc_subst[n->var_id] != TN_NONE)
+    if ((n->kind == TN_VAR || n->kind == TN_SVAR || n->kind == TN_RVAR) && tc_subst[n->var_id] != TN_NONE)
         return tn_resolve(tc_subst[n->var_id]);
     return t;
 }
 
-// ── Show types ──────────────────────────────────────────────────────────────
-
-static int tn_show(uint32_t t, char *buf, int cap);
-
-static int tn_show_stack(uint32_t s, char *buf, int cap) {
-    uint32_t items[64];
-    int n = 0, off = 0;
-    uint32_t cur = s;
-    while ((cur = tn_resolve(cur)), tnodes[cur].kind == TN_SCONS) {
-        if (n < 64) items[n++] = tnodes[cur].scons.head;
-        cur = tnodes[cur].scons.tail;
-    }
-    if (tnodes[cur].kind == TN_SVAR) {
-        off += snprintf(buf + off, cap - off, "s%u", tnodes[cur].var_id);
-        if (n > 0 && off < cap) { buf[off++] = ','; buf[off++] = ' '; }
-    }
-    for (int i = n - 1; i >= 0; i--) {
-        off += tn_show(items[i], buf + off, cap - off);
-        if (i > 0 && off < cap) { buf[off++] = ','; buf[off++] = ' '; }
-    }
-    return off;
-}
-
-static int tn_show_row(uint32_t r, char *buf, int cap) {
-    int off = 0;
-    bool first = true;
-    while (true) {
-        r = tn_resolve(r);
-        TNode *n = &tnodes[r];
-        if (n->kind == TN_REXT) {
-            if (!first && off < cap) { buf[off++] = ','; buf[off++] = ' '; }
-            first = false;
-            off += snprintf(buf + off, cap - off, "%s: ", sym_names[n->rext.label]);
-            off += tn_show(n->rext.type, buf + off, cap - off);
-            r = n->rext.tail;
-        } else if (n->kind == TN_RVAR) {
-            if (!first && off < cap) { buf[off++] = ','; buf[off++] = ' '; }
-            off += snprintf(buf + off, cap - off, "...");
-            return off;
-        } else {
-            return off;
-        }
-    }
-}
-
+// Show types
 static int tn_show(uint32_t t, char *buf, int cap) {
     t = tn_resolve(t);
     TNode *n = &tnodes[t];
     switch (n->kind) {
-    case TN_INT:   return snprintf(buf, cap, "Int");
-    case TN_BOOL:  return snprintf(buf, cap, "Bool");
+    case TN_INT: return snprintf(buf, cap, "Int");
     case TN_FLOAT: return snprintf(buf, cap, "Float");
-    case TN_SYM:  return snprintf(buf, cap, "Symbol");
-    case TN_VAR:  return snprintf(buf, cap, "?%u", n->var_id);
-    case TN_ARR: {
-        int off = snprintf(buf, cap, "[");
-        off += tn_show(n->arg, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, "]");
-        return off;
+    case TN_SYM: return snprintf(buf, cap, "Symbol");
+    case TN_STR: return snprintf(buf, cap, "String");
+    case TN_VAR: return snprintf(buf, cap, "?%u", n->var_id);
+    case TN_SLICE: case TN_LIST: case TN_BOX: {
+        const char *nm = n->kind==TN_SLICE ? "Slice" : n->kind==TN_LIST ? "List" : "Box";
+        int o=snprintf(buf,cap,"%s<",nm); o+=tn_show(n->arg,buf+o,cap-o); o+=snprintf(buf+o,cap-o,">"); return o;
     }
-    case TN_BOX: {
-        int off = snprintf(buf, cap, "Box ");
-        off += tn_show(n->arg, buf + off, cap - off);
-        return off;
+    case TN_DICE: case TN_DICT: {
+        const char *nm = n->kind==TN_DICE ? "Dice" : "Dict";
+        int o=snprintf(buf,cap,"%s<",nm); o+=tn_show(n->kv.key,buf+o,cap-o); o+=snprintf(buf+o,cap-o,","); o+=tn_show(n->kv.val,buf+o,cap-o); o+=snprintf(buf+o,cap-o,">"); return o;
     }
-    case TN_REC: {
-        int off = snprintf(buf, cap, "{");
-        off += tn_show_row(n->arg, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, "}");
-        return off;
-    }
-    case TN_DICT: {
-        int off = snprintf(buf, cap, "Dict(");
-        off += tn_show(n->dict.key, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, ", ");
-        off += tn_show(n->dict.val, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, ")");
-        return off;
-    }
-    case TN_QUOT: {
-        int off = snprintf(buf, cap, "(");
-        off += tn_show_stack(n->quot.in, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, " -> ");
-        off += tn_show_stack(n->quot.out, buf + off, cap - off);
-        off += snprintf(buf + off, cap - off, ")");
-        return off;
-    }
+    case TN_REC:   return snprintf(buf, cap, "Record");
+    case TN_TUPLE: return snprintf(buf, cap, "Tuple");
     default: return snprintf(buf, cap, "?");
     }
 }
 
-static void tn_normalize_vars(char *buf) {
-    // Replace ?NNN type variable IDs with a, b, c, ...
-    int map_ids[64]; char map_ch[64]; int map_count = 0;
-    char out[256]; int oi = 0;
-    for (int i = 0; buf[i] && oi < (int)sizeof(out) - 2; i++) {
-        if (buf[i] == '?' && buf[i+1] >= '0' && buf[i+1] <= '9') {
-            int id = 0;
-            i++;
-            while (buf[i] >= '0' && buf[i] <= '9') id = id * 10 + (buf[i++] - '0');
-            i--;
-            int found = -1;
-            for (int j = 0; j < map_count; j++) if (map_ids[j] == id) { found = j; break; }
-            if (found < 0 && map_count < 64) { found = map_count; map_ids[map_count] = id; map_ch[map_count] = 'a' + (char)(map_count < 26 ? map_count : 25); map_count++; }
-            if (found >= 0) out[oi++] = map_ch[found];
-        } else {
-            out[oi++] = buf[i];
-        }
-    }
-    out[oi] = 0;
-    strcpy(buf, out);
-}
-
-static int tn_show_eff(uint32_t in, uint32_t out, char *buf, int cap) {
-    int off = snprintf(buf, cap, "(... ");
-    uint32_t items[16]; int n = 0;
-    uint32_t s = in;
-    while ((s = tn_resolve(s)), tnodes[s].kind == TN_SCONS) {
-        if (n < 16) items[n++] = tnodes[s].scons.head;
-        s = tnodes[s].scons.tail;
-    }
-    for (int i = n - 1; i >= 0; i--) {
-        off += tn_show(items[i], buf + off, cap - off);
-        if (off < cap) buf[off++] = ' ';
-    }
-    off += snprintf(buf + off, cap - off, "-> ");
-    n = 0; s = out;
-    while ((s = tn_resolve(s)), tnodes[s].kind == TN_SCONS) {
-        if (n < 16) items[n++] = tnodes[s].scons.head;
-        s = tnodes[s].scons.tail;
-    }
-    if (n == 0) {
-        off += snprintf(buf + off, cap - off, "...)");
-    } else {
-        off += snprintf(buf + off, cap - off, "... ");
-        for (int i = n - 1; i >= 0; i--) {
-            off += tn_show(items[i], buf + off, cap - off);
-            if (i > 0 && off < cap) { buf[off++] = ' '; }
-        }
-        off += snprintf(buf + off, cap - off, ")");
-    }
-    return off;
-}
-
-// ── Occurs check ────────────────────────────────────────────────────────────
-
-static bool tc_occurs(uint32_t var_id, TNodeKind var_kind, uint32_t t) {
+// Occurs check
+static bool tc_occurs(uint32_t var_id, TNodeKind vk, uint32_t t) {
     t = tn_resolve(t);
     TNode *n = &tnodes[t];
-    if (n->kind == var_kind && (n->kind == TN_VAR || n->kind == TN_SVAR || n->kind == TN_RVAR)
-        && n->var_id == var_id)
-        return true;
+    if (n->kind == vk && (vk == TN_VAR || vk == TN_SVAR || vk == TN_RVAR) && n->var_id == var_id) return true;
     switch (n->kind) {
-    case TN_ARR: case TN_BOX: case TN_REC: return tc_occurs(var_id, var_kind, n->arg);
-    case TN_QUOT: return tc_occurs(var_id, var_kind, n->quot.in) || tc_occurs(var_id, var_kind, n->quot.out);
-    case TN_SCONS: return tc_occurs(var_id, var_kind, n->scons.head) || tc_occurs(var_id, var_kind, n->scons.tail);
-    case TN_REXT: return tc_occurs(var_id, var_kind, n->rext.type) || tc_occurs(var_id, var_kind, n->rext.tail);
+    case TN_SLICE: case TN_BOX: case TN_LIST: case TN_REC: return tc_occurs(var_id, vk, n->arg);
+    case TN_DICE: case TN_DICT: return tc_occurs(var_id, vk, n->kv.key) || tc_occurs(var_id, vk, n->kv.val);
+    case TN_TUPLE: return tc_occurs(var_id, vk, n->tuple.in) || tc_occurs(var_id, vk, n->tuple.out);
+    case TN_SCONS: return tc_occurs(var_id, vk, n->scons.head) || tc_occurs(var_id, vk, n->scons.tail);
+    case TN_REXT: return tc_occurs(var_id, vk, n->rext.type) || tc_occurs(var_id, vk, n->rext.tail);
     default: return false;
     }
 }
 
-// ── Unification ─────────────────────────────────────────────────────────────
-
+// Unification
 static void tc_ut(uint32_t a, uint32_t b) {
     if (tc_had_err) return;
     a = tn_resolve(a); b = tn_resolve(b);
     if (a == b) return;
     TNode *na = &tnodes[a], *nb = &tnodes[b];
-    if (na->kind == TN_VAR) {
-        if (tc_occurs(na->var_id, TN_VAR, b)) { tc_err("infinite type"); return; }
-        tc_subst[na->var_id] = b; return;
-    }
-    if (nb->kind == TN_VAR) {
-        if (tc_occurs(nb->var_id, TN_VAR, a)) { tc_err("infinite type"); return; }
-        tc_subst[nb->var_id] = a; return;
-    }
+    if (na->kind == TN_VAR) { if (tc_occurs(na->var_id, TN_VAR, b)) { tc_err("infinite type"); return; } tc_subst[na->var_id] = b; return; }
+    if (nb->kind == TN_VAR) { if (tc_occurs(nb->var_id, TN_VAR, a)) { tc_err("infinite type"); return; } tc_subst[nb->var_id] = a; return; }
     if (na->kind != nb->kind) {
-        char ab[128], bb[128];
-        tn_show(a, ab, sizeof(ab)); tn_show(b, bb, sizeof(bb));
-        const char *hint = "";
-        if ((na->kind == TN_INT && nb->kind == TN_FLOAT) ||
-            (na->kind == TN_FLOAT && nb->kind == TN_INT))
-            hint = "\n\n    Hint: use `itof` to convert Int to Float, or `ftoi` for Float to Int.";
-        tc_err("expected %s, got %s%s", ab, bb, hint);
-        return;
+        char ab[128], bb[128]; tn_show(a, ab, sizeof(ab)); tn_show(b, bb, sizeof(bb));
+        tc_err("expected %s, got %s", ab, bb); return;
     }
     switch (na->kind) {
-    case TN_INT: case TN_BOOL: case TN_FLOAT: case TN_SYM: return;
-    case TN_ARR: case TN_BOX: tc_ut(na->arg, nb->arg); return;
-    case TN_DICT: tc_ut(na->dict.key, nb->dict.key); tc_ut(na->dict.val, nb->dict.val); return;
+    case TN_INT: case TN_FLOAT: case TN_SYM: case TN_STR: return;
+    case TN_SLICE: case TN_BOX: case TN_LIST: tc_ut(na->arg, nb->arg); return;
     case TN_REC: tc_ur(na->arg, nb->arg); return;
-    case TN_QUOT: tc_ust(na->quot.in, nb->quot.in); tc_ust(na->quot.out, nb->quot.out); return;
+    case TN_DICE: case TN_DICT: tc_ut(na->kv.key, nb->kv.key); tc_ut(na->kv.val, nb->kv.val); return;
+    case TN_TUPLE: tc_ust(na->tuple.in, nb->tuple.in); tc_ust(na->tuple.out, nb->tuple.out); return;
     default: tc_err("cannot unify"); return;
     }
 }
@@ -2164,19 +2790,9 @@ static void tc_ust(uint32_t a, uint32_t b) {
     a = tn_resolve(a); b = tn_resolve(b);
     if (a == b) return;
     TNode *na = &tnodes[a], *nb = &tnodes[b];
-    if (na->kind == TN_SVAR) {
-        if (tc_occurs(na->var_id, TN_SVAR, b)) { tc_err("infinite stack"); return; }
-        tc_subst[na->var_id] = b; return;
-    }
-    if (nb->kind == TN_SVAR) {
-        if (tc_occurs(nb->var_id, TN_SVAR, a)) { tc_err("infinite stack"); return; }
-        tc_subst[nb->var_id] = a; return;
-    }
-    if (na->kind == TN_SCONS && nb->kind == TN_SCONS) {
-        tc_ut(na->scons.head, nb->scons.head);
-        tc_ust(na->scons.tail, nb->scons.tail);
-        return;
-    }
+    if (na->kind == TN_SVAR) { if (tc_occurs(na->var_id, TN_SVAR, b)) { tc_err("infinite stack"); return; } tc_subst[na->var_id] = b; return; }
+    if (nb->kind == TN_SVAR) { if (tc_occurs(nb->var_id, TN_SVAR, a)) { tc_err("infinite stack"); return; } tc_subst[nb->var_id] = a; return; }
+    if (na->kind == TN_SCONS && nb->kind == TN_SCONS) { tc_ut(na->scons.head, nb->scons.head); tc_ust(na->scons.tail, nb->scons.tail); return; }
     tc_err("stack shape mismatch");
 }
 
@@ -2185,1024 +2801,734 @@ static void tc_ur(uint32_t a, uint32_t b) {
     a = tn_resolve(a); b = tn_resolve(b);
     if (a == b) return;
     TNode *na = &tnodes[a], *nb = &tnodes[b];
-    if (na->kind == TN_RVAR) {
-        if (tc_occurs(na->var_id, TN_RVAR, b)) { tc_err("infinite row"); return; }
-        tc_subst[na->var_id] = b; return;
-    }
-    if (nb->kind == TN_RVAR) {
-        if (tc_occurs(nb->var_id, TN_RVAR, a)) { tc_err("infinite row"); return; }
-        tc_subst[nb->var_id] = a; return;
-    }
+    if (na->kind == TN_RVAR) { if (tc_occurs(na->var_id, TN_RVAR, b)) { tc_err("infinite row"); return; } tc_subst[na->var_id] = b; return; }
+    if (nb->kind == TN_RVAR) { if (tc_occurs(nb->var_id, TN_RVAR, a)) { tc_err("infinite row"); return; } tc_subst[nb->var_id] = a; return; }
     if (na->kind == TN_REMPTY && nb->kind == TN_REMPTY) return;
-    if (na->kind == TN_REMPTY && nb->kind == TN_REXT) {
-        tc_err("extra field '%s'", sym_names[nb->rext.label]); return;
-    }
-    if (na->kind == TN_REXT && nb->kind == TN_REMPTY) {
-        tc_err("missing field '%s'", sym_names[na->rext.label]); return;
-    }
+    if (na->kind == TN_REMPTY && nb->kind == TN_REXT) { tc_err("extra field '%s'", sym_names[nb->rext.label]); return; }
+    if (na->kind == TN_REXT && nb->kind == TN_REMPTY) { tc_err("missing field '%s'", sym_names[na->rext.label]); return; }
     if (na->kind == TN_REXT && nb->kind == TN_REXT) {
-        if (na->rext.label == nb->rext.label) {
-            tc_ut(na->rext.type, nb->rext.type);
-            tc_ur(na->rext.tail, nb->rext.tail);
-            return;
-        }
+        if (na->rext.label == nb->rext.label) { tc_ut(na->rext.type, nb->rext.type); tc_ur(na->rext.tail, nb->rext.tail); return; }
         uint32_t r = tn_rvar();
         tc_ur(na->rext.tail, tn_rext(nb->rext.label, nb->rext.type, r));
         tc_ur(nb->rext.tail, tn_rext(na->rext.label, na->rext.type, r));
     }
 }
 
-// ── Instantiation ───────────────────────────────────────────────────────────
+// Instantiation
+typedef struct { uint32_t old_id, new_node; } InstEntry;
+typedef struct { InstEntry e[256]; int n; } InstMap;
 
-#define MAX_INST_MAP 256
-
-typedef struct {
-    uint32_t old_id;
-    uint32_t new_node;
-} InstEntry;
-
-typedef struct {
-    InstEntry entries[MAX_INST_MAP];
-    int count;
-} InstMap;
-
-static uint32_t inst_find(InstMap *m, uint32_t old_id) {
-    for (int i = 0; i < m->count; i++)
-        if (m->entries[i].old_id == old_id) return m->entries[i].new_node;
-    return TN_NONE;
-}
-
-static void inst_add(InstMap *m, uint32_t old_id, uint32_t new_node) {
-    if (m->count >= MAX_INST_MAP) return;
-    m->entries[m->count++] = (InstEntry){old_id, new_node};
-}
-
-static uint32_t inst(InstMap *m, uint32_t t) {
+static uint32_t tc_inst_r(InstMap *m, uint32_t t) {
     t = tn_resolve(t);
     TNode *n = &tnodes[t];
     switch (n->kind) {
-    case TN_INT: case TN_BOOL: case TN_FLOAT: case TN_SYM: case TN_REMPTY: return t;
+    case TN_INT: case TN_FLOAT: case TN_SYM: case TN_STR: case TN_REMPTY: return t;
     case TN_VAR: case TN_SVAR: case TN_RVAR: {
-        uint32_t f = inst_find(m, n->var_id);
-        if (f != TN_NONE) return f;
+        for (int i = 0; i < m->n; i++) if (m->e[i].old_id == n->var_id) return m->e[i].new_node;
         uint32_t nv = tn_new_var(n->kind);
-        inst_add(m, n->var_id, nv);
+        if (m->n < 256) m->e[m->n++] = (InstEntry){n->var_id, nv};
         return nv;
     }
-    case TN_ARR:   return tn_arr(inst(m, n->arg));
-    case TN_BOX:   return tn_box(inst(m, n->arg));
-    case TN_REC:   return tn_rec(inst(m, n->arg));
-    case TN_DICT:  return tn_dict(inst(m, n->dict.key), inst(m, n->dict.val));
-    case TN_QUOT:  return tn_quot(inst(m, n->quot.in), inst(m, n->quot.out));
-    case TN_SCONS: return tn_scons(inst(m, n->scons.head), inst(m, n->scons.tail));
-    case TN_REXT:  return tn_rext(n->rext.label, inst(m, n->rext.type), inst(m, n->rext.tail));
+    case TN_SLICE: return tn_slice(tc_inst_r(m, n->arg));
+    case TN_LIST:  return tn_list(tc_inst_r(m, n->arg));
+    case TN_BOX:   return tn_box(tc_inst_r(m, n->arg));
+    case TN_REC:   return tn_rec(tc_inst_r(m, n->arg));
+    case TN_DICE:  return tn_dice(tc_inst_r(m, n->kv.key), tc_inst_r(m, n->kv.val));
+    case TN_DICT:  return tn_dict_t(tc_inst_r(m, n->kv.key), tc_inst_r(m, n->kv.val));
+    case TN_TUPLE: return tn_tuple(tc_inst_r(m, n->tuple.in), tc_inst_r(m, n->tuple.out));
+    case TN_SCONS: return tn_scons(tc_inst_r(m, n->scons.head), tc_inst_r(m, n->scons.tail));
+    case TN_REXT:  return tn_rext(n->rext.label, tc_inst_r(m, n->rext.type), tc_inst_r(m, n->rext.tail));
     }
     return t;
 }
 
 static StackEff tc_inst(StackEff eff) {
-    InstMap m = {.count = 0};
-    return (StackEff){inst(&m, eff.in), inst(&m, eff.out)};
+    InstMap m = {.n = 0};
+    return (StackEff){tc_inst_r(&m, eff.in), tc_inst_r(&m, eff.out)};
 }
 
-// ── Type environment ────────────────────────────────────────────────────────
-
+// Type environment
 static uint32_t tenv_new(uint32_t parent) {
     if (tenv_count >= MAX_TENVS) slap_panic("type env pool full");
     int idx = tenv_count++;
-    tenvs[idx] = (TEnv){parent, NULL, 0, 0};
+    tenvs[idx] = (TCEnv){parent, NULL, 0, 0};
     return (uint32_t)idx;
 }
-
-static void tenv_bind(uint32_t env, uint32_t sym, uint32_t type, bool is_poly, bool is_quot) {
-    TEnv *e = &tenvs[env];
+static void tenv_bind(uint32_t env, uint32_t name, uint32_t type, bool poly, bool is_def) {
+    TCEnv *e = &tenvs[env];
     for (int i = 0; i < e->count; i++) {
-        if (e->binds[i].name == sym) {
-            e->binds[i] = (TBinding){sym, type, is_poly, is_quot, false};
-            return;
-        }
+        if (e->binds[i].name == name) { e->binds[i] = (TCBinding){name, type, poly, is_def, false, 0, 0}; return; }
     }
-    if (e->count >= e->cap) {
-        e->cap = e->cap ? e->cap * 2 : 8;
-        e->binds = realloc(e->binds, e->cap * sizeof(TBinding));
-    }
-    e->binds[e->count++] = (TBinding){sym, type, is_poly, is_quot, false};
+    if (e->count >= e->cap) { e->cap = e->cap ? e->cap * 2 : 8; e->binds = realloc(e->binds, (size_t)e->cap * sizeof(TCBinding)); }
+    e->binds[e->count++] = (TCBinding){name, type, poly, is_def, false, 0, 0};
 }
-
-typedef struct { uint32_t type; bool poly; bool is_quot; bool freed; bool found; uint32_t env; int idx; int freed_line, freed_col; } TEnvLookup;
-
-static TEnvLookup tenv_lookup(uint32_t env, uint32_t sym) {
+typedef struct { uint32_t type; bool poly, is_def, freed, was_used, found; TCBinding *binding; } TLookup;
+static TLookup tenv_lookup(uint32_t env, uint32_t name) {
     while (env != TN_NONE) {
-        TEnv *e = &tenvs[env];
+        TCEnv *e = &tenvs[env];
         for (int i = 0; i < e->count; i++)
-            if (e->binds[i].name == sym) {
-                TBinding *b = &e->binds[i];
-                return (TEnvLookup){b->type, b->poly, b->is_quot, b->freed, true, env, i, b->freed_line, b->freed_col};
+            if (e->binds[i].name == name) {
+                TCBinding *b = &e->binds[i];
+                bool was = b->used;
+                b->used = true;
+                return (TLookup){b->type, b->poly, b->is_def, b->freed, was, true, b};
             }
         env = e->parent;
     }
-    return (TEnvLookup){0, false, false, false, false, 0, 0, 0, 0};
+    return (TLookup){0, false, false, false, false, false, NULL};
 }
 
-// ── Primitive type schemes ──────────────────────────────────────────────────
+// Primitive type schemes
+typedef struct { StackEff eff; uint32_t copy_var; bool has_copy; uint32_t linear_var; bool has_linear; } PrimScheme;
 
-typedef struct {
-    StackEff eff;
-    uint32_t copy_var;    bool has_copy;
-    uint32_t copy_var2;   bool has_copy2;
-    uint32_t copybox_var; bool has_copybox;
-    uint32_t esc_a, esc_b; bool has_esc;
-} PrimScheme;
-
-static PrimScheme tc_prim_scheme(uint32_t sym) {
-    PrimScheme p = {.has_copy = false, .has_copy2 = false, .has_copybox = false, .has_esc = false};
-    const char *name = sym_names[sym];
+static PrimScheme tc_prim_scheme(uint32_t sym_id) {
+    PrimScheme p = {0};
+    const char *nm = sym_names[sym_id];
     #define S tn_svar()
     #define T tn_var()
     #define INT tn_int()
-    #define BOOL tn_bool()
-    #define ARR(e) tn_arr(e)
-    #define BOX_(t) tn_box(t)
-    #define QUOT(i,o) tn_quot(i,o)
-    #define SC(h,t) tn_scons(h,t)
-    #define NM(s) (strcmp(name, s) == 0)
+    #define FLT tn_float()
+    #define SYM_ tn_sym()
+    #define SL(e) tn_slice(e)
+    #define BX(e) tn_box(e)
+    #define LS(e) tn_list(e)
+    #define DI(k,v) tn_dice(k,v)
+    #define DT(k,v) tn_dict_t(k,v)
+    #define TU(i,o) tn_tuple(i,o)
+    #define C(h,t) tn_scons(h,t)
+    #define RC(r) tn_rec(r)
+    #define STR_ tn_str()
+    #define NM(s) (strcmp(nm, s) == 0)
+    #define EFF(i,o) do { p.eff = (StackEff){i, o}; } while(0)
+    #define COPY(v) do { p.has_copy = true; p.copy_var = v; } while(0)
+    #define LINEAR(v) do { p.has_linear = true; p.linear_var = v; } while(0)
 
-    if (NM("dup")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, s), SC(a, SC(a, s))};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("drop")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, s), s};
-        p.has_copybox = true; p.copybox_var = a;
-    } else if (NM("swap")) {
-        uint32_t s = S, a = T, b = T;
-        p.eff = (StackEff){SC(b, SC(a, s)), SC(a, SC(b, s))};
-    } else if (NM("nip")) {
-        uint32_t s = S, a = T, b = T;
-        p.eff = (StackEff){SC(b, SC(a, s)), SC(b, s)};
-    } else if (NM("over")) {
-        uint32_t s = S, a = T, b = T;
-        p.eff = (StackEff){SC(b, SC(a, s)), SC(a, SC(b, SC(a, s)))};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("rot")) {
-        uint32_t s = S, a = T, b = T, c = T;
-        p.eff = (StackEff){SC(c, SC(b, SC(a, s))), SC(a, SC(c, SC(b, s)))};
-    } else if (NM("not")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(BOOL, s), SC(BOOL, s)};
-    } else if (NM("and") || NM("or")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(BOOL, SC(BOOL, s)), SC(BOOL, s)};
-    } else if (NM("choose")) {
-        uint32_t s = S, sp = S;
-        p.eff = (StackEff){SC(QUOT(s, sp), SC(QUOT(s, sp), SC(BOOL, s))), sp};
-    } else if (NM("dip")) {
-        uint32_t s = S, sp = S, a = T;
-        p.eff = (StackEff){SC(QUOT(s, sp), SC(a, s)), SC(a, sp)};
-    } else if (NM("apply")) {
-        uint32_t s = S, sp = S;
-        p.eff = (StackEff){SC(QUOT(s, sp), s), sp};
-    } else if (NM("if")) {
-        uint32_t s = S, sp = S, a = T, as = SC(a, s);
-        p.eff = (StackEff){SC(QUOT(as, sp), SC(QUOT(as, sp), SC(QUOT(as, SC(BOOL, s)), as))), sp};
-    } else if (NM("loop")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(QUOT(s, SC(BOOL, s)), s), s};
-    } else if (NM("cond")) {
-        uint32_t s = S, sp = S, s2 = S, a = T;
-        uint32_t as = SC(a, s);
-        uint32_t pred_q = QUOT(as, SC(BOOL, s));
-        uint32_t body_q = QUOT(as, sp);
-        uint32_t tuple_q = QUOT(s2, SC(body_q, SC(pred_q, s2)));
-        p.eff = (StackEff){SC(body_q, SC(ARR(tuple_q), as)), sp};
-    } else if (NM("match")) {
-        uint32_t s = S, sp = S;
-        p.eff = (StackEff){SC(QUOT(s, sp), SC(tn_rec(tn_rvar()), SC(tn_sym(), s))), sp};
-    } else if (NM("box")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, s), SC(BOX_(a), s)};
-    } else if (NM("clone")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(BOX_(a), s), SC(a, SC(BOX_(a), s))};
-    } else if (NM("set")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, SC(BOX_(a), s)), SC(BOX_(a), s)};
-    } else if (NM("dict-new")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){s, SC(tn_dict(k, v), s)};
-    } else if (NM("dict-set")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(v, SC(k, SC(tn_dict(k, v), s))), SC(tn_dict(k, v), s)};
-        p.has_copy = true; p.copy_var = k;
-        p.has_copy2 = true; p.copy_var2 = v;
-    } else if (NM("dict-get")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(k, SC(tn_dict(k, v), s)), SC(v, SC(tn_dict(k, v), s))};
-        p.has_copy = true; p.copy_var = k;
-    } else if (NM("dict-has")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(k, SC(tn_dict(k, v), s)), SC(BOOL, SC(tn_dict(k, v), s))};
-        p.has_copy = true; p.copy_var = k;
-    } else if (NM("dict-keys")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(tn_dict(k, v), s), SC(ARR(k), SC(tn_dict(k, v), s))};
-    } else if (NM("dict-count")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(tn_dict(k, v), s), SC(INT, SC(tn_dict(k, v), s))};
-    } else if (NM("dict-remove")) {
-        uint32_t s = S, k = T, v = T;
-        p.eff = (StackEff){SC(k, SC(tn_dict(k, v), s)), SC(v, SC(tn_dict(k, v), s))};
-        p.has_copy = true; p.copy_var = k;
-    } else if (NM("slurp")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(ARR(INT), s), SC(ARR(INT), s)};
-    } else if (NM("box-nth")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(INT, SC(BOX_(ARR(a)), s)), SC(a, SC(BOX_(ARR(a)), s))};
-    } else if (NM("box-len")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(BOX_(ARR(a)), s), SC(INT, SC(BOX_(ARR(a)), s))};
-    } else if (NM("box-set-nth")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, SC(INT, SC(BOX_(ARR(a)), s))), SC(BOX_(ARR(a)), s)};
-    } else if (NM("box-push")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, SC(BOX_(ARR(a)), s)), SC(BOX_(ARR(a)), s)};
-    } else if (NM("box-pop")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(BOX_(ARR(a)), s), SC(a, SC(BOX_(ARR(a)), s))};
-    } else if (NM("free") || NM("print")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, s), s};
-    } else if (NM("borrow")) {
-        uint32_t s = S, a = T, b = T, ba = BOX_(a);
-        p.eff = (StackEff){SC(QUOT(SC(a, s), SC(b, s)), SC(ba, s)), SC(b, SC(ba, s))};
-        p.has_esc = true; p.esc_a = a; p.esc_b = b;
-    } else if (NM("quote")) {
-        uint32_t s = S, r = S, a = T;
-        p.eff = (StackEff){SC(a, s), SC(QUOT(r, SC(a, r)), s)};
-    } else if (NM("compose")) {
-        uint32_t a = S, b = S, c = S, s = S;
-        p.eff = (StackEff){SC(QUOT(b, c), SC(QUOT(a, b), s)), SC(QUOT(a, c), s)};
-    } else if (NM("cons")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), SC(a, s)), SC(ARR(a), s)};
-    } else if (NM("uncons")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), s), SC(ARR(a), SC(a, s))};
-    } else if (NM("pop")) {
-        uint32_t s = S, s2 = S, sp = S, a = T;
-        p.eff = (StackEff){SC(QUOT(s2, SC(a, sp)), s), SC(a, SC(QUOT(s2, sp), s))};
-    } else if (NM("plus") || NM("sub") || NM("mul")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, s)), SC(INT, s)};
-    } else if (NM("divmod")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, s)), SC(INT, SC(INT, s))};
-    } else if (NM("random")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, s), SC(INT, s)};
-    } else if (NM("eq")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, SC(a, s)), SC(BOOL, s)};
-    } else if (NM("lt")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, s)), SC(BOOL, s)};
-    } else if (NM("fadd") || NM("fsub") || NM("fmul") || NM("fdiv") || NM("atan2") || NM("fmod") || NM("pow")) {
-        uint32_t s = S, f = tn_float();
-        p.eff = (StackEff){SC(f, SC(f, s)), SC(f, s)};
-    } else if (NM("sqrt") || NM("sin") || NM("cos") || NM("floor") || NM("ceil") || NM("round") || NM("log") || NM("tan") || NM("asin") || NM("acos") || NM("exp")) {
-        uint32_t s = S, f = tn_float();
-        p.eff = (StackEff){SC(f, s), SC(f, s)};
-    } else if (NM("flt") || NM("feq")) {
-        uint32_t s = S, f = tn_float();
-        p.eff = (StackEff){SC(f, SC(f, s)), SC(BOOL, s)};
-    } else if (NM("itof")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, s), SC(tn_float(), s)};
-    } else if (NM("ftoi")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(tn_float(), s), SC(INT, s)};
-    } else if (NM("len")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), s), SC(INT, SC(ARR(a), s))};
-    } else if (NM("nth")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(INT, SC(ARR(a), s)), SC(a, SC(ARR(a), s))};
-    } else if (NM("set-nth") || NM("array-insert")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(a, SC(INT, SC(ARR(a), s))), SC(ARR(a), s)};
-    } else if (NM("cat")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), SC(ARR(a), s)), SC(ARR(a), s)};
-    } else if (NM("slice")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(INT, SC(INT, SC(ARR(a), s))), SC(ARR(a), SC(ARR(a), s))};
-    } else if (NM("array-remove")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(INT, SC(ARR(a), s)), SC(a, SC(ARR(a), s))};
-    } else if (NM("range")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, s), SC(ARR(INT), s)};
-    } else if (NM("for-each")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(QUOT(SC(a, s), s), SC(ARR(a), s)), s};
-    } else if (NM("for-index")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(QUOT(SC(INT, SC(a, s)), s), SC(ARR(a), s)), s};
-    } else if (NM("rect")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, SC(INT, SC(INT, SC(INT, s))))), s};
-    } else if (NM("draw-char")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, SC(INT, SC(INT, s)))), s};
-    } else if (NM("clear") || NM("sleep")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, s), s};
-    } else if (NM("assert")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(BOOL, s), s};
-    } else if (NM("mouse-down?")) {
-        uint32_t s = S;
-        p.eff = (StackEff){s, SC(BOOL, s)};
-    } else if (NM("present") || NM("halt") || NM("print-stack")) {
-        uint32_t s = S;
-        p.eff = (StackEff){s, s};
-    } else if (NM("read-key") || NM("mouse-x") || NM("mouse-y") || NM("screen-w") || NM("screen-h")) {
-        uint32_t s = S;
-        p.eff = (StackEff){s, SC(INT, s)};
-    // -- array extensions
-    } else if (NM("sort") || NM("unique")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), s), SC(ARR(a), s)};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("scan")) {
-        uint32_t s = S, s2 = S, a = T, b = T;
-        uint32_t q = QUOT(SC(a, SC(b, s2)), SC(b, s2));
-        p.eff = (StackEff){SC(q, SC(b, SC(ARR(a), s))), SC(ARR(b), s)};
-    } else if (NM("zip-with")) {
-        uint32_t s = S, s2 = S, a = T, b = T, c = T;
-        uint32_t q = QUOT(SC(b, SC(a, s2)), SC(c, s2));
-        p.eff = (StackEff){SC(q, SC(ARR(b), SC(ARR(a), s))), SC(ARR(c), s)};
-    } else if (NM("table")) {
-        uint32_t s = S, s2 = S, a = T, b = T, c = T;
-        uint32_t q = QUOT(SC(b, SC(a, s2)), SC(c, s2));
-        p.eff = (StackEff){SC(q, SC(ARR(b), SC(ARR(a), s))), SC(ARR(ARR(c)), s)};
-        p.has_copy = true; p.copy_var = a;
-        p.has_copy2 = true; p.copy_var2 = b;
-    } else if (NM("where")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), s), SC(ARR(INT), s)};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("rotate")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(INT, SC(ARR(a), s)), SC(ARR(a), s)};
-    } else if (NM("both")) {
-        uint32_t s = S, s2 = S, a = T, b = T;
-        uint32_t q = QUOT(SC(a, s2), SC(b, s2));
-        p.eff = (StackEff){SC(q, SC(a, SC(a, s))), SC(b, SC(b, s))};
-    // -- array extensions 2
-    } else if (NM("rise") || NM("fall") || NM("classify") || NM("occurrences")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), s), SC(ARR(INT), SC(ARR(a), s))};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("replicate")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(INT), SC(ARR(a), s)), SC(ARR(a), s)};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("find")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(a), SC(ARR(a), s)), SC(ARR(BOOL), SC(ARR(a), s))};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("base")) {
-        uint32_t s = S;
-        p.eff = (StackEff){SC(INT, SC(INT, s)), SC(ARR(INT), s)};
-    } else if (NM("transpose")) {
-        uint32_t s = S, a = T;
-        p.eff = (StackEff){SC(ARR(ARR(a)), s), SC(ARR(ARR(a)), s)};
-        p.has_copy = true; p.copy_var = a;
-    // -- higher-order array ops
-    } else if (NM("group")) {
-        // [Int] [a] (q: [a] → b) → [b]
-        uint32_t s = S, s2 = S, a = T, b = T;
-        uint32_t q = QUOT(SC(ARR(a), s2), SC(b, s2));
-        p.eff = (StackEff){SC(q, SC(ARR(a), SC(ARR(INT), s))), SC(ARR(b), s)};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("partition")) {
-        // [Int] [a] (q: [a] → b) → [b]
-        uint32_t s = S, s2 = S, a = T, b = T;
-        uint32_t q = QUOT(SC(ARR(a), s2), SC(b, s2));
-        p.eff = (StackEff){SC(q, SC(ARR(a), SC(ARR(INT), s))), SC(ARR(b), s)};
-        p.has_copy = true; p.copy_var = a;
-    } else if (NM("reduce")) {
-        // [a] (q: a a → a) → a
-        uint32_t s = S, s2 = S, a = T;
-        uint32_t q = QUOT(SC(a, SC(a, s2)), SC(a, s2));
-        p.eff = (StackEff){SC(q, SC(ARR(a), s)), SC(a, s)};
-    } else {
-        return p;
-    }
+    // Stack
+    if (NM("dup"))  { uint32_t s=S,a=T; EFF(C(a,s), C(a,C(a,s))); COPY(a); }
+    else if (NM("drop")) { uint32_t s=S,a=T; EFF(C(a,s), s); COPY(a); }
+    else if (NM("swap")) { uint32_t s=S,a=T,b=T; EFF(C(b,C(a,s)), C(a,C(b,s))); }
+    else if (NM("dip"))  { uint32_t s=S,r=S,a=T; EFF(C(TU(s,r),C(a,s)), C(a,r)); }
+    // Control
+    else if (NM("apply")) { uint32_t s=S,r=S; EFF(C(TU(s,r),s), r); }
+    else if (NM("if"))    { uint32_t s=S,r=S; EFF(C(TU(s,r),C(TU(s,r),C(INT,s))), r); }
+    else if (NM("loop"))  { uint32_t s=S; EFF(C(TU(s,C(INT,s)),s), s); }
+    else if (NM("while")) { uint32_t s=S; EFF(C(TU(s,s),C(TU(s,C(INT,s)),s)), s); }
+    // cond and match are special-cased in tc_infer
+    // Bool
+    else if (NM("not"))   { uint32_t s=S; EFF(C(INT,s), C(INT,s)); }
+    else if (NM("and") || NM("or")) { uint32_t s=S; EFF(C(INT,C(INT,s)), C(INT,s)); }
+    // Compare
+    else if (NM("eq"))    { uint32_t s=S,a=T; EFF(C(a,C(a,s)), C(INT,s)); COPY(a); }
+    else if (NM("lt"))    { uint32_t s=S,a=T; EFF(C(a,C(a,s)), C(INT,s)); COPY(a); }
+    // Polymorphic math
+    else if (NM("plus")||NM("sub")||NM("mul")||NM("div")) { uint32_t s=S,a=T; EFF(C(a,C(a,s)), C(a,s)); COPY(a); }
+    else if (NM("mod")) { uint32_t s=S; EFF(C(INT,C(INT,s)), C(INT,s)); }
+    // Int math
+    else if (NM("iplus")||NM("isub")||NM("imul")) { uint32_t s=S; EFF(C(INT,C(INT,s)), C(INT,s)); }
+    else if (NM("idiv")||NM("imod")) { uint32_t s=S; EFF(C(INT,C(INT,s)), C(INT,s)); }
+    // Float math
+    else if (NM("fplus")||NM("fsub")||NM("fmul")||NM("fdiv")) { uint32_t s=S; EFF(C(FLT,C(FLT,s)), C(FLT,s)); }
+    else if (NM("fsqrt")||NM("fsin")||NM("fcos")||NM("ftan")||NM("ffloor")||NM("fceil")||NM("fround")||NM("fexp")||NM("flog")) { uint32_t s=S; EFF(C(FLT,s), C(FLT,s)); }
+    else if (NM("fpow")||NM("fatan2")) { uint32_t s=S; EFF(C(FLT,C(FLT,s)), C(FLT,s)); }
+    // Conversion
+    else if (NM("itof")) { uint32_t s=S; EFF(C(INT,s), C(FLT,s)); }
+    else if (NM("ftoi")) { uint32_t s=S; EFF(C(FLT,s), C(INT,s)); }
+    // Tuples
+    else if (NM("compose")) { uint32_t a=S,b=S,c=S,s=S; EFF(C(TU(b,c),C(TU(a,b),s)), C(TU(a,c),s)); }
+    else if (NM("cons")) { uint32_t s=S,s2=S,r=S,a=T; EFF(C(a,C(TU(s2,r),s)), C(TU(s2,C(a,r)),s)); }
+    else if (NM("car"))  { uint32_t s=S,s2=S,r=S,a=T; EFF(C(TU(s2,C(a,r)),s), C(a,C(TU(s2,r),s))); }
+    // Records
+    else if (NM("rec"))  { uint32_t s=S; EFF(C(TU(S,S),s), C(RC(tn_rvar()),s)); } // simplified
+    // get and set are special-cased in tc_infer
+    // Slices
+    else if (NM("len"))  { uint32_t s=S; EFF(C(T,s), C(INT,s)); } // works on Slice and Dice
+    else if (NM("fold")) { uint32_t s=S,a=T,b=T; EFF(C(TU(C(a,C(b,s)),C(b,s)),C(b,C(SL(a),s))), C(b,s)); }
+    else if (NM("reduce")) { uint32_t s=S,a=T; EFF(C(TU(C(a,C(a,s)),C(a,s)),C(SL(a),s)), C(a,s)); }
+    else if (NM("at"))   { uint32_t s=S,a=T; EFF(C(a,C(INT,C(SL(a),s))), C(a,s)); }
+    else if (NM("put"))  { uint32_t s=S,a=T; EFF(C(a,C(INT,C(SL(a),s))), C(SL(a),s)); }
+    else if (NM("each")) { uint32_t s=S,a=T; EFF(C(TU(C(a,s),s),C(SL(a),s)), s); }
+    else if (NM("map"))  { uint32_t s=S,a=T,b=T; EFF(C(TU(C(a,s),C(b,s)),C(SL(a),s)), C(SL(b),s)); }
+    else if (NM("filter")) { uint32_t s=S,a=T; EFF(C(TU(C(a,s),C(INT,s)),C(SL(a),s)), C(SL(a),s)); }
+    else if (NM("range")) { uint32_t s=S; EFF(C(INT,C(INT,s)), C(SL(INT),s)); }
+
+    else if (NM("sort"))    { uint32_t s=S,a=T; EFF(C(SL(a),s), C(SL(a),s)); }
+    else if (NM("cat"))     { uint32_t s=S,a=T; EFF(C(SL(a),C(SL(a),s)), C(SL(a),s)); }
+    else if (NM("take")||NM("drop-n")||NM("rotate")) { uint32_t s=S,a=T; EFF(C(INT,C(SL(a),s)), C(SL(a),s)); }
+
+    else if (NM("scan")) { uint32_t s=S,a=T,b=T; EFF(C(TU(C(a,C(b,s)),C(b,s)),C(b,C(SL(a),s))), C(SL(b),s)); }
+    // select: Slice(Int) Slice(a) -> Slice(a)
+    else if (NM("select")) { uint32_t s=S,a=T; EFF(C(SL(INT),C(SL(a),s)), C(SL(a),s)); }
+    // keep-mask: Slice(Bool) Slice(a) -> Slice(a)
+    else if (NM("keep-mask")) { uint32_t s=S,a=T; EFF(C(SL(INT),C(SL(a),s)), C(SL(a),s)); }
+    else if (NM("windows")||NM("reshape")) { uint32_t s=S,a=T; EFF(C(INT,C(SL(a),s)), C(SL(SL(a)),s)); }
+    else if (NM("rise")||NM("fall")||NM("shape")) { uint32_t s=S,a=T; EFF(C(SL(a),s), C(SL(INT),s)); }
+    else if (NM("index-of")) { uint32_t s=S,a=T; EFF(C(SL(a),C(a,s)), C(INT,s)); COPY(a); }
+    else if (NM("transpose")) { uint32_t s=S,a=T; EFF(C(SL(SL(a)),s), C(SL(SL(a)),s)); }
+    else if (NM("classify")) { uint32_t s=S,a=T; EFF(C(SL(a),s), C(SL(INT),s)); COPY(a); }
+    else if (NM("pick")) { uint32_t s=S,a=T,b=T; EFF(C(SL(INT),C(a,s)), C(b,s)); }
+    else if (NM("group")||NM("partition")) { uint32_t s=S,a=T; EFF(C(SL(INT),C(SL(a),s)), C(SL(SL(a)),s)); }
+
+    // Dices
+    else if (NM("dice"))   { uint32_t s=S,a=T,b=T; EFF(C(SL(T),s), C(DI(a,b),s)); }
+    else if (NM("grab"))   { uint32_t s=S,a=T,b=T; EFF(C(b,C(a,C(DI(a,b),s))), C(b,s)); }
+    else if (NM("ifsert")) { uint32_t s=S,a=T,b=T; EFF(C(b,C(a,C(DI(a,b),s))), C(DI(a,b),s)); }
+    // Memory (lend is special-cased in tc_infer)
+    else if (NM("clone")) { uint32_t s=S,l=T; EFF(C(l,s), C(l,C(l,s))); LINEAR(l); }
+    else if (NM("free"))  { uint32_t s=S,a=T; EFF(C(a,s), s); LINEAR(a); }
+    // Box
+    else if (NM("box"))   { uint32_t s=S,a=T; EFF(C(a,s), C(BX(a),s)); }
+    // Lists
+    else if (NM("list"))  { uint32_t s=S,a=T; EFF(C(SL(a),s), C(LS(a),s)); }
+    else if (NM("list-zero"))  { uint32_t s=S; EFF(C(INT,s), C(LS(INT),s)); }
+    else if (NM("list-concat"))  { uint32_t s=S,a=T; EFF(C(SL(a),C(LS(a),s)), C(LS(a),s)); }
+    else if (NM("list-assign"))  { uint32_t s=S,a=T; EFF(C(a,C(INT,C(LS(a),s))), C(LS(a),s)); }
+    else if (NM("list-at"))      { uint32_t s=S,a=T; EFF(C(a,C(INT,C(LS(a),s))), C(a,C(LS(a),s))); }
+    // Dicts
+    else if (NM("dict"))  { uint32_t s=S,a=T,b=T; EFF(C(DI(a,b),s), C(DT(a,b),s)); }
+    else if (NM("dict-insert")) { uint32_t s=S,a=T,b=T; EFF(C(b,C(a,C(DT(a,b),s))), C(DT(a,b),s)); }
+    else if (NM("dict-remove")) { uint32_t s=S,a=T; EFF(C(a,C(DT(a,T),s)), C(DT(a,T),s)); }
+    // Strings
+    else if (NM("str"))   { uint32_t s=S; EFF(C(SL(INT),s), C(STR_,s)); }
+    else if (NM("str-concat"))  { uint32_t s=S; EFF(C(SL(INT),C(STR_,s)), C(STR_,s)); }
+    else if (NM("str-assign"))  { uint32_t s=S; EFF(C(INT,C(INT,C(STR_,s))), C(STR_,s)); }
+    // IO
+    else if (NM("print")) { uint32_t s=S,a=T; EFF(C(a,s), s); }
+    else if (NM("assert")) { uint32_t s=S; EFF(C(INT,s), s); }
+    else if (NM("halt") || NM("print-stack")) { uint32_t s=S; EFF(s, s); }
+    // Random
+    else if (NM("random")) { uint32_t s=S; EFF(C(INT,s), C(INT,s)); }
+    // Console (on/show are special-cased in tc_infer)
+    else if (NM("clear")) { uint32_t s=S; EFF(C(INT,s), s); }
+    else if (NM("pixel")) { uint32_t s=S; EFF(C(INT,C(INT,C(INT,s))), s); }
+    else if (NM("millis")) { uint32_t s=S; EFF(s, C(INT,s)); }
+    else { return p; }
+
     #undef S
     #undef T
     #undef INT
-    #undef BOOL
-    #undef ARR
-    #undef BOX_
-    #undef QUOT
-    #undef SC
+    #undef FLT
+    #undef SYM_
+    #undef SL
+    #undef BX
+    #undef LS
+    #undef DI
+    #undef DT
+    #undef TU
+    #undef C
+    #undef RC
+    #undef STR_
     #undef NM
+    #undef EFF
+    #undef COPY
     return p;
 }
 
-// ── Inference ───────────────────────────────────────────────────────────────
+// Known symbol tracking for def/let
+typedef struct { uint32_t tnode; uint32_t sym_id; } KnownSym;
+static uint32_t ks_lookup(KnownSym *ks, int n, uint32_t tn) {
+    tn = tn_resolve(tn);
+    for (int i = n - 1; i >= 0; i--) if (tn_resolve(ks[i].tnode) == tn) return ks[i].sym_id;
+    return TN_NONE;
+}
 
-static uint32_t tc_lit_type(Val *v) {
-    switch (v->type) {
-    case T_INT:   return tn_int();
-    case T_BOOL:  return tn_bool();
-    case T_FLOAT: return tn_float();
-    case T_SYM:   return tn_sym();
-    default:     return tn_var();
+// Walk a row type (REXT chain) looking for a field by symbol ID.
+// Returns the field's type node, or TN_NONE if not found.
+// Sets *closed = true if the row ends in REMPTY (field provably absent).
+static uint32_t tc_row_find(uint32_t row, uint32_t sym_id, bool *closed) {
+    *closed = false;
+    while (true) {
+        row = tn_resolve(row);
+        if (tnodes[row].kind == TN_REXT) {
+            if (tnodes[row].rext.label == sym_id) return tnodes[row].rext.type;
+            row = tnodes[row].rext.tail;
+        } else if (tnodes[row].kind == TN_REMPTY) {
+            *closed = true;
+            return TN_NONE;
+        } else {
+            return TN_NONE;  // RVAR or other — can't determine
+        }
     }
 }
 
-typedef struct { uint32_t tnode; uint32_t sym; } KnownSym;
-
-static uint32_t _lookup_known_sym(KnownSym *ks, int count, uint32_t tn) {
-    tn = tn_resolve(tn);
-    for (int i = count - 1; i >= 0; i--)
-        if (tn_resolve(ks[i].tnode) == tn) return ks[i].sym;
-    return TN_NONE;
+// Map linear type to its snapshot type (Box→inner, List→Slice, Dict→Dice, Str→Slice(Int))
+// Returns TN_NONE if the type is not a known linear kind.
+static uint32_t tc_snapshot_of(uint32_t resolved) {
+    switch (tnodes[resolved].kind) {
+    case TN_BOX:  return tnodes[resolved].arg;
+    case TN_LIST: return tn_slice(tnodes[resolved].arg);
+    case TN_DICT: return tn_dice(tnodes[resolved].kv.key, tnodes[resolved].kv.val);
+    case TN_STR:  return tn_slice(tn_int());
+    default:      return TN_NONE;
+    }
 }
 
 static uint32_t tc_pop(uint32_t *cur) {
     uint32_t s = tn_resolve(*cur);
-    if (tnodes[s].kind == TN_SCONS) {
-        *cur = tnodes[s].scons.tail;
-        return tnodes[s].scons.head;
-    }
+    if (tnodes[s].kind == TN_SCONS) { *cur = tnodes[s].scons.tail; return tnodes[s].scons.head; }
     uint32_t t = tn_var(), r = tn_svar();
     tc_ust(*cur, tn_scons(t, r));
     *cur = r;
     return t;
 }
 
+static uint32_t tc_lit_type(Val *v) {
+    switch (v->type) {
+    case T_INT: return tn_int();
+    case T_FLOAT: return tn_float();
+    case T_SYM: return tn_sym();
+    case T_SLICE: return tn_slice(tn_var()); // string/slice literal
+    default: return tn_var();
+    }
+}
+
+// Inference
 static StackEff tc_infer(int start, int len, uint32_t env, int depth) {
     uint32_t cur = tn_svar();
     uint32_t base = cur;
-    int end = start + len;
+    KnownSym known[256];
+    int known_n = 0;
 
-    uint32_t sym_def = sym_intern("def");
-    uint32_t sym_let = sym_intern("let");
-    uint32_t sym_get = sym_intern("get");
-    uint32_t sym_put = sym_intern("put");
-    uint32_t sym_remove = sym_intern("remove");
-    uint32_t sym_free = sym_intern("free");
+    uint32_t sym_def = sym_intern("def"), sym_let = sym_intern("let"), sym_recur = sym_intern("recur"), sym_lend = sym_intern("lend");
+    uint32_t sym_get = sym_intern("get"), sym_set = sym_intern("set"), sym_match = sym_intern("match"), sym_cond = sym_intern("cond");
+    uint32_t sym_on = sym_intern("on"), sym_show = sym_intern("show");
+    uint32_t tc_recur_sym = TN_NONE;
 
-    // Map from TN_SYM type-node indices to known literal symbol values.
-    // When a literal symbol is pushed, we record which type node carries which sym id.
-    // def/let/get/put/remove extract the sym id from the popped type node.
-    #define KNOWN_SYM_MAX 256
-    KnownSym known_syms[KNOWN_SYM_MAX];
-    int known_sym_count = 0;
-
-    // Record that a type node carries a known symbol value
-    #define RECORD_SYM(tn, s) do { if (known_sym_count < KNOWN_SYM_MAX) { known_syms[known_sym_count].tnode = (tn); known_syms[known_sym_count].sym = (s); known_sym_count++; } } while(0)
-
-    // Look up known symbol from a type node (follows unification)
-    #define LOOKUP_SYM(tn) _lookup_known_sym(known_syms, known_sym_count, tn)
-    (void)known_syms; // suppress unused warning
-
-    for (int i = start; i < end && !tc_had_err;) {
+    for (int i = start; i < start + len && !tc_had_err; ) {
         Node *n = &nodes[i];
-        tc_cur_line = n->line;
-        tc_cur_col = n->col;
+        tc_cur_line = n->line; tc_cur_col = n->col;
 
         if (n->type == N_PUSH) {
-            cur = tn_scons(tc_lit_type(&n->literal), cur);
-            if (n->literal.type == T_SYM) {
-                // Record which type node carries this literal symbol
-                uint32_t tn_top = tn_resolve(tnodes[tn_resolve(cur)].scons.head);
-                RECORD_SYM(tn_top, n->literal.sym);
+            uint32_t t = tc_lit_type(&n->literal);
+            cur = tn_scons(t, cur);
+            if (n->literal.type == T_SYM && known_n < 256) {
+                known[known_n++] = (KnownSym){tn_resolve(tnodes[tn_resolve(cur)].scons.head), n->literal.sym};
             }
             i++;
         }
-        else if (n->type == N_QUOTE) {
-            uint32_t child_env = tenv_new(env);
-            StackEff eff = tc_infer(n->body.start, n->body.len, child_env, depth + 1);
-            cur = tn_scons(tn_quot(eff.in, eff.out), cur);
-
+        else if (n->type == N_TUPLE) {
+            int cc_mark = tc_cc_count, lc_mark = tc_lc_count;
+            uint32_t child = tenv_new(env);
+            uint32_t pre_bound = TN_NONE;
+            if (tc_recur_sym != TN_NONE) {
+                uint32_t gi = tn_svar(), go = tn_svar();
+                pre_bound = tn_tuple(gi, go);
+                tenv_bind(child, tc_recur_sym, pre_bound, true, true);
+                tc_recur_sym = TN_NONE;
+            }
+            StackEff eff = tc_infer(n->body.start, n->body.len, child, depth + 1);
+            if (pre_bound != TN_NONE) tc_ut(pre_bound, tn_tuple(eff.in, eff.out));
+            uint32_t tup = tn_tuple(eff.in, eff.out);
+            if (tc_pending_n < 64 && (tc_cc_count > cc_mark || tc_lc_count > lc_mark))
+                tc_pending[tc_pending_n++] = (PendingTupleCC){tup, cc_mark, tc_cc_count, lc_mark, tc_lc_count};
+            cur = tn_scons(tup, cur);
             i += 1 + n->body.len;
         }
-        else if (n->type == N_ARRAY) {
+        else if (n->type == N_SLICE) {
             StackEff eff = tc_infer(n->body.start, n->body.len, env, depth);
             uint32_t elem = tn_var();
             uint32_t s = eff.out;
             while (true) {
                 s = tn_resolve(s);
-                if (tnodes[s].kind == TN_SCONS) {
-                    tc_ut(tnodes[s].scons.head, elem);
-                    s = tnodes[s].scons.tail;
-                } else break;
+                if (tnodes[s].kind == TN_SCONS) { tc_ut(tnodes[s].scons.head, elem); s = tnodes[s].scons.tail; }
+                else break;
             }
-            cur = tn_scons(tn_arr(elem), cur);
-
+            cur = tn_scons(tn_slice(elem), cur);
             i += 1 + n->body.len;
         }
         else if (n->type == N_RECORD) {
-            // Walk body AST for literal sym/value pairs
-            int bstart = n->body.start, blen = n->body.len;
-            uint32_t row = tn_rvar();
-            bool all_literal = true;
-            // Check if all body nodes are literal pushes
-            for (int j = bstart; j < bstart + blen; j++) {
-                if (nodes[j].type != N_PUSH) { all_literal = false; break; }
-            }
-            if (all_literal && blen % 2 == 0) {
-                for (int j = bstart; j < bstart + blen; j += 2) {
-                    if (nodes[j].type == N_PUSH && nodes[j].literal.type == T_SYM) {
+            int bs = n->body.start, bl = n->body.len;
+            // Check if body is all literals (fast path)
+            bool all_lit = true;
+            for (int j = bs; j < bs + bl; j++) if (nodes[j].type != N_PUSH) { all_lit = false; break; }
+            uint32_t row = all_lit ? tn_rempty() : tn_rvar();
+            if (all_lit && bl % 2 == 0) {
+                for (int j = bs; j < bs + bl; j += 2) {
+                    if (nodes[j].literal.type == T_SYM)
                         row = tn_rext(nodes[j].literal.sym, tc_lit_type(&nodes[j+1].literal), row);
-                    }
                 }
             } else {
-                StackEff eff = tc_infer(bstart, blen, env, depth);
-                (void)eff;
+                // Infer body to type-check it, then build row from output
+                StackEff eff = tc_infer(bs, bl, env, depth);
+                uint32_t s = eff.out;
+                // Collect stack types (top-first: stk[0]=top)
+                uint32_t stk[256]; int stk_n = 0;
+                while (true) {
+                    s = tn_resolve(s);
+                    if (tnodes[s].kind == TN_SCONS && stk_n < 256) {
+                        stk[stk_n++] = tnodes[s].scons.head;
+                        s = tnodes[s].scons.tail;
+                    } else break;
+                }
+                // Record body pushes key,val pairs. Output (bottom-to-top):
+                //   key0 val0 key1 val1 ...
+                // stk (top-first): val_last key_last ... val0 key0
+                // Pairs from bottom: stk[stk_n-1]=key0, stk[stk_n-2]=val0, ...
+                if (stk_n >= 2 && stk_n % 2 == 0) {
+                    for (int j = stk_n - 1; j >= 1; j -= 2) {
+                        // stk[j] should be key type (Sym), stk[j-1] is value type
+                        row = tn_rext(sym_intern("?"), stk[j - 1], row);
+                    }
+                }
             }
             cur = tn_scons(tn_rec(row), cur);
-
-            i += 1 + blen;
+            i += 1 + bl;
         }
         else if (n->type == N_WORD) {
-            uint32_t wsym = n->sym;
-            tc_cur_word = sym_names[wsym];
-
-            // --- def: 'name value def ---
-            if (wsym == sym_def) {
+            tc_cur_word = sym_names[n->sym];
+            // def: 'name val def → pops val then name
+            if (n->sym == sym_def) {
                 uint32_t val_t = tc_pop(&cur);
                 uint32_t sym_t = tc_pop(&cur);
                 tc_ut(sym_t, tn_sym());
-                uint32_t name_sym = LOOKUP_SYM(sym_t);
-                if (name_sym != TN_NONE) {
-                    uint32_t resolved = tn_resolve(val_t);
-                    bool is_q = (tnodes[resolved].kind == TN_QUOT);
-                    tenv_bind(env, name_sym, is_q ? resolved : val_t, depth == 0, true);
-                }
-                i++; tc_cur_word = NULL; continue;
-            }
-
-            // --- let: value 'name let ---
-            if (wsym == sym_let) {
-                uint32_t sym_t = tc_pop(&cur);
-                uint32_t val_t = tc_pop(&cur);
-                tc_ut(sym_t, tn_sym());
-                uint32_t name_sym = LOOKUP_SYM(sym_t);
-
-                if (name_sym != TN_NONE) {
-                    uint32_t resolved = tn_resolve(val_t);
-                    bool is_q = (tnodes[resolved].kind == TN_QUOT);
-                    // let bindings always push (is_quot=false)
-                    tenv_bind(env, name_sym, is_q ? resolved : val_t, false, false);
-                }
-                i++; tc_cur_word = NULL; continue;
-            }
-
-            // --- get / put / remove ---
-            if (wsym == sym_get || wsym == sym_put || wsym == sym_remove) {
-                // Check if top of type stack is a known literal symbol
-                uint32_t top_t = tn_resolve(cur);
-                uint32_t known_key = TN_NONE;
-                if (tnodes[top_t].kind == TN_SCONS)
-                    known_key = LOOKUP_SYM(tnodes[top_t].scons.head);
-                if (known_key != TN_NONE) {
-                    uint32_t a = tn_var(), r = tn_rvar();
-                    uint32_t rec_t = tn_rec(tn_rext(known_key, a, r));
-                    if (wsym == sym_get) {
-                        tc_pop(&cur); // sym
-                        uint32_t rt = tc_pop(&cur);
-                        tc_ut(rt, rec_t);
-                        cur = tn_scons(a, tn_scons(rec_t, cur));
-                    } else if (wsym == sym_put) {
-                        tc_pop(&cur); // sym
-                        uint32_t vt = tc_pop(&cur);
-                        uint32_t rt = tc_pop(&cur);
-                        (void)rt;
-                        cur = tn_scons(tn_rec(tn_rext(known_key, vt, tn_rvar())), cur);
-                    } else { // remove
-                        tc_pop(&cur); // sym
-                        uint32_t rt = tc_pop(&cur);
-                        tc_ut(rt, rec_t);
-                        cur = tn_scons(a, tn_scons(tn_rec(r), cur));
-                    }
-                } else {
-                    // dynamic key — generic
-                    uint32_t a = tn_var();
-                    if (wsym == sym_get) {
-                        tc_pop(&cur); uint32_t rt = tc_pop(&cur);
-                        cur = tn_scons(a, tn_scons(rt, cur));
-                    } else if (wsym == sym_put) {
-                        tc_pop(&cur); tc_pop(&cur); uint32_t rt = tc_pop(&cur);
-                        cur = tn_scons(tn_rec(tn_rvar()), cur);
-                        (void)rt;
-                    } else {
-                        tc_pop(&cur); uint32_t rt = tc_pop(&cur);
-                        cur = tn_scons(a, tn_scons(tn_rec(tn_rvar()), cur));
-                        (void)rt;
-                    }
-                }
-
-                i++; tc_cur_word = NULL; continue;
-            }
-
-            // --- user-defined word ---
-            TEnvLookup look = tenv_lookup(env, wsym);
-            if (look.found) {
-                if (look.freed) {
-                    tc_err("use of `%s` after free.\n\n"
-                        "    The box was consumed by `free` and can no longer be used.\n"
-                        "    Use `clone` before `free` if you need the value afterward.",
-                        sym_names[wsym]);
-                    if (tc_err_count > 0 && look.freed_col > 0) {
-                        TypeError *e = &tc_errs[tc_err_count - 1];
-                        e->span = 0;
-                        e->span_count = 2;
-                        e->spans[0].line = look.freed_line;
-                        e->spans[0].col = look.freed_col;
-                        e->spans[0].span = 4; // "free"
-                        snprintf(e->spans[0].label, sizeof(e->spans[0].label), "freed here");
-                        e->spans[1].line = n->line;
-                        e->spans[1].col = n->col;
-                        e->spans[1].span = (int)strlen(sym_names[wsym]);
-                        snprintf(e->spans[1].label, sizeof(e->spans[1].label), "used here after free");
-                    }
-                    i++; tc_cur_word = NULL; continue;
-                }
-                uint32_t t = tn_resolve(look.type);
-                if (look.is_quot) {
-                    // def binding — auto-execute quotations and TVars
-                    if (tnodes[t].kind == TN_QUOT) {
-                        StackEff eff = {tnodes[t].quot.in, tnodes[t].quot.out};
-                        if (look.poly) eff = tc_inst(eff);
-                        tc_ust(cur, eff.in);
-                        cur = eff.out;
-                    } else if (tnodes[t].kind == TN_VAR) {
-                        uint32_t si = tn_svar(), so = tn_svar();
-                        tc_ut(t, tn_quot(si, so));
-                        tc_ust(cur, si);
-                        cur = so;
-                    } else {
-                        cur = tn_scons(look.type, cur);
-                    }
-                } else {
-                    // let binding — always push, never auto-execute
-                    if (tnodes[t].kind == TN_QUOT && look.poly) {
-                        // Polymorphic quotation value — instantiate before pushing
-                        InstMap m = {.count = 0};
-                        cur = tn_scons(tn_quot(inst(&m, tnodes[t].quot.in), inst(&m, tnodes[t].quot.out)), cur);
-                    } else {
-                        cur = tn_scons(look.type, cur);
-                    }
-                }
-
-                i++; tc_cur_word = NULL; continue;
-            }
-
-            // --- primitive ---
-            if (wsym < MAX_SYMS && prim_table[wsym]) {
-                uint32_t sym_if_ = sym_intern("if");
-                uint32_t sym_choose_ = sym_intern("choose");
-                bool is_branching = (wsym == sym_if_ || wsym == sym_choose_);
-
-                // For if/choose: extract branch quotation types before unification
-                // so we can produce rich errors on mismatch
-                uint32_t branch_then_in = 0, branch_then_out = 0;
-                uint32_t branch_else_in = 0, branch_else_out = 0;
-                int then_node_idx = -1, else_node_idx = -1;
-                if (is_branching) {
-                    // Stack top has: else_quot, then_quot, pred_quot (for if)
-                    //            or: else_quot, then_quot (for choose)
-                    // Walk cur to find them
-                    uint32_t s = tn_resolve(cur);
-                    if (tnodes[s].kind == TN_SCONS) {
-                        uint32_t else_t = tn_resolve(tnodes[s].scons.head);
-                        if (tnodes[else_t].kind == TN_QUOT) {
-                            branch_else_in = tnodes[else_t].quot.in;
-                            branch_else_out = tnodes[else_t].quot.out;
-                        }
-                        s = tn_resolve(tnodes[s].scons.tail);
-                        if (tnodes[s].kind == TN_SCONS) {
-                            uint32_t then_t = tn_resolve(tnodes[s].scons.head);
-                            if (tnodes[then_t].kind == TN_QUOT) {
-                                branch_then_in = tnodes[then_t].quot.in;
-                                branch_then_out = tnodes[then_t].quot.out;
-                            }
-                        }
-                    }
-                    // Find the AST nodes for the quotations (walk backward)
-                    int nq = 0;
-                    for (int j = i - 1; j >= start && nq < 3; j--) {
-                        if (nodes[j].type == N_QUOTE) {
-                            if (nq == 0) else_node_idx = j;
-                            else if (nq == 1) then_node_idx = j;
-                            nq++;
-                        }
-                        // skip bracket children
-                    }
-                }
-
-                int saved_err_count = tc_err_count;
-                bool saved_had_err = tc_had_err;
-
-                PrimScheme ps = tc_prim_scheme(wsym);
-                if (ps.has_copy && tc_cc_count < MAX_TCOPY)
-                    tc_cc[tc_cc_count++] = (CopyConst){ps.copy_var, sym_names[wsym], false, n->line, n->col};
-                if (ps.has_copy2 && tc_cc_count < MAX_TCOPY)
-                    tc_cc[tc_cc_count++] = (CopyConst){ps.copy_var2, sym_names[wsym], false, n->line, n->col};
-                if (ps.has_copybox && tc_cc_count < MAX_TCOPY)
-                    tc_cc[tc_cc_count++] = (CopyConst){ps.copybox_var, sym_names[wsym], true, n->line, n->col};
-                if (ps.has_esc && tc_esc_count < MAX_TESC)
-                    tc_esc[tc_esc_count++] = (EscConst){ps.esc_a, ps.esc_b, n->line, n->col, sym_names[wsym]};
-                tc_ust(cur, ps.eff.in);
-                cur = ps.eff.out;
-
-                // If a branching prim failed, replace generic error with rich one
-                if (is_branching && tc_had_err && !saved_had_err &&
-                    branch_then_out && branch_else_out) {
-                    tc_err_count = saved_err_count;
-                    tc_had_err = false;
-                    char then_buf[128], else_buf[128];
-                    tn_show_eff(branch_then_in, branch_then_out, then_buf, sizeof(then_buf));
-                    tn_show_eff(branch_else_in, branch_else_out, else_buf, sizeof(else_buf));
-                    // normalize variable names across both buffers together
-                    {
-                        char combined[256];
-                        int tl = (int)strlen(then_buf), el = (int)strlen(else_buf);
-                        snprintf(combined, sizeof(combined), "%s\x01%s", then_buf, else_buf);
-                        tn_normalize_vars(combined);
-                        char *sep = strchr(combined, '\x01');
-                        if (sep) { *sep = 0; strcpy(then_buf, combined); strcpy(else_buf, sep + 1); }
-                    }
-                    tc_err("`%s` branches must have the same stack effect.\n\n"
-                        "    then: %s\n    else: %s",
-                        sym_names[wsym], then_buf, else_buf);
-                    // Add multi-span annotations if we found the AST nodes
-                    if (tc_err_count > 0 && then_node_idx >= 0 && else_node_idx >= 0) {
-                        TypeError *e = &tc_errs[tc_err_count - 1];
-                        e->span = 0; // suppress default caret
-                        e->span_count = 2;
-                        e->spans[0].line = nodes[then_node_idx].line;
-                        e->spans[0].col = nodes[then_node_idx].col;
-                        e->spans[0].span = nodes[else_node_idx].col - nodes[then_node_idx].col - 1;
-                        if (e->spans[0].span < 1) e->spans[0].span = 1;
-                        snprintf(e->spans[0].label, sizeof(e->spans[0].label), "then: %s", then_buf);
-                        e->spans[1].line = nodes[else_node_idx].line;
-                        e->spans[1].col = nodes[else_node_idx].col;
-                        e->spans[1].span = 1;
-                        snprintf(e->spans[1].label, sizeof(e->spans[1].label), "else: %s", else_buf);
-                        // compute span of each quotation from source text
-                        for (int si = 0; si < 2; si++) {
-                            const char *sl; int slen;
-                            get_src_line(e->spans[si].line, &sl, &slen);
-                            if (!sl) continue;
-                            int sc = e->spans[si].col - 1;
-                            if (sc < slen && sl[sc] == '(') {
-                                int depth = 1;
-                                for (int k = sc + 1; k < slen && depth > 0; k++) {
-                                    if (sl[k] == '(') depth++;
-                                    else if (sl[k] == ')') { depth--; if (depth == 0) { e->spans[si].span = k - sc + 1; break; } }
+                uint32_t ns = ks_lookup(known, known_n, sym_t);
+                if (ns != TN_NONE) {
+                    uint32_t rt = tn_resolve(val_t);
+                    bool is_tup = tnodes[rt].kind == TN_TUPLE;
+                    // Fix 2: non-tuple def values must be copyable (prevents aliasing linear values)
+                    if (!is_tup && tc_cc_count < MAX_TCOPY)
+                        tc_cc[tc_cc_count++] = (CopyConst){val_t, "def", n->line, n->col};
+                    tenv_bind(env, ns, is_tup ? rt : val_t, depth == 0, true);
+                    // Fix 3: propagate body constraints through polymorphic tuple bindings
+                    if (is_tup && depth == 0) {
+                        TCEnv *e = &tenvs[env];
+                        TCBinding *b = &e->binds[e->count - 1];
+                        for (int p = tc_pending_n - 1; p >= 0; p--) {
+                            if (tc_pending[p].tuple_node == rt) {
+                                for (int j = tc_pending[p].cc_start; j < tc_pending[p].cc_end && b->poly_cc_n < 8; j++) {
+                                    b->poly_cc[b->poly_cc_n++] = tc_cc[j];
+                                    tc_cc[j].handled = true;
                                 }
+                                for (int j = tc_pending[p].lc_start; j < tc_pending[p].lc_end && b->poly_lc_n < 8; j++) {
+                                    b->poly_lc[b->poly_lc_n++] = tc_lc[j];
+                                    tc_lc[j].handled = true;
+                                }
+                                break;
                             }
                         }
                     }
                 }
-
-                // mark let-bound box as freed when `free` is called on it
-                if (wsym == sym_free && i > start) {
-                    Node *prev = &nodes[i - 1];
-                    if (prev->type == N_WORD) {
-                        TEnvLookup prev_look = tenv_lookup(env, prev->sym);
-                        if (prev_look.found && !prev_look.is_quot) {
-                            uint32_t pt = tn_resolve(prev_look.type);
-                            if (tnodes[pt].kind == TN_BOX) {
-                                TBinding *tb = &tenvs[prev_look.env].binds[prev_look.idx];
-                                tb->freed = true;
-                                tb->freed_line = n->line;
-                                tb->freed_col = n->col;
-                            }
-                        }
-                    }
-                }
-
-                i++; tc_cur_word = NULL; continue;
+                i++; continue;
             }
-
-            tc_err("undefined word '%s'", sym_names[wsym]);
+            // let: val 'name let → pops name then val
+            if (n->sym == sym_let) {
+                uint32_t sym_t = tc_pop(&cur);
+                uint32_t val_t = tc_pop(&cur);
+                tc_ut(sym_t, tn_sym());
+                // let bindings clone on use, so the value must be copyable
+                if (tc_cc_count < MAX_TCOPY)
+                    tc_cc[tc_cc_count++] = (CopyConst){val_t, "let", n->line, n->col};
+                uint32_t ns = ks_lookup(known, known_n, sym_t);
+                if (ns != TN_NONE) tenv_bind(env, ns, val_t, false, false);
+                i++; continue;
+            }
+            if (n->sym == sym_recur) {
+                uint32_t s = tn_resolve(cur);
+                if (tnodes[s].kind != TN_SCONS || tnodes[tn_resolve(tnodes[s].scons.head)].kind != TN_SYM)
+                    tc_err("recur expects a Symbol on the stack");
+                else
+                    tc_recur_sym = ks_lookup(known, known_n, tn_resolve(tnodes[s].scons.head));
+                i++; continue;
+            }
+            if (n->sym == sym_lend) {
+                uint32_t s = tn_svar();
+                uint32_t a = tn_var(), b = tn_var(), l = tn_var();
+                tc_ust(cur, tn_scons(tn_tuple(tn_scons(a,s), tn_scons(b,s)), tn_scons(l, s)));
+                if (tc_lc_count < MAX_TCOPY)
+                    tc_lc[tc_lc_count++] = (CopyConst){l, "lend", n->line, n->col};
+                uint32_t snap = tc_snapshot_of(tn_resolve(l));
+                if (snap != TN_NONE) tc_ut(a, snap);
+                cur = tn_scons(b, tn_scons(l, s));
+                i++; continue;
+            }
+            // get: 'key record get -> value
+            if (n->sym == sym_get) {
+                uint32_t sym_t = tc_pop(&cur);
+                uint32_t rec_t = tc_pop(&cur);
+                tc_ut(sym_t, tn_sym());
+                // unify with Record to catch type errors like "42 'a get"
+                uint32_t row = tn_rvar();
+                tc_ut(rec_t, tn_rec(row));
+                uint32_t rec_r = tn_resolve(rec_t);
+                uint32_t known_label = ks_lookup(known, known_n, sym_t);
+                if (known_label != TN_NONE && tnodes[rec_r].kind == TN_REC) {
+                    bool closed;
+                    uint32_t field_t = tc_row_find(tnodes[rec_r].arg, known_label, &closed);
+                    if (field_t != TN_NONE) {
+                        // get clones the value, so it must be copyable
+                        if (tc_cc_count < MAX_TCOPY)
+                            tc_cc[tc_cc_count++] = (CopyConst){field_t, "get", n->line, n->col};
+                        cur = tn_scons(field_t, cur);
+                    } else if (closed) {
+                        tc_err("'get': field '%s not found in record", sym_names[known_label]);
+                        cur = tn_scons(tn_var(), cur);
+                    } else {
+                        // open row — field might exist, return fresh var
+                        uint32_t ft = tn_var();
+                        // extend the row with this field
+                        uint32_t new_row = tn_rext(known_label, ft, tn_rvar());
+                        tc_ur(tnodes[rec_r].arg, new_row);
+                        if (tc_cc_count < MAX_TCOPY)
+                            tc_cc[tc_cc_count++] = (CopyConst){ft, "get", n->line, n->col};
+                        cur = tn_scons(ft, cur);
+                    }
+                } else {
+                    // fallback: opaque
+                    cur = tn_scons(tn_var(), cur);
+                }
+                i++; continue;
+            }
+            // set: 'key value record set -> record
+            if (n->sym == sym_set) {
+                uint32_t sym_t = tc_pop(&cur);
+                uint32_t val_t = tc_pop(&cur);
+                uint32_t rec_t = tc_pop(&cur);
+                tc_ut(sym_t, tn_sym());
+                uint32_t set_row = tn_rvar();
+                tc_ut(rec_t, tn_rec(set_row));
+                uint32_t rec_r = tn_resolve(rec_t);
+                uint32_t known_label = ks_lookup(known, known_n, sym_t);
+                if (known_label != TN_NONE && tnodes[rec_r].kind == TN_REC) {
+                    bool closed;
+                    uint32_t field_t = tc_row_find(tnodes[rec_r].arg, known_label, &closed);
+                    if (field_t != TN_NONE) {
+                        tc_ut(val_t, field_t);
+                        cur = tn_scons(rec_t, cur);
+                    } else {
+                        // field not in row — extend with new field
+                        uint32_t tail = closed ? tn_rempty() : tnodes[rec_r].arg;
+                        uint32_t new_row = tn_rext(known_label, val_t, tail);
+                        cur = tn_scons(tn_rec(new_row), cur);
+                    }
+                } else {
+                    cur = tn_scons(tn_rec(tn_rvar()), cur);
+                }
+                i++; continue;
+            }
+            // match: 'key {dispatch} (default) match -> result
+            if (n->sym == sym_match) {
+                uint32_t r = tn_svar();
+                uint32_t default_t = tc_pop(&cur);
+                uint32_t rec_t = tc_pop(&cur);
+                uint32_t sym_t = tc_pop(&cur);
+                tc_ut(sym_t, tn_sym());
+                uint32_t match_row = tn_rvar();
+                tc_ut(rec_t, tn_rec(match_row));
+                tc_ut(default_t, tn_tuple(cur, r));
+                uint32_t rec_r = tn_resolve(rec_t);
+                if (tnodes[rec_r].kind == TN_REC) {
+                    uint32_t row = tnodes[rec_r].arg;
+                    while (true) {
+                        row = tn_resolve(row);
+                        if (tnodes[row].kind == TN_REXT) {
+                            tc_ut(tnodes[row].rext.type, tn_tuple(cur, r));
+                            row = tnodes[row].rext.tail;
+                        } else break;
+                    }
+                }
+                cur = r;
+                i++; continue;
+            }
+            // cond: scrutinee [(clause ...)] (default) cond -> result
+            if (n->sym == sym_cond) {
+                uint32_t s = tn_svar(), r = tn_svar();
+                uint32_t scrutinee_t = tn_var();
+                uint32_t default_t = tc_pop(&cur);
+                uint32_t clauses_t = tc_pop(&cur);
+                tc_ust(cur, tn_scons(scrutinee_t, s));
+                cur = s;
+                // default: takes scrutinee, produces r
+                tc_ut(default_t, tn_tuple(tn_scons(scrutinee_t, s), r));
+                // clauses: Slice of clause tuples
+                uint32_t pred_t = tn_var(), body_t = tn_var();
+                uint32_t clause_s = tn_svar();
+                uint32_t clause_elem = tn_tuple(clause_s, tn_scons(body_t, tn_scons(pred_t, clause_s)));
+                tc_ut(clauses_t, tn_slice(clause_elem));
+                // body must have same effect as default
+                tc_ut(body_t, tn_tuple(tn_scons(scrutinee_t, s), r));
+                // predicate: takes snapshot, returns Bool
+                // derive snapshot type from scrutinee (like lend)
+                uint32_t snap = tc_snapshot_of(tn_resolve(scrutinee_t));
+                uint32_t snapshot_t = (snap != TN_NONE) ? snap : scrutinee_t;
+                tc_ut(pred_t, tn_tuple(tn_scons(snapshot_t, s), tn_scons(tn_int(), s)));
+                cur = r;
+                i++; continue;
+            }
+            // on: model 'event (handler) on -> model
+            // handler: (Int, model) -> model
+            if (n->sym == sym_on) {
+                uint32_t handler_t = tc_pop(&cur);
+                uint32_t sym_t = tc_pop(&cur);
+                uint32_t model_t = tc_pop(&cur);
+                tc_ut(sym_t, tn_sym());
+                uint32_t hs = tn_svar();
+                tc_ut(handler_t, tn_tuple(
+                    tn_scons(model_t, tn_scons(tn_int(), hs)),
+                    tn_scons(model_t, hs)
+                ));
+                cur = tn_scons(model_t, cur);
+                i++; continue;
+            }
+            // show: model (render) show -> bottom
+            // render: (model-snapshot) -> ()
+            if (n->sym == sym_show) {
+                uint32_t render_t = tc_pop(&cur);
+                uint32_t model_t = tc_pop(&cur);
+                uint32_t snap_src = tn_resolve(model_t);
+                uint32_t snap = tc_snapshot_of(snap_src);
+                uint32_t snapshot_t = (snap != TN_NONE) ? snap : model_t;
+                uint32_t rs = tn_svar();
+                tc_ut(render_t, tn_tuple(tn_scons(snapshot_t, rs), rs));
+                cur = tn_svar();
+                i++; continue;
+            }
+            // Lookup in env
+            TLookup lu = tenv_lookup(env, n->sym);
+            if (lu.found) {
+                uint32_t t = lu.type;
+                // let-bindings used more than once require copyable type
+                if (lu.was_used && !lu.is_def && !lu.poly && tc_cc_count < MAX_TCOPY)
+                    tc_cc[tc_cc_count++] = (CopyConst){t, sym_names[n->sym], n->line, n->col};
+                if (lu.poly) {
+                    InstMap im = {.n = 0};
+                    if (tnodes[tn_resolve(t)].kind == TN_TUPLE) {
+                        uint32_t rt = tn_resolve(t);
+                        StackEff e = {tc_inst_r(&im, tnodes[rt].tuple.in), tc_inst_r(&im, tnodes[rt].tuple.out)};
+                        if (lu.is_def) { tc_ust(cur, e.in); cur = e.out; }
+                        else { cur = tn_scons(tn_tuple(e.in, e.out), cur); }
+                    } else {
+                        cur = tn_scons(tc_inst_r(&im, t), cur);
+                    }
+                    // Fix 3: re-emit constraints with fresh type variables
+                    if (lu.binding) {
+                        for (int j = 0; j < lu.binding->poly_cc_n && tc_cc_count < MAX_TCOPY; j++)
+                            tc_cc[tc_cc_count++] = (CopyConst){tc_inst_r(&im, lu.binding->poly_cc[j].var_node),
+                                lu.binding->poly_cc[j].word, n->line, n->col};
+                        for (int j = 0; j < lu.binding->poly_lc_n && tc_lc_count < MAX_TCOPY; j++)
+                            tc_lc[tc_lc_count++] = (CopyConst){tc_inst_r(&im, lu.binding->poly_lc[j].var_node),
+                                lu.binding->poly_lc[j].word, n->line, n->col};
+                    }
+                } else {
+                    uint32_t rt = tn_resolve(t);
+                    if (lu.is_def && tnodes[rt].kind == TN_TUPLE) {
+                        tc_ust(cur, tnodes[rt].tuple.in);
+                        cur = tnodes[rt].tuple.out;
+                    } else if (lu.is_def && tnodes[rt].kind == TN_VAR) {
+                        // def binding with unknown type — assume tuple, give generic effect
+                        uint32_t gi = tn_svar(), go = tn_svar();
+                        tc_ut(t, tn_tuple(gi, go));
+                        tc_ust(cur, gi);
+                        cur = go;
+                    } else {
+                        cur = tn_scons(t, cur);
+                    }
+                }
+                i++; continue;
+            }
+            // Primitive
+            PrimScheme ps = tc_prim_scheme(n->sym);
+            if (ps.eff.in == 0 && ps.eff.out == 0) { tc_err("unknown word: %s", sym_names[n->sym]); i++; continue; }
+            InstMap im = {.n = 0};
+            StackEff e = {tc_inst_r(&im, ps.eff.in), tc_inst_r(&im, ps.eff.out)};
+            tc_ust(cur, e.in);
+            cur = e.out;
+            if (ps.has_copy && tc_cc_count < MAX_TCOPY) {
+                uint32_t cv = tc_inst_r(&im, ps.copy_var);
+                tc_cc[tc_cc_count++] = (CopyConst){cv, sym_names[n->sym], n->line, n->col};
+            }
+            if (ps.has_linear && tc_lc_count < MAX_TCOPY) {
+                uint32_t lv = tc_inst_r(&im, ps.linear_var);
+                tc_lc[tc_lc_count++] = (CopyConst){lv, sym_names[n->sym], n->line, n->col};
+            }
             i++;
         }
-        else {
-            i++;
-        }
-        tc_cur_word = NULL;
     }
     return (StackEff){base, cur};
 }
 
-// ── Copy/linearity check ───────────────────────────────────────────────────
-
 static bool tc_is_linear(uint32_t t) {
     t = tn_resolve(t);
-    switch (tnodes[t].kind) {
-    case TN_ARR: case TN_REC: case TN_BOX: case TN_QUOT: case TN_DICT: return true;
-    default: return false;
-    }
-}
-
-// ── Borrow escape check ────────────────────────────────────────────────────
-
-static bool tc_escapes(uint32_t a_var_id, uint32_t t, uint32_t depth) {
-    if (depth > 100) return false;
     TNode *n = &tnodes[t];
-    if (n->kind == TN_VAR || n->kind == TN_SVAR || n->kind == TN_RVAR) {
-        if (n->kind == TN_VAR && n->var_id == a_var_id) return true;
-        return tc_subst[n->var_id] != TN_NONE && tc_escapes(a_var_id, tc_subst[n->var_id], depth + 1);
-    }
     switch (n->kind) {
-    case TN_ARR: case TN_BOX: case TN_REC: return tc_escapes(a_var_id, n->arg, depth + 1);
-    case TN_DICT: return tc_escapes(a_var_id, n->dict.key, depth + 1) || tc_escapes(a_var_id, n->dict.val, depth + 1);
-    case TN_QUOT: return tc_escapes(a_var_id, n->quot.in, depth + 1) || tc_escapes(a_var_id, n->quot.out, depth + 1);
-    case TN_SCONS: return tc_escapes(a_var_id, n->scons.head, depth + 1) || tc_escapes(a_var_id, n->scons.tail, depth + 1);
-    case TN_REXT: return tc_escapes(a_var_id, n->rext.type, depth + 1) || tc_escapes(a_var_id, n->rext.tail, depth + 1);
+    case TN_BOX: case TN_LIST: case TN_DICT: case TN_STR: return true;
+    case TN_SLICE: case TN_REC: return tc_is_linear(n->arg);
+    case TN_DICE: return tc_is_linear(n->kv.key) || tc_is_linear(n->kv.val);
+    case TN_REXT: return tc_is_linear(n->rext.type) || tc_is_linear(n->rext.tail);
     default: return false;
     }
 }
 
-// ── Main entry point ────────────────────────────────────────────────────────
-
-static bool tc_check(int prelude_start, int prelude_len, int user_start, int user_len) {
-    // use_color already set in main
-    tn_count = 0;
-    tc_next_var = 0;
-    tenv_count = 0;
-    tc_cc_count = 0;
-    tc_esc_count = 0;
-    tc_err_count = 0;
-    tc_had_err = false;
-    tc_cur_word = NULL;
-    tc_cur_line = 0;
-    tc_cur_col = 0;
-
-    uint32_t root_env = tenv_new(TN_NONE);
-
-    // Pre-pass: scan for top-level 'name (body) def patterns and pre-bind
-    // with fresh quotation types (enables self-recursion and forward references).
-    {
-        uint32_t sym_def_id = sym_intern("def");
-        uint32_t sym2[2] = {TN_NONE, TN_NONE};
-        int pe = user_start + user_len;
-        for (int j = prelude_start; j < pe;) {
-            if (nodes[j].type == N_PUSH) {
-                sym2[1] = sym2[0];
-                sym2[0] = (nodes[j].literal.type == T_SYM) ? nodes[j].literal.sym : TN_NONE;
-                j++;
-            } else if (nodes[j].type == N_WORD) {
-                if (nodes[j].sym == sym_def_id && sym2[1] != TN_NONE) {
-                    TEnvLookup existing = tenv_lookup(root_env, sym2[1]);
-                    if (!existing.found)
-                        tenv_bind(root_env, sym2[1], tn_quot(tn_svar(), tn_svar()), true, true);
-                }
-                sym2[0] = sym2[1] = TN_NONE;
-                j++;
-            } else {
-                sym2[1] = sym2[0];
-                sym2[0] = TN_NONE;
-                j += 1 + nodes[j].body.len;
-            }
-        }
-    }
-
-    // Infer prelude
-    tc_infer(prelude_start, prelude_len, root_env, 0);
-    if (tc_had_err) goto report;
-
-    // Infer user code
-    tc_infer(user_start, user_len, root_env, 0);
-    if (tc_had_err) goto report;
-
-    for (int i = 0; i < tc_cc_count; i++) {
+static void tc_check_copy(void) {
+    for (int i = 0; i < tc_cc_count && !tc_had_err; i++) {
+        if (tc_cc[i].handled) continue;
         uint32_t t = tn_resolve(tc_cc[i].var_node);
         if (tc_is_linear(t)) {
-            if (tc_cc[i].allow_box && tnodes[t].kind == TN_BOX) continue;
-            tc_cur_line = tc_cc[i].line;
-            tc_cur_col = tc_cc[i].col;
-            tc_cur_word = tc_cc[i].word;
-            char tbuf[128]; tn_show(tc_cc[i].var_node, tbuf, sizeof(tbuf));
-            const char *hint = strcmp(tc_cc[i].word, "dup") == 0
-                ? "Use `borrow` for non-destructive access."
-                : "Use `free` to explicitly discard Linear values.";
-            tc_err("`%s` requires a Copy type, but got %s\n\n"
-                "    %s is Linear — it must be consumed exactly once.\n    %s",
-                tc_cc[i].word, tbuf, tbuf, hint);
+            char tb[128]; tn_show(t, tb, sizeof(tb));
+            tc_cur_line = tc_cc[i].line; tc_cur_col = tc_cc[i].col;
+            tc_err("'%s' requires a copyable type, but got %s (linear)\n\n"
+                   "    Linear values (Box, List, Dict, String) cannot be duplicated.\n"
+                   "    Use 'lend' to borrow or 'clone' for an explicit deep copy.",
+                   tc_cc[i].word, tb);
         }
     }
+}
 
-    // Borrow escape constraints
-    for (int i = 0; i < tc_esc_count; i++) {
-        uint32_t a_node = tc_esc[i].a_node;
-        uint32_t b_node = tc_esc[i].b_node;
-        uint32_t a_res = tn_resolve(a_node), b_res = tn_resolve(b_node);
-        bool escaped = (a_res == b_res && tc_is_linear(a_res));
-        if (!escaped && tnodes[a_node].kind == TN_VAR)
-            escaped = tc_escapes(tnodes[a_node].var_id, b_node, 0);
-        if (escaped) {
-            tc_cur_line = tc_esc[i].line;
-            tc_cur_col = tc_esc[i].col;
-            tc_cur_word = tc_esc[i].word;
-            char abuf[128], bbuf[128];
-            tn_show(tc_esc[i].a_node, abuf, sizeof(abuf));
-            tn_show(tc_esc[i].b_node, bbuf, sizeof(bbuf));
-            tc_err("Borrowed value of type %s escapes through result type %s\n\n"
-                "    The quotation passed to `borrow` must not return the borrowed\n"
-                "    value or embed it in its result.",
-                abuf, bbuf);
+// Returns true if type is provably copyable (concrete non-linear)
+// Returns false for unresolved variables (could be either)
+static bool tc_is_copyable(uint32_t t) {
+    t = tn_resolve(t);
+    TNode *n = &tnodes[t];
+    switch (n->kind) {
+    case TN_INT: case TN_FLOAT: case TN_SYM: case TN_TUPLE: return true;
+    case TN_SLICE: case TN_REC: return tc_is_copyable(n->arg);
+    case TN_DICE: return tc_is_copyable(n->kv.key) && tc_is_copyable(n->kv.val);
+    case TN_REXT: return tc_is_copyable(n->rext.type) && tc_is_copyable(n->rext.tail);
+    case TN_REMPTY: return true;
+    default: return false;  // TN_VAR, TN_BOX, TN_LIST, TN_DICT, TN_STR, etc.
+    }
+}
+
+static void tc_check_linear(void) {
+    for (int i = 0; i < tc_lc_count && !tc_had_err; i++) {
+        if (tc_lc[i].handled) continue;
+        uint32_t t = tn_resolve(tc_lc[i].var_node);
+        if (tc_is_copyable(t)) {
+            char tb[128]; tn_show(t, tb, sizeof(tb));
+            tc_cur_line = tc_lc[i].line; tc_cur_col = tc_lc[i].col;
+            tc_err("'%s' requires a linear type (Box, List, Dict, String), but got %s",
+                   tc_lc[i].word, tb);
         }
     }
+}
 
-report:
+static bool tc_run(int start, int len) {
+    tn_count = 0; tc_next_var = 0; tenv_count = 0;
+    tc_cc_count = 0; tc_lc_count = 0; tc_err_count = 0; tc_had_err = false;
+    tc_pending_n = 0;
+
+    uint32_t env = tenv_new(TN_NONE);
+
+    // Type-check prelude by inferring it (bindings get added to env)
+    // (prelude nodes are before start)
+    if (start > 0) tc_infer(0, start, env, 0);
+
+    // Type-check user code
+    if (!tc_had_err) tc_infer(start, len, env, 0);
+    if (!tc_had_err) tc_check_copy();
+    if (!tc_had_err) tc_check_linear();
+
     if (tc_err_count > 0) {
         fprintf(stderr, "\n");
         for (int i = 0; i < tc_err_count; i++) {
-            TypeError *e = &tc_errs[i];
+            TCError *e = &tc_errs[i];
             fprintf(stderr, "%s── TYPE ERROR ─────────────────────────────────────%s\n\n",
                 C_RED, C_RESET);
-            const char *src_line; int src_len;
-            get_src_line(e->line, &src_line, &src_len);
-            if (src_line && src_len > 0 && e->line > 0) {
+            const char *sl; int sl_len;
+            get_src_line(e->line, &sl, &sl_len);
+            if (sl && sl_len > 0 && e->line > 0) {
                 int gw = snprintf(NULL, 0, "%d", e->line);
-
-                // check if spans are multi-line
-                bool multi_line_spans = false;
-                if (e->span_count > 0) {
-                    for (int s = 1; s < e->span_count; s++)
-                        if (e->spans[s].line != e->spans[0].line) { multi_line_spans = true; break; }
-                }
-
-                if (!multi_line_spans)
-                    fprintf(stderr, "  %s%d%s %s│%s %.*s\n",
-                        C_CYAN, e->line, C_RESET, C_DIM, C_RESET, src_len, src_line);
-                if (e->span_count > 0) {
-                    bool same_line = !multi_line_spans;
-
-                    if (same_line) {
-                        // inline multi-span annotation
-                        fprintf(stderr, "  %*s %s│%s ", gw, "", C_DIM, C_RESET);
-                        int maxcol = 0;
-                        for (int s = 0; s < e->span_count; s++) {
-                            int end = e->spans[s].col + e->spans[s].span;
-                            if (end > maxcol) maxcol = end;
-                        }
-                        for (int c = 1; c < maxcol; c++) {
-                            bool is_caret = false;
-                            for (int s = 0; s < e->span_count; s++) {
-                                if (c >= e->spans[s].col && c < e->spans[s].col + e->spans[s].span)
-                                    { is_caret = true; break; }
-                            }
-                            fprintf(stderr, "%s%c%s", is_caret ? C_RED : "", is_caret ? '^' : ' ', is_caret ? C_RESET : "");
-                        }
-                        fputc('\n', stderr);
-                        for (int s = e->span_count - 1; s >= 0; s--) {
-                            fprintf(stderr, "  %*s %s│%s ", gw, "", C_DIM, C_RESET);
-                            for (int c = 1; c < e->spans[s].col; c++) {
-                                bool is_pipe = false;
-                                for (int p = 0; p < s; p++) {
-                                    if (c == e->spans[p].col) { is_pipe = true; break; }
-                                }
-                                if (is_pipe) fprintf(stderr, "%s│%s", C_RED, C_RESET);
-                                else fputc(' ', stderr);
-                            }
-                            fprintf(stderr, "%s╰── %s%s\n", C_RED, e->spans[s].label, C_RESET);
-                        }
-                    } else {
-                        // multi-line spans: show each on its own source line
-                        for (int s = 0; s < e->span_count; s++) {
-                            const char *sl2; int sl2_len;
-                            get_src_line(e->spans[s].line, &sl2, &sl2_len);
-                            if (sl2 && sl2_len > 0) {
-                                int ln = e->spans[s].line;
-                                int gw2 = snprintf(NULL, 0, "%d", ln);
-                                if (gw2 < gw) gw2 = gw;
-                                fprintf(stderr, "  %s%d%s %s│%s %.*s\n",
-                                    C_CYAN, ln, C_RESET, C_DIM, C_RESET, sl2_len, sl2);
-                                fprintf(stderr, "  %*s %s│%s ", gw2, "", C_DIM, C_RESET);
-                                for (int c = 1; c < e->spans[s].col; c++) fputc(' ', stderr);
-                                fprintf(stderr, "%s", C_RED);
-                                for (int c = 0; c < e->spans[s].span; c++) fputc('^', stderr);
-                                fprintf(stderr, " %s%s\n", e->spans[s].label, C_RESET);
-                                if (s < e->span_count - 1)
-                                    fprintf(stderr, "  %*s %s·%s\n", gw, "", C_DIM, C_RESET);
-                            }
-                        }
-                    }
-                } else if (e->col > 0 && e->span > 0) {
+                fprintf(stderr, "  %s%d%s %s│%s %.*s\n",
+                    C_CYAN, e->line, C_RESET, C_DIM, C_RESET, sl_len, sl);
+                if (e->col > 0 && e->span > 0) {
                     fprintf(stderr, "  %*s %s│%s ", gw, "", C_DIM, C_RESET);
                     for (int c = 1; c < e->col; c++) fputc(' ', stderr);
                     fprintf(stderr, "%s", C_RED);
@@ -3222,288 +3548,59 @@ report:
     return true;
 }
 
-// ── Eval ────────────────────────────────────────────────────────────────────
-
-// Bracket nodes are followed by their children in the flat array.
-// eval advances past children with i += 1 + body.len for bracket nodes.
-static int eval_depth = 0;
-static int eval_max_depth = 0;
-static void eval(int start, int len, uint32_t scope) {
-    eval_depth++;
-    if (eval_depth > eval_max_depth) eval_max_depth = eval_depth;
-    if (eval_depth > 5000) { fprintf(stderr, "EVAL DEPTH EXCEEDED: %d\n", eval_depth); exit(1); }
-    uint32_t prev_scope = g_scope;
-    g_scope = scope;
-    int end = start + len;
-    for (int i = start; i < end && !tc_had_err;) {
-        Node *n = &nodes[i];
-        current_line = n->line;
-        current_col = n->col;
-        switch (n->type) {
-        case N_PUSH:
-            push(val_clone(n->literal));
-            i++;
-            break;
-        case N_WORD: {
-            current_word = sym_names[n->sym];
-            Val v;
-            if (scope_lookup_local(scope, n->sym, &v)) {
-                if (v.type == T_QUOT) exec_quot(v);
-                else push(val_clone(v));
-            } else if (n->sym < MAX_SYMS && prim_table[n->sym]) {
-                prim_table[n->sym]();
-            } else if (scope_lookup(scopes[scope].parent, n->sym, &v)) {
-                if (v.type == T_QUOT) exec_quot(v);
-                else push(val_clone(v));
-            } else {
-                slap_panic("unbound word: %s", sym_names[n->sym]);
-            }
-            current_word = "";
-            i++;
-            break;
-        }
-        case N_ARRAY: case N_RECORD: {
-            int base = sp;
-            uint32_t child = scope_new(scope);
-            eval(n->body.start, n->body.len, child);
-            scope_release(child);
-            if (n->type == N_ARRAY) {
-                uint32_t a = arr_new();
-                for (int j = base; j < sp; j++) arr_push(a, stack[j]);
-                sp = base;
-                push(VAL_ARR(a));
-            } else {
-                int nvals = sp - base;
-                if (nvals % 2 != 0) slap_panic("record literal: odd number of elements (need symbol/value pairs)");
-                uint32_t r = rec_new();
-                for (int j = base; j < sp; j += 2) {
-                    if (stack[j].type != T_SYM) slap_panic("record literal: expected Symbol key, got %s", type_name(stack[j].type));
-                    rec_add(r, stack[j].sym, stack[j + 1]);
-                }
-                sp = base;
-                push(VAL_REC(r));
-            }
-            i += 1 + n->body.len;
-            break;
-        }
-        case N_QUOTE: {
-            bool ephemeral = (scope != global_scope);
-            uint32_t env = ephemeral ? scope_snapshot(scope) : scope;
-            uint32_t q = quot_new(n->body.start, n->body.len, env, ephemeral);
-            push(VAL_QUOT(q));
-            i += 1 + n->body.len;
-            break;
-        }
-        }
-    }
-    g_scope = prev_scope;
-    eval_depth--;
-}
-
-// ── Prelude ─────────────────────────────────────────────────────────────────
-
-static const char *prelude_src =
-    // logic (now native primitives)
-    // not     = () (drop false) (drop true) if
-    // and     = swap () (drop) (drop drop false) if
-    // or      = swap () (drop drop true) (drop) if
-    // choose  = 'else swap def 'then swap def () (drop then) (drop else) if
-    // arithmetic
-    "'inc     (1 plus) def\n"
-    "'dec     (1 sub) def\n"
-    "'neg     (0 swap sub) def\n"
-    "'abs     (dup 0 lt (neg) () choose) def\n"
-    // stack (now native primitives)
-    // nip     = swap drop
-    // over    = (dup) dip swap
-    // rot     = (swap) dip swap
-    // comparison
-    "'empty?  (box ([] eq) borrow (clone swap free) dip) def\n"
-    "'max     (over over lt (nip) (drop) choose) def\n"
-    "'min     (over over lt (drop) (nip) choose) def\n"
-    // box helpers
-    "'modify  ('fn swap def clone fn set drop) def\n"
-    "'bf      ('k let clone k get swap free swap drop) def\n"
-    // record helpers
-    "'update  ('k let 'fn swap def k get fn k put) def\n"
-    // iteration
-    "'fold    ('fn swap def swap\n"
-    "           (([] eq) (free [] false) (uncons (fn) dip true) if)\n"
-    "         loop free) def\n"
-    "'reverse ([] (swap cons) fold) def\n"
-    "'each    ('fn swap def [] (fn swap cons) fold reverse) def\n"
-    "'sum     (0 (plus) fold) def\n"
-    // tacit combinators
-    "'keep    (over (apply) dip) def\n"
-    "'bi      ((keep) dip apply) def\n"
-    // both is a native primitive
-    // arithmetic
-    "'div     (divmod drop) def\n"
-    "'mod     (divmod nip) def\n"
-    // comparison
-    "'gt      (swap lt) def\n"
-    "'ge      (lt not) def\n"
-    "'le      (swap lt not) def\n"
-    "'neq     (eq not) def\n"
-    // predicates
-    "'zero?   (0 eq) def\n"
-    "'pos?    (0 swap lt) def\n"
-    "'neg?    (0 lt) def\n"
-    "'even?   (2 mod 0 eq) def\n"
-    "'odd?    (2 mod 1 eq) def\n"
-    // array helpers
-    "'filter  ('fn swap def [] (dup fn (swap cons) (drop) choose) fold reverse) def\n"
-    "'first   (0 nth) def\n"
-    "'last    (len 1 sub nth) def\n"
-    "'take    (0 swap slice nip) def\n"
-    "'drop-n  (swap len rot swap slice nip) def\n"
-    "'couple  ([] cons cons) def\n"
-    "'product (1 (mul) fold) def\n"
-    "'sort-desc (sort reverse) def\n"
-    "'stencil ('fn swap def windows (fn) each) def\n"
-    // control
-    "'repeat  ('fn swap def (dup 0 eq (false) (1 sub (fn) dip true) choose) loop drop) def\n"
-    // math helpers
-    "'sign    (dup 0 eq (drop 0) (0 lt (0 1 sub) (1) choose) choose) def\n"
-    "'clamp   (rot min max) def\n"
-    "'gcd     ((dup 0 eq (false) (swap over mod true) choose) loop drop) def\n"
-    // constants
-    "3.14159265358979323846 'pi let\n"
-    "6.28318530717958647692 'tau let\n"
-    // float helpers
-    "'fneg     (0.0 swap fsub) def\n"
-    "'fabs     (dup 0.0 flt (fneg) () choose) def\n"
-    // float compare
-    "'fgt      (swap flt) def\n"
-    "'fge      (flt not) def\n"
-    "'fle      (swap flt not) def\n"
-    "'fneq     (feq not) def\n"
-    "'fmin     (over over flt (drop) (nip) choose) def\n"
-    "'fmax     (over over flt (nip) (drop) choose) def\n"
-    // array predicates
-    "'any?     (filter len nip zero? not) def\n"
-    "'all?     ('p swap def (p not) filter len nip zero?) def\n"
-    "'count    (filter len nip) def\n"
-    // array combinators
-    "'zip      ((couple) zip-with) def\n"
-    "'flatten  ([] (cat) fold) def\n"
-    "'select   (swap 'src let (src swap nth nip) each) def\n"
-    "'member   ('e let box (false swap (e eq or) for-each) borrow (clone swap free) dip) def\n"
-    "'index-of ('e let box (0 1 sub swap ('idx let e eq (dup 0 lt (drop idx) () choose) () choose) for-index) borrow (clone swap free) dip) def\n"
-    "'reshape  ('n let n 0 ge assert len 'slen let 'src let n 0 eq ([]) (slen 0 gt assert n range (slen mod src swap nth nip) each) choose) def\n"
-    "'windows  ('n let n 0 gt assert len n sub 1 plus 'cnt let 'src let cnt range (dup n plus src rot rot slice nip) each) def\n"
-    "'bits     (2 base) def\n"
-    "'fix      ([] cons) def\n"
-    "'push     (quote compose) def\n"
-    // argument combinators
-    "'self     (swap dup rot apply) def\n"
-    "'backward ((swap) dip apply) def\n"
-    "'gap      ((nip) dip apply) def\n"
-    "'on       (keep swap) def\n"
-    "'bracket  ((dip) dip apply) def\n"
-    // float interpolation
-    "'lerp     ('t let swap 1.0 t fsub fmul swap t fmul fadd) def\n"
-    // range predicate
-    "'between? ('hi let 'lo let dup lo swap le (hi le) (drop false) choose) def\n"
-    // float prelude
-    "'fclamp   (rot fmin fmax) def\n"
-    "'fbetween? ('hi let 'lo let dup lo swap fle (hi fle) (drop false) choose) def\n"
-    "'fsign    (dup 0.0 feq (drop 0.0) (0.0 flt (0.0 1.0 fsub) (1.0) choose) choose) def\n"
-    "'degrees  (180.0 fmul pi fdiv) def\n"
-    "'radians  (pi fmul 180.0 fdiv) def\n"
-    "'hypot    ((dup fmul) both fadd sqrt) def\n"
-;
-
-
 // ── Main ────────────────────────────────────────────────────────────────────
-
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "cannot open: %s\n", path); exit(1); }
+    if (!f) { fprintf(stderr, "Cannot open '%s'\n", path); exit(1); }
     fseek(f, 0, SEEK_END);
-    long len = ftell(f);
+    long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char *buf = malloc(len + 1);
-    fread(buf, 1, len, f);
-    buf[len] = 0;
+    char *buf = malloc((size_t)sz + 1);
+    fread(buf, 1, (size_t)sz, f);
+    buf[sz] = '\0';
     fclose(f);
     return buf;
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: slap [--test] <file.slap>\n");
-        return 1;
-    }
-
-    const char *filename = NULL;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--test") == 0) test_mode = true;
-        else filename = argv[i];
-    }
-    if (!filename) { fprintf(stderr, "no input file\n"); return 1; }
-
+    if (argc < 2) { fprintf(stderr, "Usage: slap <file.slap> [--test]\n"); return 1; }
     use_color = isatty(STDERR_FILENO);
+    panic_stack_printer = print_stack_top;
+    bool test_mode = false;
+    for (int i = 2; i < argc; i++) if (strcmp(argv[i], "--test") == 0) test_mode = true;
+#ifdef SLAP_SDL
+    sdl_test_mode = test_mode;
+#else
+    (void)test_mode;
+#endif
+
     srand((unsigned)time(NULL));
-    init_font();
+    global_scope = scope_new(NONE);
+    g_scope = global_scope;
     init_primitives();
 
-    // parse prelude and user file
-    int pstart = parse_source(prelude_src);
-    int plen = node_count - pstart;
-    prelude_lines = lexer.line;
-    char *src = read_file(filename);
-    int ustart = parse_source(src);
-    int ulen = node_count - ustart;
+    // parse and run prelude
+    int prelude_count = parse_source(prelude);
+    eval(0, prelude_count, global_scope);
 
-    // type check (always runs before eval)
-    user_src = src;
-    bool tc_ok = tc_check(pstart, plen, ustart, ulen);
-    if (!tc_ok) {
-        free(src);
-        return 1;
-    }
+    // resolve prelude node prims (used by prelude-defined tuples at runtime)
+    resolve_cached_prims(0, prelude_count);
 
-    // env overrides for screen size
-    const char *ew = getenv("SLAP_W"), *eh = getenv("SLAP_H"), *es = getenv("SLAP_SCALE");
-    if (ew) screen_w = atoi(ew);
-    if (eh) screen_h = atoi(eh);
-    if (es) screen_scale = atoi(es);
+    // parse and run user code
+    char *code = read_file(argv[1]);
+    user_src = code;
+    src = code; src_pos = 0; src_line = 1; src_col = 1;
+    advance();
+    int user_start = node_count;
+    parse_body(TOK_EOF);
+    int user_len = node_count - user_start;
+    // Type check before evaluation
+    if (!tc_run(user_start, user_len)) { free(code); return 1; }
 
-    pixels = calloc(screen_w * screen_h, sizeof(uint32_t));
+    resolve_cached_prims(user_start, user_len);
+    eval(user_start, user_len, global_scope);
 
-    if (!test_mode) {
-        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-            fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
-            return 1;
-        }
-        window = SDL_CreateWindow("slap",
-            SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-            screen_w * screen_scale, screen_h * screen_scale,
-            SDL_WINDOW_SHOWN);
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-            SDL_TEXTUREACCESS_STREAMING, screen_w, screen_h);
-        SDL_StartTextInput();
-    }
-
-    global_scope = scope_new(UINT32_MAX);
-
-    eval(pstart, plen, global_scope);
-    eval(ustart, ulen, global_scope);
-
-    if (test_mode) {
-        printf("ALL TESTS PASSED\n");
-    }
-
-    free(src);
-    free(pixels);
-    if (!test_mode) {
-        SDL_DestroyTexture(texture);
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-    }
+    free(code);
     return 0;
 }

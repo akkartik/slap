@@ -1,0 +1,61 @@
+-- Mandelbrot Infinite Zoom
+-- Build: gcc -std=c99 -O2 -DSLAP_SDL $(sdl2-config --cflags --libs) -lm slap.c -o slap
+-- Run:   ./slap examples/zoom.slap
+--
+-- Zooms into a mini-Mandelbrot in the Seahorse Valley.
+
+'W 640 def  'H 480 def
+'PS 2 def
+'GW W PS div def  'GH H PS div def
+
+-- mandelbrot iteration count: cr ci maxi -> int
+'mand ('maxi let 'ci let 'cr let
+  0.0 0.0 0
+  ('i let 'zb let 'za let
+    za za fmul zb zb fmul fplus 4.0 lt
+    i maxi lt and
+    (za za fmul zb zb fmul fsub cr fplus
+     za zb fmul 2.0 fmul ci fplus
+     i 1 plus 1)
+    (za zb i 0) if
+  ) loop
+  nip nip
+) def
+
+-- draw a PS x PS block
+'block ('c let 'by let 'bx let
+  0 PS range ('dy let 0 PS range ('dx let
+    bx dx plus  by dy plus  c pixel
+  ) each) each
+) def
+
+-- mini-Mandelbrot in Seahorse Valley (boundary point, not interior)
+{'cx -0.74364388703715  'cy 0.13182590420533  'rad 2.0  'maxi 32}
+
+-- tick: zoom in 2% per frame, increase max iterations as we go deeper
+'tick ('model let drop
+  model 'rad get 0.98 fmul 'nrad let
+  model 'maxi get 'om let
+  om 60 lt (om 1 plus) (om) if 'nmaxi let
+  model nrad 'rad set nmaxi 'maxi set
+) on
+
+-- render
+('model let
+  0 clear
+  model 'cx get 'camx let
+  model 'cy get 'camy let
+  model 'rad get 'r let
+  model 'maxi get 'maxi let
+  r 2.0 fmul 'diam let
+  GW itof 'gwf let
+  GH itof 'ghf let
+  0 GH range ('py let
+    0 GW range ('px let
+      px itof 0.5 fplus gwf fdiv 0.5 fsub diam fmul camx fplus
+      py itof 0.5 fplus ghf fdiv 0.5 fsub diam fmul camy fplus
+      maxi mand 'n let
+      n maxi eq not (px PS mul  py PS mul  n 3 mod 1 plus block) () if
+    ) each
+  ) each
+) show
