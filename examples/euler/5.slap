@@ -1,6 +1,0 @@
--- Project Euler 5: Smallest positive number evenly divisible by all 1..20
-'gcd recur (over mod dup 0 eq (drop) (swap gcd) if) def
-'lcm (over over gcd div mul abs) def
-
-1 21 range 1 (lcm) fold
-232792560 eq assert
