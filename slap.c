@@ -684,6 +684,7 @@ static int recur_pending = 0;
 
 /* ---- type annotation tracking ---- */
 static uint32_t sym_effect_kw = 0;
+static uint32_t sym_check_kw = 0;
 
 /* ---- type system ---- */
 
@@ -2025,6 +2026,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
         sym_let_k = sym_intern("let");
         sym_recur_k = sym_intern("recur");
         if (!sym_effect_kw) sym_effect_kw = sym_intern("effect");
+        if (!sym_check_kw) sym_check_kw = sym_intern("check");
     }
 
     for (int i = start; i < end; i++) {
@@ -2298,6 +2300,26 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                                        toks[i + 1].as.sym == sym_def_k);
                         if (!has_def) tc->sp--; /* pop name */
                     }
+                }
+            } else if (sym == sym_check_kw) {
+                /* type check: 'value type check' — verify TC stack top matches type */
+                if (i >= 1 && toks[i-1].tag == TOK_WORD) {
+                    const char *tw = sym_name(toks[i-1].as.sym);
+                    TypeConstraint expected = TC_NONE;
+                    if (strcmp(tw, "int") == 0) expected = TC_INT;
+                    else if (strcmp(tw, "float") == 0) expected = TC_FLOAT;
+                    else if (strcmp(tw, "sym") == 0) expected = TC_SYM;
+                    else if (strcmp(tw, "num") == 0) expected = TC_NUM;
+                    else if (strcmp(tw, "list") == 0) expected = TC_LIST;
+                    else if (strcmp(tw, "tuple") == 0) expected = TC_TUPLE;
+                    else if (strcmp(tw, "rec") == 0) expected = TC_REC;
+                    else if (strcmp(tw, "box") == 0) expected = TC_BOX;
+                    if (expected != TC_NONE && tc->sp > 0)
+                        tc_expect(tc, expected, "check", t->line);
+                    /* remove the type word from unknowns (it was recorded as unknown) */
+                    if (tc->unknown_count > 0 &&
+                        tc->unknowns[tc->unknown_count-1].sym == toks[i-1].as.sym)
+                        tc->unknown_count--;
                 }
             } else {
                 tc_check_word(tc, sym, t->line);
@@ -3029,11 +3051,12 @@ static void prim_range(Frame *e) {
 static void prim_map(Frame *env) {
     POP_BODY(fn, "map");
     POP_LIST_BUF(list, "map");
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
     int result_base = sp;
     for (int i = 0; i < list_len; i++) {
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value));
+        sp += szs[i];
         eval_body(fn_buf, fn_s, env);
     }
     spush(val_compound(VAL_LIST, list_len, sp - result_base + 1));
@@ -3042,16 +3065,15 @@ static void prim_map(Frame *env) {
 static void prim_filter(Frame *env) {
     POP_BODY(fn, "filter");
     POP_LIST_BUF(list, "filter");
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
     int result_base = sp, result_count = 0;
     for (int i = 0; i < list_len; i++) {
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value)); sp += szs[i];
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value)); sp += szs[i];
         eval_body(fn_buf, fn_s, env);
         if (pop_int()) result_count++;
-        else sp -= r.slots;
+        else sp -= szs[i];
     }
     spush(val_compound(VAL_LIST, result_count, sp - result_base + 1));
 }
@@ -3060,12 +3082,12 @@ static void prim_fold(Frame *env) {
     POP_BODY(fn, "fold");
     POP_VAL(init);
     POP_LIST_BUF(list, "fold");
-    memcpy(&stack[sp], init_buf, init_s * sizeof(Value));
-    sp += init_s;
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
+    memcpy(&stack[sp], init_buf, init_s * sizeof(Value)); sp += init_s;
     for (int i = 0; i < list_len; i++) {
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value));
+        sp += szs[i];
         eval_body(fn_buf, fn_s, env);
     }
 }
@@ -3075,13 +3097,12 @@ static void prim_reduce(Frame *env) {
     if (stack[sp-1].tag != VAL_LIST) die("reduce: expected list");
     if ((int)stack[sp-1].as.compound.len == 0) die("reduce: empty list");
     POP_LIST_BUF(list, "reduce");
-    ElemRef first = compound_elem(list_buf, list_s, list_len, 0);
-    memcpy(&stack[sp], &list_buf[first.base], first.slots * sizeof(Value));
-    sp += first.slots;
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
+    memcpy(&stack[sp], &list_buf[offs[0]], szs[0] * sizeof(Value)); sp += szs[0];
     for (int i = 1; i < list_len; i++) {
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value));
+        sp += szs[i];
         eval_body(fn_buf, fn_s, env);
     }
 }
@@ -3089,10 +3110,11 @@ static void prim_reduce(Frame *env) {
 static void prim_each(Frame *env) {
     POP_BODY(fn, "each");
     POP_LIST_BUF(list, "each");
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
     for (int i = 0; i < list_len; i++) {
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value));
+        sp += szs[i];
         eval_body(fn_buf, fn_s, env);
     }
 }
@@ -3145,21 +3167,16 @@ static void prim_scan(Frame *env) {
     POP_BODY(fn, "scan");
     POP_VAL(init);
     POP_LIST_BUF(list, "scan");
+    int offs[LOCAL_MAX], szs[LOCAL_MAX];
+    compute_offsets(list_buf, list_s, list_len, offs, szs);
     Value acc_buf[LOCAL_MAX];
     int acc_s = init_s;
     memcpy(acc_buf, init_buf, init_s * sizeof(Value));
     int result_base = sp;
     for (int i = 0; i < list_len; i++) {
-        /* push acc */
-        memcpy(&stack[sp], acc_buf, acc_s * sizeof(Value));
-        sp += acc_s;
-        /* push element */
-        ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
-        sp += r.slots;
-        /* apply fn */
+        memcpy(&stack[sp], acc_buf, acc_s * sizeof(Value)); sp += acc_s;
+        memcpy(&stack[sp], &list_buf[offs[i]], szs[i] * sizeof(Value)); sp += szs[i];
         eval_body(fn_buf, fn_s, env);
-        /* new acc is on stack */
         Value new_acc_top = stack[sp - 1];
         acc_s = val_slots(new_acc_top);
         memcpy(acc_buf, &stack[sp - acc_s], acc_s * sizeof(Value));
@@ -3172,15 +3189,16 @@ static void prim_keep_mask(Frame *e) {
     POP_LIST_BUF(mask, "keep-mask");
     POP_LIST_BUF(list, "keep-mask");
     if (list_len != mask_len) die("keep-mask: list and mask must have same length");
+    int mo[LOCAL_MAX], ms[LOCAL_MAX], lo[LOCAL_MAX], ls2[LOCAL_MAX];
+    compute_offsets(mask_buf, mask_s, mask_len, mo, ms);
+    compute_offsets(list_buf, list_s, list_len, lo, ls2);
     int result_base = sp, result_count = 0;
     for (int i = 0; i < list_len; i++) {
-        ElemRef mr = compound_elem(mask_buf, mask_s, mask_len, i);
-        Value mv = mask_buf[mr.base];
+        Value mv = mask_buf[mo[i]];
         if (mv.tag != VAL_INT) die("keep-mask: mask elements must be int");
         if (mv.as.i) {
-            ElemRef lr = compound_elem(list_buf, list_s, list_len, i);
-            memcpy(&stack[sp], &list_buf[lr.base], lr.slots * sizeof(Value));
-            sp += lr.slots;
+            memcpy(&stack[sp], &list_buf[lo[i]], ls2[i] * sizeof(Value));
+            sp += ls2[i];
             result_count++;
         }
     }
@@ -3869,6 +3887,8 @@ static int find_matching(Token *toks, int start, int count, TokTag open, TokTag 
 /* build_tuple: push an unevaluated tuple from tokens[start..end) onto the stack.
    Handles arbitrary nesting of (), [], {} inside tuples. */
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *env) {
+    if (!sym_check_kw) sym_check_kw = sym_intern("check");
+    if (!sym_effect_kw) sym_effect_kw = sym_intern("effect");
     int elem_base = sp;
     int elem_count = 0;
     for (int j = start; j < end; j++) {
@@ -3877,7 +3897,14 @@ static void build_tuple(Token *toks, int start, int end, int total_count, Frame 
         case TOK_INT: spush(val_int(tt->as.i)); elem_count++; break;
         case TOK_FLOAT: spush(val_float(tt->as.f)); elem_count++; break;
         case TOK_SYM: spush(val_sym(tt->as.sym)); elem_count++; break;
-        case TOK_WORD: spush(val_word(tt->as.sym)); elem_count++; break;
+        case TOK_WORD:
+            if (tt->as.sym == sym_check_kw) {
+                /* skip 'type check' — pop the preceding type word */
+                if (elem_count > 0 && stack[sp-1].tag == VAL_WORD) { sp--; elem_count--; }
+            } else {
+                spush(val_word(tt->as.sym)); elem_count++;
+            }
+            break;
         case TOK_STRING:
             for (int c = 0; c < tt->as.str.len; c++)
                 spush(val_int(tt->as.str.codes[c]));
