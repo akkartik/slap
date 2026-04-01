@@ -853,6 +853,8 @@ typedef struct {
     int effect_consumed;   /* stack effect: how many values consumed from below */
     int effect_produced;   /* stack effect: how many values left on stack */
     TypeConstraint effect_out_type; /* type of last produced value, or TC_NONE if unknown */
+    TypeConstraint elem_type;      /* for lists: element type, TC_NONE if unknown/heterogeneous */
+    TypeConstraint box_contents;   /* for boxes: type of contents, TC_NONE if unknown */
 } AbstractType;
 
 #define ASTACK_MAX 256
@@ -889,12 +891,15 @@ static void tc_push(TypeChecker *tc, TypeConstraint type, int is_linear, int lin
     at->source_line = line;
 }
 
+/* forward declarations */
+static TCBinding *tc_lookup(TypeChecker *tc, uint32_t sym);
+
 /* infer the stack effect of a tuple body (token range).
    Returns consumed (how many values eaten from external stack) and
    produced (how many values left on stack after execution).
-   Uses a lightweight simulation — no error reporting, just counting. */
-static TypeConstraint tc_infer_effect(Token *toks, int start, int end, int total_count,
-                            int *out_consumed, int *out_produced) {
+   ctx is optional — if provided, user-defined bindings are resolved. */
+static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int total_count,
+                            int *out_consumed, int *out_produced, TypeChecker *ctx) {
     int vsp = 0;            /* virtual stack pointer */
     int consumed = 0;       /* values consumed from below */
     TypeConstraint top_type = TC_NONE; /* type of top-of-stack */
@@ -1016,7 +1021,23 @@ static TypeConstraint tc_infer_effect(Token *toks, int start, int end, int total
                         else top_type = TC_NONE;
                     }
                 }
-                /* unknown words: assume net 0 effect */
+                /* check user bindings for unknown words */
+                if (ctx) {
+                    TCBinding *ub = tc_lookup(ctx, sym);
+                    if (ub && ub->is_def && ub->atype.type == TC_TUPLE && ub->atype.has_effect) {
+                        int need = ub->atype.effect_consumed, out = ub->atype.effect_produced;
+                        if (vsp < need) { consumed += need - vsp; vsp = 0; } else vsp -= need;
+                        vsp += out;
+                        if (out > 0 && ub->atype.effect_out_type != TC_NONE)
+                            top_type = ub->atype.effect_out_type;
+                        else if (out > 0) top_type = TC_NONE;
+                    } else if (ub && !ub->is_def) {
+                        /* let binding: pushes one value */
+                        vsp++;
+                        top_type = ub->atype.type;
+                    }
+                }
+                /* truly unknown words: assume net 0 effect */
             }
             break;
         }
@@ -1027,6 +1048,11 @@ static TypeConstraint tc_infer_effect(Token *toks, int start, int end, int total
     *out_consumed = consumed;
     *out_produced = vsp;
     return top_type;
+}
+
+static TypeConstraint tc_infer_effect(Token *toks, int start, int end, int total_count,
+                            int *out_consumed, int *out_produced) {
+    return tc_infer_effect_ctx(toks, start, end, total_count, out_consumed, out_produced, NULL);
 }
 
 /* apply a tuple's inferred stack effect to the type checker.
@@ -1149,7 +1175,17 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                     /* fall through to normal sig checking below */
                 } else if (b->atype.has_effect) {
                     /* use inferred stack effect */
-                    tc_apply_effect(tc, b->atype.effect_consumed, b->atype.effect_produced, b->atype.effect_out_type, line);
+                    TypeConstraint out = b->atype.effect_out_type;
+                    /* for 1→1 functions with unknown output, inherit input type */
+                    if (out == TC_NONE && b->atype.effect_consumed == 1 && b->atype.effect_produced == 1
+                        && tc->sp > 0) {
+                        AbstractType *input = &tc->data[tc->sp - 1];
+                        if (input->type == TC_LIST && input->elem_type != TC_NONE)
+                            out = input->elem_type; /* list accessor: return elem type */
+                        else if (input->type != TC_NONE)
+                            out = input->type; /* identity-like: preserve type */
+                    }
+                    tc_apply_effect(tc, b->atype.effect_consumed, b->atype.effect_produced, out, line);
                     return;
                 }
                 if (!sig) return;
@@ -1225,9 +1261,16 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             /* else can be tuple or plain value (-1 sentinel) */
             int eec, eep;
             int else_has;
-            if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE)
+            TypeConstraint else_out = TC_NONE;
+            if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE) {
                 else_has = tc_pop_tuple(tc, &eec, &eep);
-            else { else_has = 0; eec = 0; eep = 0; if (tc->sp > 0) tc->sp--; }
+                else_out = tc_last_popped_out_type;
+            } else if (tc->sp > 0) {
+                /* plain value as else (e.g. -1 sentinel) — its type IS the output */
+                else_out = tc->data[tc->sp-1].type;
+                else_has = 0; eec = 0; eep = 1;
+                tc->sp--;
+            } else { else_has = 0; eec = 0; eep = 0; }
             /* then MUST be a tuple */
             if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
                 fprintf(stderr, "%s:%d: type error: 'if' then branch must be tuple, got %s\n",
@@ -1237,7 +1280,15 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             int tec, tep;
             int then_has = tc_pop_tuple(tc, &tec, &tep);
             TypeConstraint then_out = tc_last_popped_out_type;
-            (void)else_has; (void)eec; (void)eep;
+            /* check branch output types match */
+            if (then_out != TC_NONE && else_out != TC_NONE && then_out != else_out) {
+                if (!tc_constraint_matches(then_out, else_out) && !tc_constraint_matches(else_out, then_out)) {
+                    fprintf(stderr, "%s:%d: type error: 'if' branches produce different types: "
+                            "then produces %s, else produces %s\n",
+                            current_file, line, constraint_name(then_out), constraint_name(else_out));
+                    tc->errors++;
+                }
+            }
             /* pop condition (int or tuple) */
             if (tc->sp > 0) {
                 AbstractType *cond = &tc->data[tc->sp - 1];
@@ -1247,12 +1298,24 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                     tc->sp--; /* int condition */
                 }
             }
-            /* apply then branch effect */
+            /* apply then branch effect, using narrower type if both agree */
+            TypeConstraint out = then_out;
+            if (out == TC_NONE) out = else_out;
             if (then_has)
-                tc_apply_effect(tc, tec, tep, then_out, line);
+                tc_apply_effect(tc, tec, tep, out, line);
+            else if (else_has)
+                tc_apply_effect(tc, eec, eep, out, line);
         } else if (sym == s_cond || sym == s_match) {
-            /* pop default, pop clauses, pop scrutinee. Result depends on branch. */
+            /* pop default, pop clauses, pop scrutinee. */
+            TypeConstraint result_type = TC_NONE;
             if (tc->sp >= 3) {
+                /* default: if it's a plain value, that's the fallback type.
+                   if it's a tuple, use its output type. */
+                AbstractType *def = &tc->data[tc->sp - 1];
+                if (def->type == TC_TUPLE && def->effect_out_type != TC_NONE)
+                    result_type = def->effect_out_type;
+                else if (def->type != TC_TUPLE && def->type != TC_NONE)
+                    result_type = def->type;
                 tc->sp--; /* pop default */
                 if (tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_REC
                     && tc->data[tc->sp-1].type != TC_NONE) {
@@ -1271,25 +1334,38 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             } else {
                 tc->sp = 0;
             }
-            tc_push(tc, TC_NONE, 0, line); /* result */
+            tc_push(tc, result_type, 0, line);
         } else if (sym == s_map) {
-            /* pop body, pop list → list */
+            /* pop body, pop list → list (element type = fn output type) */
             int ec, ep;
-            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            int map_known = tc_pop_tuple(tc, &ec, &ep);
+            TypeConstraint map_out = tc_last_popped_out_type;
+            if (map_known && (ec != 1 || ep != 1) && (ec + ep > 0)) {
+                fprintf(stderr, "%s:%d: type error: 'map' body must be 1→1, got %d→%d\n",
+                        current_file, line, ec, ep);
+                tc->errors++;
+            }
             if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
                 fprintf(stderr, "%s:%d: type error: 'map' expected list, got %s\n",
                         current_file, line, constraint_name(tc->data[tc->sp-1].type));
                 tc->errors++;
             }
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_LIST) {
-                /* list stays as list */
+                /* list stays as list, update elem_type from fn output */
+                if (map_out != TC_NONE) tc->data[tc->sp-1].elem_type = map_out;
             } else if (tc->sp > 0) {
                 tc->sp--; tc_push(tc, TC_LIST, 0, line);
+                if (map_out != TC_NONE) tc->data[tc->sp-1].elem_type = map_out;
             }
         } else if (sym == s_filter) {
             /* pop body, keep list → list */
             int ec, ep;
-            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            int filt_known = tc_pop_tuple(tc, &ec, &ep);
+            if (filt_known && (ec != 1 || ep != 1) && (ec + ep > 0)) {
+                fprintf(stderr, "%s:%d: type error: 'filter' body must be 1→1, got %d→%d\n",
+                        current_file, line, ec, ep);
+                tc->errors++;
+            }
             if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
                 fprintf(stderr, "%s:%d: type error: 'filter' expected list, got %s\n",
                         current_file, line, constraint_name(tc->data[tc->sp-1].type));
@@ -1303,6 +1379,17 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             AbstractType init = {0};
             if (tc->sp > 0) { init = tc->data[tc->sp-1]; tc->sp--; }
             if (tc->sp > 0) {
+                /* check init type is compatible with list element type */
+                if (tc->data[tc->sp-1].type == TC_LIST && tc->data[tc->sp-1].elem_type != TC_NONE
+                    && init.type != TC_NONE && init.type != tc->data[tc->sp-1].elem_type) {
+                    if (!tc_constraint_matches(init.type, tc->data[tc->sp-1].elem_type)
+                        && !tc_constraint_matches(tc->data[tc->sp-1].elem_type, init.type)) {
+                        fprintf(stderr, "%s:%d: type error: 'fold' init is %s but list contains %s\n",
+                                current_file, line, constraint_name(init.type),
+                                constraint_name(tc->data[tc->sp-1].elem_type));
+                        tc->errors++;
+                    }
+                }
                 if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
                     fprintf(stderr, "%s:%d: type error: 'fold' expected list, got %s\n",
                             current_file, line, constraint_name(tc->data[tc->sp-1].type));
@@ -1382,15 +1469,21 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
         } else if (sym == s_lend) {
-            /* pop body, pop box. Push snapshot, apply body, push box below results. */
+            /* pop body, pop box. Push box contents, apply body, push box below results. */
             int ec, ep;
             int has = tc_pop_tuple(tc, &ec, &ep);
+            TypeConstraint lend_fn_out = tc_last_popped_out_type;
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
+                TypeConstraint contents = tc->data[tc->sp-1].box_contents;
                 tc->data[tc->sp-1].borrowed++;
+                /* body consumes the snapshot and produces results */
                 int results = has ? (1 - ec + ep) : 1;
                 if (results < 0) results = 0;
-                for (int j = 0; j < results; j++)
-                    tc_push(tc, TC_NONE, 0, line);
+                for (int j = 0; j < results; j++) {
+                    TypeConstraint rt = (j == results - 1 && lend_fn_out != TC_NONE) ? lend_fn_out :
+                                        (j == 0 && contents != TC_NONE) ? contents : TC_NONE;
+                    tc_push(tc, rt, 0, line);
+                }
                 int box_idx = tc->sp - results - 1;
                 if (box_idx >= 0) tc->data[box_idx].borrowed--;
             } else if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_NONE) {
@@ -1399,10 +1492,20 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                 tc->errors++;
             }
         } else if (sym == s_mutate) {
-            /* pop body, pop box → box */
+            /* pop body, pop box → box. Body must produce same type as box contents. */
             int ec, ep;
-            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_BOX && tc->data[tc->sp-1].type != TC_NONE) {
+            tc_pop_tuple(tc, &ec, &ep);
+            TypeConstraint mut_fn_out = tc_last_popped_out_type;
+            if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
+                TypeConstraint contents = tc->data[tc->sp-1].box_contents;
+                if (contents != TC_NONE && mut_fn_out != TC_NONE && contents != mut_fn_out) {
+                    if (!tc_constraint_matches(contents, mut_fn_out) && !tc_constraint_matches(mut_fn_out, contents)) {
+                        fprintf(stderr, "%s:%d: type error: 'mutate' body produces %s but box contains %s\n",
+                                current_file, line, constraint_name(mut_fn_out), constraint_name(contents));
+                        tc->errors++;
+                    }
+                }
+            } else if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_NONE) {
                 fprintf(stderr, "%s:%d: type error: 'mutate' expected box, got %s\n",
                         current_file, line, constraint_name(tc->data[tc->sp-1].type));
                 tc->errors++;
@@ -1410,7 +1513,9 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
         } else if (sym == s_clone) {
             /* pop box → box box */
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
+                TypeConstraint contents = tc->data[tc->sp-1].box_contents;
                 tc_push(tc, TC_BOX, 1, line);
+                tc->data[tc->sp-1].box_contents = contents;
             } else if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_NONE) {
                 fprintf(stderr, "%s:%d: type error: 'clone' expected box, got %s\n",
                         current_file, line, constraint_name(tc->data[tc->sp-1].type));
@@ -1428,7 +1533,12 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                 }
                 tc->sp--;
             }
-            tc_push(tc, sym == s_find ? TC_NONE : TC_LIST, 0, line);
+            if (sym == s_find) {
+                tc_push(tc, TC_NONE, 0, line);
+            } else {
+                tc_push(tc, TC_LIST, 0, line);
+                if (sym == s_where) tc->data[tc->sp-1].elem_type = TC_INT;
+            }
         } else if (sym == s_scan) {
             /* list init fn → list */
             int ec, ep;
@@ -1570,6 +1680,61 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
         stack_pos--;
     }
 
+    /* capture list elem_type and the "value" input (TC_NONE slot) before popping */
+    TypeConstraint input_list_elem = TC_NONE;
+    TypeConstraint input_val_type = TC_NONE;
+    {
+        /* find the TC_NONE (unconstrained) input slot — that's the "value" argument */
+        int val_slot_idx = -1;
+        int slot_pos = 0;
+        for (int j = 0; j < sig->slot_count; j++) {
+            if (sig->slots[j].is_env || sig->slots[j].direction != DIR_IN) continue;
+            if (sig->slots[j].constraint == TC_NONE) val_slot_idx = slot_pos;
+            slot_pos++;
+        }
+        for (int i = tc->sp - inputs; i < tc->sp; i++) {
+            if (i >= 0 && tc->data[i].type == TC_LIST && tc->data[i].elem_type != TC_NONE)
+                input_list_elem = tc->data[i].elem_type;
+        }
+        if (val_slot_idx >= 0) {
+            int vi = tc->sp - inputs + val_slot_idx;
+            if (vi >= 0 && vi < tc->sp) input_val_type = tc->data[vi].type;
+        }
+    }
+
+    /* check elem_type consistency for give/set */
+    if (input_list_elem != TC_NONE && input_val_type != TC_NONE) {
+        static uint32_t s_give3=0, s_set3=0;
+        if (!s_give3) { s_give3=sym_intern("give"); s_set3=sym_intern("set"); }
+        if (sym == s_give3 || sym == s_set3) {
+            if (!tc_constraint_matches(input_list_elem, input_val_type)) {
+                fprintf(stderr, "%s:%d: type error: '%s' adds %s to list of %s\n",
+                        current_file, line, sym_name(sym),
+                        constraint_name(input_val_type), constraint_name(input_list_elem));
+                tc->errors++;
+            }
+        }
+    }
+
+    /* check elem_type consistency for cat (two lists) */
+    {
+        static uint32_t s_cat2=0;
+        if (!s_cat2) { s_cat2=sym_intern("cat"); }
+        if (sym == s_cat2 && inputs == 2) {
+            int a = tc->sp - inputs, b = tc->sp - inputs + 1;
+            if (a >= 0 && b < tc->sp + inputs &&
+                tc->data[a].type == TC_LIST && tc->data[b].type == TC_LIST &&
+                tc->data[a].elem_type != TC_NONE && tc->data[b].elem_type != TC_NONE &&
+                tc->data[a].elem_type != tc->data[b].elem_type) {
+                fprintf(stderr, "%s:%d: type error: 'cat' concatenates list of %s with list of %s\n",
+                        current_file, line,
+                        constraint_name(tc->data[a].elem_type),
+                        constraint_name(tc->data[b].elem_type));
+                tc->errors++;
+            }
+        }
+    }
+
     /* pop inputs */
     tc->sp -= inputs;
 
@@ -1594,8 +1759,164 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
         at->is_linear = (at->type == TC_BOX) ? 1 : 0;
         at->consumed = 0;
         at->source_line = line;
+        if (input_list_elem != TC_NONE) {
+            static uint32_t s_get2=0, s_first2=0, s_last2=0, s_grab2=0, s_pop2=0, s_pull2=0;
+            if (!s_get2) {
+                s_get2=sym_intern("get"); s_first2=sym_intern("first");
+                s_last2=sym_intern("last"); s_grab2=sym_intern("grab");
+                s_pop2=sym_intern("pop"); s_pull2=sym_intern("pull");
+            }
+            /* refine TC_NONE outputs for list-element-extracting ops */
+            if (at->type == TC_NONE &&
+                (sym==s_get2 || sym==s_first2 || sym==s_last2 || sym==s_grab2
+                 || sym==s_pop2 || sym==s_pull2)) {
+                at->type = input_list_elem;
+            }
+            /* propagate elem_type for list→list ops */
+            if (at->type == TC_LIST) {
+                at->elem_type = input_list_elem;
+            }
+        }
+        /* for give/set: if list had no elem_type, use the value being added */
+        if (at->type == TC_LIST && at->elem_type == TC_NONE && input_val_type != TC_NONE) {
+            static uint32_t s_give2=0, s_set2=0;
+            if (!s_give2) { s_give2=sym_intern("give"); s_set2=sym_intern("set"); }
+            if (sym==s_give2 || sym==s_set2) {
+                at->elem_type = input_val_type;
+            }
+        }
+        /* range produces a list of ints */
+        if (at->type == TC_LIST && at->elem_type == TC_NONE) {
+            static uint32_t s_range2=0, s_classify2=0, s_rise2=0, s_fall2=0;
+            if (!s_range2) {
+                s_range2=sym_intern("range"); s_classify2=sym_intern("classify");
+                s_rise2=sym_intern("rise"); s_fall2=sym_intern("fall");
+            }
+            if (sym==s_range2 || sym==s_classify2 || sym==s_rise2 || sym==s_fall2)
+                at->elem_type = TC_INT;
+        }
+        /* box: capture contents type from the value being boxed */
+        if (at->type == TC_BOX && input_val_type != TC_NONE) {
+            static uint32_t s_box2=0;
+            if (!s_box2) s_box2=sym_intern("box");
+            if (sym == s_box2)
+                at->box_contents = input_val_type;
+        }
     }
     #undef MAX_TVARS
+}
+
+/* Check list literal element consistency. Processes tokens inside [...] and
+   verifies all elements have the same type. For tuples, also checks same effect.
+   Returns the element type (or TC_NONE if empty/unknown). */
+static TypeConstraint tc_check_list_elements(Token *toks, int start, int end,
+                                              int total_count, int *errors, int line) {
+    /* Walk the tokens to identify each element's type.
+       Each top-level value (literal, bracket expr, or word result) is one element. */
+    TypeConstraint elem_type = TC_NONE;
+    int elem_count = 0;
+    int first_effect_c = 0, first_effect_p = 0;
+    TypeConstraint first_effect_out = TC_NONE;
+    int has_first_effect = 0;
+
+    for (int i = start; i < end; i++) {
+        Token *t = &toks[i];
+        TypeConstraint this_type = TC_NONE;
+        int this_eff_c = 0, this_eff_p = 0;
+        TypeConstraint this_eff_out = TC_NONE;
+        int this_has_effect = 0;
+
+        switch (t->tag) {
+        case TOK_INT:    this_type = TC_INT;   break;
+        case TOK_FLOAT:  this_type = TC_FLOAT; break;
+        case TOK_SYM:    this_type = TC_SYM;   break;
+        case TOK_STRING: this_type = TC_LIST;  break;
+        case TOK_LPAREN: {
+            int close = find_matching(toks, i + 1, total_count, TOK_LPAREN, TOK_RPAREN);
+            this_type = TC_TUPLE;
+            this_eff_out = tc_infer_effect(toks, i + 1, close, total_count, &this_eff_c, &this_eff_p);
+            this_has_effect = 1;
+            i = close;
+            break;
+        }
+        case TOK_LBRACKET: {
+            int close = find_matching(toks, i + 1, total_count, TOK_LBRACKET, TOK_RBRACKET);
+            this_type = TC_LIST;
+            i = close;
+            break;
+        }
+        case TOK_LBRACE: {
+            int close = find_matching(toks, i + 1, total_count, TOK_LBRACE, TOK_RBRACE);
+            this_type = TC_REC;
+            i = close;
+            break;
+        }
+        case TOK_WORD: {
+            /* word in list context — look up its output type */
+            TypeSig *sig = typesig_find(t->as.sym);
+            if (sig && !sig->is_todo) {
+                for (int j = sig->slot_count - 1; j >= 0; j--) {
+                    if (sig->slots[j].is_env) continue;
+                    if (sig->slots[j].direction == DIR_OUT) {
+                        this_type = sig->slots[j].constraint;
+                        break;
+                    }
+                }
+            }
+            /* words consume/produce — can't easily track in simple scan.
+               Just skip type checking for word-containing lists. */
+            if (this_type == TC_NONE) return TC_NONE;
+            break;
+        }
+        default: continue;
+        }
+
+        if (this_type == TC_NONE) continue;
+
+        elem_count++;
+        if (elem_count == 1) {
+            elem_type = this_type;
+            first_effect_c = this_eff_c;
+            first_effect_p = this_eff_p;
+            first_effect_out = this_eff_out;
+            has_first_effect = this_has_effect;
+        } else {
+            /* check consistency */
+            if (this_type != elem_type) {
+                fprintf(stderr, "%s:%d: type error: list elements have inconsistent types: "
+                        "element 1 is %s, element %d is %s\n",
+                        current_file, line, constraint_name(elem_type),
+                        elem_count, constraint_name(this_type));
+                (*errors)++;
+                return TC_NONE;
+            }
+            /* for tuples, check same stack effect */
+            if (this_type == TC_TUPLE && has_first_effect && this_has_effect) {
+                int first_net = first_effect_p - first_effect_c;
+                int this_net = this_eff_p - this_eff_c;
+                if (first_net != this_net) {
+                    fprintf(stderr, "%s:%d: type error: list of tuples have different stack effects: "
+                            "element 1 is -%d+%d (net %+d), element %d is -%d+%d (net %+d)\n",
+                            current_file, line,
+                            first_effect_c, first_effect_p, first_net,
+                            elem_count, this_eff_c, this_eff_p, this_net);
+                    (*errors)++;
+                    return TC_NONE;
+                }
+                if (first_effect_out != this_eff_out && first_effect_out != TC_NONE && this_eff_out != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: list of tuples produce different types: "
+                            "element 1 produces %s, element %d produces %s\n",
+                            current_file, line,
+                            constraint_name(first_effect_out),
+                            elem_count, constraint_name(this_eff_out));
+                    (*errors)++;
+                    return TC_NONE;
+                }
+            }
+        }
+    }
+
+    return elem_type;
 }
 
 static int typecheck_tokens(Token *toks, int count) {
@@ -1626,7 +1947,7 @@ static int typecheck_tokens(Token *toks, int count) {
             tc_push(&tc, TC_TUPLE, 0, t->line);
             /* infer stack effect of tuple body */
             int eff_c = 0, eff_p = 0;
-            TypeConstraint eff_out = tc_infer_effect(toks, i + 1, close, count, &eff_c, &eff_p);
+            TypeConstraint eff_out = tc_infer_effect_ctx(toks, i + 1, close, count, &eff_c, &eff_p, &tc);
             AbstractType *tup = &tc.data[tc.sp - 1];
             tup->has_effect = 1;
             tup->effect_consumed = eff_c;
@@ -1637,7 +1958,9 @@ static int typecheck_tokens(Token *toks, int count) {
         }
         case TOK_LBRACKET: {
             int close = find_matching(toks, i + 1, count, TOK_LBRACKET, TOK_RBRACKET);
+            TypeConstraint elem = tc_check_list_elements(toks, i + 1, close, count, &tc.errors, t->line);
             tc_push(&tc, TC_LIST, 0, t->line);
+            tc.data[tc.sp - 1].elem_type = elem;
             i = close;
             break;
         }
@@ -1680,6 +2003,19 @@ static int typecheck_tokens(Token *toks, int count) {
                     AbstractType val_t = tc.data[tc.sp - 1];
                     tc.sp--; /* pop value */
                     if (name_sym) {
+                        /* check rebinding type consistency (only for let→let, not def→let shadowing) */
+                        TCBinding *existing = tc_lookup(&tc, name_sym);
+                        if (existing && !existing->is_def
+                            && existing->atype.type != TC_NONE && val_t.type != TC_NONE
+                            && existing->atype.type != val_t.type) {
+                            if (!tc_constraint_matches(existing->atype.type, val_t.type)
+                                && !tc_constraint_matches(val_t.type, existing->atype.type)) {
+                                fprintf(stderr, "%s:%d: type error: rebinding '%s' changes type from %s to %s\n",
+                                        current_file, t->line, sym_name(name_sym),
+                                        constraint_name(existing->atype.type), constraint_name(val_t.type));
+                                tc.errors++;
+                            }
+                        }
                         tc_bind(&tc, name_sym, &val_t, 0);
                     }
                 } else {
