@@ -58,8 +58,8 @@ answer 42 eq assert
 0 factorial 1 eq assert
 
 -- ===== Control Flow: if =====
-10 (5 lt) (2 mul) (3 mul) if 30 eq assert
-3 (5 lt) (2 mul) (3 mul) if 6 eq assert
+10 dup 5 lt (2 mul) (3 mul) if 30 eq assert
+3 dup 5 lt (2 mul) (3 mul) if 6 eq assert
 
 -- ===== Control Flow: cond =====
 10 {(5 lt) (2 mul) (20 lt) (3 mul)} -1 cond

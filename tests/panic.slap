@@ -83,3 +83,18 @@ stack pop
 
 -- EXPECT: expected tuple or record of clauses
 1 2 3 match
+
+-- EXPECT: check: expected preceding type word
+(check)
+
+-- EXPECT: sort: only single-slot
+[[1 2] [3 4]] sort
+
+-- EXPECT: rotate: only single-slot
+[[1 2] [3 4]] 1 rotate
+
+-- EXPECT: condition must be int
+'x (1 plus) (2 plus) if
+
+-- EXPECT: expected record
+[1 2 3] 'x at
