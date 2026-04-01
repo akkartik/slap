@@ -15,7 +15,7 @@
 #define TOK_MAX   65536
 #define MARK_MAX  256
 #define PRIM_MAX  256
-#define LOCAL_MAX 1024
+#define LOCAL_MAX 4096
 
 /* ---- value types ---- */
 typedef enum {
@@ -504,6 +504,19 @@ static ElemRef record_field(Value *data, int total_slots, int len, uint32_t key,
     return ref;
 }
 
+static void compute_offsets(Value *data, int total_slots, int len, int *offsets, int *sizes) {
+    int elem_end = total_slots - 1;
+    for (int i = len - 1; i >= 0; i--) {
+        int lp = elem_end - 1;
+        Value l = data[lp];
+        int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD)
+            ? (int)l.as.compound.slots : 1;
+        offsets[i] = elem_end - sz;
+        sizes[i] = sz;
+        elem_end = offsets[i];
+    }
+}
+
 /* ---- print a value ---- */
 static void val_print(Value *data, int slots, FILE *out) {
     Value top = data[slots - 1];
@@ -542,17 +555,8 @@ static void val_print(Value *data, int slots, FILE *out) {
             fprintf(out, "\"");
         } else {
             fprintf(out, "[");
-            /* walk elements forward using backward-computed offsets */
             int offsets[1024], sizes[1024];
-            elem_end = slots - 1;
-            for (int i = len - 1; i >= 0; i--) {
-                int lp = elem_end - 1;
-                Value l = data[lp];
-                int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD) ? (int)l.as.compound.slots : 1;
-                offsets[i] = elem_end - sz;
-                sizes[i] = sz;
-                elem_end = offsets[i];
-            }
+            compute_offsets(data, slots, len, offsets, sizes);
             for (int i = 0; i < len; i++) {
                 if (i > 0) fprintf(out, " ");
                 val_print(&data[offsets[i]], sizes[i], out);
@@ -565,15 +569,7 @@ static void val_print(Value *data, int slots, FILE *out) {
         int len = (int)top.as.compound.len;
         fprintf(out, "(");
         int offsets[1024], sizes[1024];
-        int elem_end = slots - 1;
-        for (int i = len - 1; i >= 0; i--) {
-            int lp = elem_end - 1;
-            Value l = data[lp];
-            int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD) ? (int)l.as.compound.slots : 1;
-            offsets[i] = elem_end - sz;
-            sizes[i] = sz;
-            elem_end = offsets[i];
-        }
+        compute_offsets(data, slots, len, offsets, sizes);
         for (int i = 0; i < len; i++) {
             if (i > 0) fprintf(out, " ");
             val_print(&data[offsets[i]], sizes[i], out);
@@ -1569,6 +1565,19 @@ static void register_builtin_types(void) {
     TSIG_BEGIN("not") TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("and") TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("or") TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("neq") TSIG_IN(TC_NONE, OWN_LENT) TSIG_IN(TC_NONE, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("gt") TSIG_IN(TC_NONE, OWN_LENT) TSIG_IN(TC_NONE, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("ge") TSIG_IN(TC_NONE, OWN_LENT) TSIG_IN(TC_NONE, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("le") TSIG_IN(TC_NONE, OWN_LENT) TSIG_IN(TC_NONE, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("inc") TSIG_IN(TC_NUM, OWN_LENT) TSIG_OUT(TC_NUM, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("dec") TSIG_IN(TC_NUM, OWN_LENT) TSIG_OUT(TC_NUM, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("neg") TSIG_IN(TC_NUM, OWN_LENT) TSIG_OUT(TC_NUM, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("abs") TSIG_IN(TC_NUM, OWN_LENT) TSIG_OUT(TC_NUM, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("iseven") TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("isodd") TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("iszero") TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("max") TSIG_IN_V(TC_NUM, OWN_LENT, "a") TSIG_IN_V(TC_NUM, OWN_LENT, "a") TSIG_OUT_V(TC_NUM, OWN_MOVE, "a") TSIG_END()
+    TSIG_BEGIN("min") TSIG_IN_V(TC_NUM, OWN_LENT, "a") TSIG_IN_V(TC_NUM, OWN_LENT, "a") TSIG_OUT_V(TC_NUM, OWN_MOVE, "a") TSIG_END()
 
     /* IO */
     TSIG_BEGIN("print") TSIG_IN(TC_NONE, OWN_OWN) TSIG_END()
@@ -1670,6 +1679,28 @@ static void register_builtin_types(void) {
     #undef TSIG_END
 }
 
+/* ---- stack pop helpers ---- */
+#define POP_VAL(name) \
+    Value name##_top = stack[sp - 1]; \
+    int name##_s = val_slots(name##_top); \
+    Value name##_buf[LOCAL_MAX]; \
+    memcpy(name##_buf, &stack[sp - name##_s], name##_s * sizeof(Value)); \
+    sp -= name##_s
+
+#define POP_BODY(name, label) \
+    if (stack[sp-1].tag != VAL_TUPLE) die(label ": expected tuple"); \
+    POP_VAL(name)
+
+#define POP_LIST_BUF(name, label) \
+    if (stack[sp-1].tag != VAL_LIST) die(label ": expected list"); \
+    Value name##_top = stack[sp - 1]; \
+    int name##_s = val_slots(name##_top); \
+    int name##_len = (int)name##_top.as.compound.len; \
+    int name##_base __attribute__((unused)) = sp - name##_s; \
+    Value name##_buf[LOCAL_MAX]; \
+    memcpy(name##_buf, &stack[name##_base], name##_s * sizeof(Value)); \
+    sp = name##_base
+
 /* ---- primitive implementations ---- */
 
 static void prim_dup(Frame *env) {
@@ -1714,45 +1745,18 @@ static void prim_swap(Frame *env) {
 }
 
 static void prim_dip(Frame *env) {
-    /* stack: ... value body -- apply body with value set aside, then restore */
     if (sp < 2) die("dip: need body and value");
-    /* pop the body (top) */
-    Value body_top = stack[sp - 1];
-    if (body_top.tag != VAL_TUPLE) die("dip: expected tuple body");
-    int body_s = val_slots(body_top);
-    int body_base = sp - body_s;
-
-    /* save body */
-    Value body_buf[LOCAL_MAX];
-    memcpy(body_buf, &stack[body_base], body_s * sizeof(Value));
-    sp = body_base;
-
-    /* pop the value to set aside */
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    int val_base = sp - val_s;
-    Value saved[LOCAL_MAX];
-    memcpy(saved, &stack[val_base], val_s * sizeof(Value));
-    sp = val_base;
-
-    /* apply body */
+    POP_BODY(body, "dip");
+    POP_VAL(saved);
     eval_body(body_buf, body_s, env);
-
-    /* restore saved value */
-    memcpy(&stack[sp], saved, val_s * sizeof(Value));
-    sp += val_s;
+    memcpy(&stack[sp], saved_buf, saved_s * sizeof(Value));
+    sp += saved_s;
 }
 
 static void prim_apply(Frame *env) {
     if (sp <= 0) die("apply: stack underflow");
-    Value top = stack[sp - 1];
-    if (top.tag != VAL_TUPLE) die("apply: expected tuple");
-    int s = val_slots(top);
-    int base = sp - s;
-    Value body[LOCAL_MAX];
-    memcpy(body, &stack[base], s * sizeof(Value));
-    sp = base;
-    eval_body(body, s, env);
+    POP_BODY(body, "apply");
+    eval_body(body_buf, body_s, env);
 }
 
 static void prim_plus(Frame *env) {
@@ -1799,36 +1803,24 @@ static void prim_mod(Frame *env) {
 
 static void prim_eq(Frame *env) {
     (void)env;
-    Value btop = stack[sp - 1];
-    int bs = val_slots(btop);
-    Value b_buf[LOCAL_MAX];
-    memcpy(b_buf, &stack[sp - bs], bs * sizeof(Value));
-    sp -= bs;
-
-    Value atop = stack[sp - 1];
-    int as = val_slots(atop);
-    Value a_buf[LOCAL_MAX];
-    memcpy(a_buf, &stack[sp - as], as * sizeof(Value));
-    sp -= as;
-
-    spush(val_int(val_equal(a_buf, as, b_buf, bs) ? 1 : 0));
+    Value bt = stack[sp-1];
+    int bs = val_slots(bt);
+    Value at = stack[sp-1-bs];
+    int as = val_slots(at);
+    int r = val_equal(&stack[sp-bs-as], as, &stack[sp-bs], bs);
+    sp -= as + bs;
+    spush(val_int(r ? 1 : 0));
 }
 
 static void prim_lt(Frame *env) {
     (void)env;
-    Value btop = stack[sp - 1];
-    int bs = val_slots(btop);
-    Value b_buf[LOCAL_MAX];
-    memcpy(b_buf, &stack[sp - bs], bs * sizeof(Value));
-    sp -= bs;
-
-    Value atop = stack[sp - 1];
-    int as = val_slots(atop);
-    Value a_buf[LOCAL_MAX];
-    memcpy(a_buf, &stack[sp - as], as * sizeof(Value));
-    sp -= as;
-
-    spush(val_int(val_less(a_buf, as, b_buf, bs) ? 1 : 0));
+    Value bt = stack[sp-1];
+    int bs = val_slots(bt);
+    Value at = stack[sp-1-bs];
+    int as = val_slots(at);
+    int r = val_less(&stack[sp-bs-as], as, &stack[sp-bs], bs);
+    sp -= as + bs;
+    spush(val_int(r ? 1 : 0));
 }
 
 static void prim_not(Frame *env) {
@@ -1848,6 +1840,22 @@ static void prim_or(Frame *env) {
     int64_t b = pop_int(), a = pop_int();
     spush(val_int((a || b) ? 1 : 0));
 }
+
+static void prim_neq(Frame *e) { (void)e; Value bt=stack[sp-1]; int bs=val_slots(bt); int as=val_slots(stack[sp-1-bs]); int r=val_equal(&stack[sp-bs-as],as,&stack[sp-bs],bs); sp-=as+bs; spush(val_int(r?0:1)); }
+static void prim_gt(Frame *e) { (void)e; Value bt=stack[sp-1]; int bs=val_slots(bt); int as=val_slots(stack[sp-1-bs]); int r=val_less(&stack[sp-bs],bs,&stack[sp-bs-as],as); sp-=as+bs; spush(val_int(r?1:0)); }
+static void prim_ge(Frame *e) { (void)e; Value bt=stack[sp-1]; int bs=val_slots(bt); int as=val_slots(stack[sp-1-bs]); int r=val_less(&stack[sp-bs-as],as,&stack[sp-bs],bs); sp-=as+bs; spush(val_int(r?0:1)); }
+static void prim_le(Frame *e) { (void)e; Value bt=stack[sp-1]; int bs=val_slots(bt); int as=val_slots(stack[sp-1-bs]); int r=val_less(&stack[sp-bs],bs,&stack[sp-bs-as],as); sp-=as+bs; spush(val_int(r?0:1)); }
+static void prim_inc(Frame *e) { (void)e; Value v = spop(); if (v.tag == VAL_INT) spush(val_int(v.as.i+1)); else if (v.tag == VAL_FLOAT) spush(val_float(v.as.f+1)); else die("inc: expected number"); }
+static void prim_dec(Frame *e) { (void)e; Value v = spop(); if (v.tag == VAL_INT) spush(val_int(v.as.i-1)); else if (v.tag == VAL_FLOAT) spush(val_float(v.as.f-1)); else die("dec: expected number"); }
+static void prim_neg(Frame *e) { (void)e; Value v = spop(); if (v.tag == VAL_INT) spush(val_int(-v.as.i)); else if (v.tag == VAL_FLOAT) spush(val_float(-v.as.f)); else die("neg: expected number"); }
+static void prim_abs_op(Frame *e) { (void)e; Value v = spop(); if (v.tag == VAL_INT) spush(val_int(v.as.i < 0 ? -v.as.i : v.as.i)); else if (v.tag == VAL_FLOAT) spush(val_float(v.as.f < 0 ? -v.as.f : v.as.f)); else die("abs: expected number"); }
+static void prim_iseven(Frame *e) { (void)e; spush(val_int(pop_int() % 2 == 0 ? 1 : 0)); }
+static void prim_isodd(Frame *e) { (void)e; spush(val_int(pop_int() % 2 != 0 ? 1 : 0)); }
+static void prim_iszero(Frame *e) { (void)e; spush(val_int(pop_int() == 0 ? 1 : 0)); }
+static void prim_max(Frame *e) { (void)e; Value b = spop(), a = spop(); if (a.tag == VAL_INT && b.tag == VAL_INT) spush(val_int(a.as.i > b.as.i ? a.as.i : b.as.i)); else if (a.tag == VAL_FLOAT && b.tag == VAL_FLOAT) spush(val_float(a.as.f > b.as.f ? a.as.f : b.as.f)); else die("max: type mismatch"); }
+static void prim_min(Frame *e) { (void)e; Value b = spop(), a = spop(); if (a.tag == VAL_INT && b.tag == VAL_INT) spush(val_int(a.as.i < b.as.i ? a.as.i : b.as.i)); else if (a.tag == VAL_FLOAT && b.tag == VAL_FLOAT) spush(val_float(a.as.f < b.as.f ? a.as.f : b.as.f)); else die("min: type mismatch"); }
+
+static void prim_divides(Frame *e) { (void)e; int64_t b = pop_int(), a = pop_int(); if (b==0) die("divides: division by zero"); spush(val_int(a % b == 0 ? 1 : 0)); }
 
 static void prim_print(Frame *env) {
     (void)env;
@@ -1877,88 +1885,64 @@ static void prim_random(Frame *env) {
     spush(val_int(rand() % max));
 }
 
-/* ---- if: condition (then) (else) if ---- */
-/* Semantics: pop else, then, condition. If condition nonzero, apply then. Else apply else.
-   If else is -1 (int), push -1 as default. The value being operated on stays on the stack
-   below the condition — then/else branches access it directly.
+static void eval_default(Value *buf, int s, Value top,
+                         Value *scrut, int scrut_s, Frame *env) {
+    if (top.tag == VAL_INT && top.as.i == -1) { spush(val_int(-1)); return; }
+    if (scrut) { memcpy(&stack[sp], scrut, scrut_s * sizeof(Value)); sp += scrut_s; }
+    if (top.tag == VAL_TUPLE) eval_body(buf, s, env);
+    else { memcpy(&stack[sp], buf, s * sizeof(Value)); sp += s; }
+}
 
-   Example: 10 (5 lt) (2 mul) (3 mul) if
-   Here (5 lt) is a pred TUPLE. We detect this and auto-apply it:
-   - If condition is a tuple: apply it to get the int result, then branch.
-   - If condition is an int: use it directly.
-   This supports both styles:
-     dup 1 le (drop 1) (dup 1 sub factorial mul) if   -- pre-computed condition
-     10 (5 lt) (2 mul) (3 mul) if                      -- tuple predicate
-*/
 static void prim_if(Frame *env) {
-    /* Pop else */
-    Value else_top = stack[sp - 1];
-    int else_s = val_slots(else_top);
-    Value else_buf[LOCAL_MAX];
-    memcpy(else_buf, &stack[sp - else_s], else_s * sizeof(Value));
-    sp -= else_s;
-
-    /* Pop then */
-    Value then_top = stack[sp - 1];
+    /* stack: ... cond then else | ... val (pred) then else */
+    Value el_top = stack[sp - 1];
+    int el_s = val_slots(el_top);
+    int then_end = sp - el_s;
+    Value then_top = stack[then_end - 1];
     if (then_top.tag != VAL_TUPLE) die("if: then branch must be tuple");
     int then_s = val_slots(then_top);
-    Value then_buf[LOCAL_MAX];
-    memcpy(then_buf, &stack[sp - then_s], then_s * sizeof(Value));
-    sp -= then_s;
+    int cond_end = then_end - then_s;
+    Value cond_top = stack[cond_end - 1];
 
-    /* Pop condition (int or tuple) */
-    Value cond_top = stack[sp - 1];
-    int64_t cond;
     if (cond_top.tag == VAL_INT) {
-        cond = pop_int();
+        int64_t cond = cond_top.as.i;
+        if (cond) {
+            Value then_buf[LOCAL_MAX];
+            memcpy(then_buf, &stack[then_end - then_s], then_s * sizeof(Value));
+            sp = cond_end - 1;
+            eval_body(then_buf, then_s, env);
+        } else {
+            Value el_buf[LOCAL_MAX];
+            memcpy(el_buf, &stack[sp - el_s], el_s * sizeof(Value));
+            sp = cond_end - 1;
+            eval_default(el_buf, el_s, el_top, NULL, 0, env);
+        }
     } else if (cond_top.tag == VAL_TUPLE) {
-        /* pred tuple: save val below, apply pred (which consumes val), restore val */
-        int cond_s = val_slots(cond_top);
+        /* tuple predicate: save everything, apply pred, branch */
+        POP_VAL(el);
+        POP_VAL(then);
+        int cond_s2 = val_slots(cond_top);
         Value cond_buf[LOCAL_MAX];
-        memcpy(cond_buf, &stack[sp - cond_s], cond_s * sizeof(Value));
-        sp -= cond_s;
-        /* save val (now on top after popping pred) */
+        memcpy(cond_buf, &stack[sp - cond_s2], cond_s2 * sizeof(Value));
+        sp -= cond_s2;
         Value val_t = stack[sp - 1];
-        int val_s = val_slots(val_t);
+        int val_s2 = val_slots(val_t);
         Value val_save[LOCAL_MAX];
-        memcpy(val_save, &stack[sp - val_s], val_s * sizeof(Value));
-        /* apply pred (val is on stack, pred will consume it) */
-        eval_body(cond_buf, cond_s, env);
-        cond = pop_int();
-        /* restore val for the branch to use */
-        memcpy(&stack[sp], val_save, val_s * sizeof(Value));
-        sp += val_s;
+        memcpy(val_save, &stack[sp - val_s2], val_s2 * sizeof(Value));
+        eval_body(cond_buf, cond_s2, env);
+        int64_t cond = pop_int();
+        memcpy(&stack[sp], val_save, val_s2 * sizeof(Value));
+        sp += val_s2;
+        if (cond) eval_body(then_buf, then_s, env);
+        else eval_default(el_buf, el_s, el_top, NULL, 0, env);
     } else {
         die("if: condition must be int or tuple, got tag %d", cond_top.tag);
-        cond = 0;
-    }
-
-    if (cond) {
-        eval_body(then_buf, then_s, env);
-    } else {
-        if (else_top.tag == VAL_INT && else_top.as.i == -1) {
-            spush(val_int(-1));
-        } else if (else_top.tag == VAL_TUPLE) {
-            eval_body(else_buf, else_s, env);
-        } else {
-            memcpy(&stack[sp], else_buf, else_s * sizeof(Value));
-            sp += else_s;
-        }
     }
 }
 
 /* cond: scrutinee {(pred)(body)...} default */
 static void prim_cond(Frame *env) {
-    /* pop default */
-    Value def_top = stack[sp - 1];
-    int def_s = val_slots(def_top);
-    Value def_buf[LOCAL_MAX];
-    memcpy(def_buf, &stack[sp - def_s], def_s * sizeof(Value));
-    sp -= def_s;
-
-    /* pop clauses record/tuple — actually it's a tuple of alternating (pred)(body) pairs */
-    /* Wait — the spec shows: 10 {(5 lt) (2 mul) (20 lt) (3 mul)} -1 cond
-       The {...} is a tuple/block of clauses. Let's treat it as a tuple. */
+    POP_VAL(def);
     Value clauses_top = stack[sp - 1];
     if (clauses_top.tag != VAL_TUPLE && clauses_top.tag != VAL_RECORD)
         die("cond: expected tuple of clauses");
@@ -1967,13 +1951,7 @@ static void prim_cond(Frame *env) {
     Value clauses_buf[LOCAL_MAX];
     memcpy(clauses_buf, &stack[sp - clauses_s], clauses_s * sizeof(Value));
     sp -= clauses_s;
-
-    /* pop scrutinee */
-    Value scrut_top = stack[sp - 1];
-    int scrut_s = val_slots(scrut_top);
-    Value scrut_buf[LOCAL_MAX];
-    memcpy(scrut_buf, &stack[sp - scrut_s], scrut_s * sizeof(Value));
-    sp -= scrut_s;
+    POP_VAL(scrut);
 
     /* clauses come in pairs: (pred)(body) */
     if (clauses_len % 2 != 0) die("cond: need even number of clauses (pred/body pairs)");
@@ -1997,29 +1975,12 @@ static void prim_cond(Frame *env) {
         }
     }
 
-    /* no match — use default */
-    if (def_top.tag == VAL_INT && def_top.as.i == -1) {
-        spush(val_int(-1));
-    } else if (def_top.tag == VAL_TUPLE) {
-        memcpy(&stack[sp], scrut_buf, scrut_s * sizeof(Value));
-        sp += scrut_s;
-        eval_body(def_buf, def_s, env);
-    } else {
-        memcpy(&stack[sp], def_buf, def_s * sizeof(Value));
-        sp += def_s;
-    }
+    eval_default(def_buf, def_s, def_top, scrut_buf, scrut_s, env);
 }
 
 /* match: scrutinee {'sym (body)...} default */
 static void prim_match(Frame *env) {
-    /* pop default */
-    Value def_top = stack[sp - 1];
-    int def_s = val_slots(def_top);
-    Value def_buf[LOCAL_MAX];
-    memcpy(def_buf, &stack[sp - def_s], def_s * sizeof(Value));
-    sp -= def_s;
-
-    /* pop clauses */
+    POP_VAL(def);
     Value clauses_top = stack[sp - 1];
     if (clauses_top.tag != VAL_TUPLE && clauses_top.tag != VAL_RECORD)
         die("match: expected tuple of clauses");
@@ -2055,78 +2016,23 @@ static void prim_match(Frame *env) {
         }
     }
 
-    /* default */
-    if (def_top.tag == VAL_INT && def_top.as.i == -1) {
-        spush(val_int(-1));
-    } else if (def_top.tag == VAL_TUPLE) {
-        eval_body(def_buf, def_s, env);
-    } else {
-        memcpy(&stack[sp], def_buf, def_s * sizeof(Value));
-        sp += def_s;
-    }
+    eval_default(def_buf, def_s, def_top, NULL, 0, env);
 }
 
-/* loop: (→ int) → (repeat while body returns nonzero) */
 static void prim_loop(Frame *env) {
-    Value top = stack[sp - 1];
-    if (top.tag != VAL_TUPLE) die("loop: expected tuple body");
-    int s = val_slots(top);
-    Value body[LOCAL_MAX];
-    memcpy(body, &stack[sp - s], s * sizeof(Value));
-    sp -= s;
-
+    POP_BODY(body, "loop");
     for (;;) {
-        eval_body(body, s, env);
-        int64_t v = pop_int();
-        if (!v) break;
+        eval_body(body_buf, body_s, env);
+        if (!pop_int()) break;
     }
 }
 
-/* while: (→ int) (→) → (pred body; repeat while pred nonzero) */
 static void prim_while(Frame *env) {
-    /* stack: ... body pred — wait, spec says while is: (→ int) (→) → */
-    /* Looking at example: 1 (dup 100 lt) (2 mul) while → 128 */
-    /* So: pred_body body_body while */
-    /* pred is applied, if nonzero body is applied, repeat */
-
-    /* Actually re-reading: the VALUE is on the stack, pred checks it, body transforms it.
-       1 (dup 100 lt) (2 mul) while
-       - push 1
-       - pred: dup → 1 1, 100 lt → 1 1 (1 < 100 = 1)? wait, lt pops two: 1 < 100 = 1
-         Actually: dup makes it [1, 1], then 100 pushes [1, 1, 100], then lt pops 1 and 100 → 1 < 100 = 1
-         So stack is [1, 1] after pred? No — pred is (dup 100 lt):
-         start: [1]
-         dup: [1, 1]
-         100: [1, 1, 100]
-         lt: [1, (1 < 100) = 1]
-         pop int: result=1, stack=[1]
-       - body: (2 mul): [1] → [2]
-       - pred again: [2] → dup → [2,2] → 100 → [2,2,100] → lt → [2, 1] → pop → 1, stack=[2]
-       - body: [2] → [4]
-       - ... until >= 100: [128] → pred → dup [128,128] → 100 [128,128,100] → lt → [128, 0] → pop → 0 → stop
-       Result: 128 ✓
-    */
-
-    /* Pop body */
-    Value body_top = stack[sp - 1];
-    if (body_top.tag != VAL_TUPLE) die("while: body must be tuple");
-    int body_s = val_slots(body_top);
-    Value body_buf[LOCAL_MAX];
-    memcpy(body_buf, &stack[sp - body_s], body_s * sizeof(Value));
-    sp -= body_s;
-
-    /* Pop pred */
-    Value pred_top = stack[sp - 1];
-    if (pred_top.tag != VAL_TUPLE) die("while: pred must be tuple");
-    int pred_s = val_slots(pred_top);
-    Value pred_buf[LOCAL_MAX];
-    memcpy(pred_buf, &stack[sp - pred_s], pred_s * sizeof(Value));
-    sp -= pred_s;
-
+    POP_BODY(body, "while");
+    POP_BODY(pred, "while");
     for (;;) {
         eval_body(pred_buf, pred_s, env);
-        int64_t cond = pop_int();
-        if (!cond) break;
+        if (!pop_int()) break;
         eval_body(body_buf, body_s, env);
     }
 }
@@ -2173,27 +2079,15 @@ static void prim_size(Frame *e) {
 
 static void prim_push_op(Frame *e) {
     (void)e;
-    /* tuple val push → tuple' */
-    /* Pop the value to push */
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    Value val_buf[LOCAL_MAX];
-    memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-    sp -= val_s;
-
-    /* Pop the tuple */
+    POP_VAL(v);
     Value tup_top = stack[sp - 1];
     if (tup_top.tag != VAL_TUPLE) die("push: expected tuple");
     int tup_s = val_slots(tup_top);
     int tup_len = (int)tup_top.as.compound.len;
-    /* The tuple header is at sp-1, elements below it */
-    /* Remove header, add element, add new header */
-    sp--; /* remove old header */
-    /* push the new element */
-    memcpy(&stack[sp], val_buf, val_s * sizeof(Value));
-    sp += val_s;
-    /* push new header */
-    spush(val_compound(VAL_TUPLE, tup_len + 1, tup_s + val_s));
+    sp--;
+    memcpy(&stack[sp], v_buf, v_s * sizeof(Value));
+    sp += v_s;
+    spush(val_compound(VAL_TUPLE, tup_len + 1, tup_s + v_s));
 }
 
 static void prim_pop_op(Frame *e) {
@@ -2252,37 +2146,24 @@ static void prim_pull(Frame *e) {
     sp += ref.slots;
 }
 
-static void prim_put(Frame *e) {
+static void prim_replace_at(Frame *e, ValTag tag, const char *label) {
     (void)e;
-    /* tuple index value put → tuple */
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    Value val_buf[LOCAL_MAX];
-    memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-    sp -= val_s;
-
+    POP_VAL(v);
     int64_t idx = pop_int();
-
     Value top = speek();
-    if (top.tag != VAL_TUPLE) die("put: expected tuple");
-    int s = val_slots(top);
-    int len = (int)top.as.compound.len;
-    int base = sp - s;
-
+    if (top.tag != tag) die("%s: expected %s", label, tag == VAL_LIST ? "list" : "tuple");
+    int s = val_slots(top), len = (int)top.as.compound.len, base = sp - s;
     ElemRef old_ref = compound_elem(&stack[base], s, len, (int)idx);
-
-    if (old_ref.slots == val_s) {
-        /* same size: replace in-place */
-        memcpy(&stack[base + old_ref.base], val_buf, val_s * sizeof(Value));
+    if (old_ref.slots == v_s) {
+        memcpy(&stack[base + old_ref.base], v_buf, v_s * sizeof(Value));
     } else {
-        /* different size: rebuild tuple */
         Value tmp[4096];
         int tmp_sp = 0;
         for (int i = 0; i < len; i++) {
             ElemRef r = compound_elem(&stack[base], s, len, i);
             if (i == (int)idx) {
-                memcpy(&tmp[tmp_sp], val_buf, val_s * sizeof(Value));
-                tmp_sp += val_s;
+                memcpy(&tmp[tmp_sp], v_buf, v_s * sizeof(Value));
+                tmp_sp += v_s;
             } else {
                 memcpy(&tmp[tmp_sp], &stack[base + r.base], r.slots * sizeof(Value));
                 tmp_sp += r.slots;
@@ -2291,41 +2172,29 @@ static void prim_put(Frame *e) {
         sp = base;
         memcpy(&stack[sp], tmp, tmp_sp * sizeof(Value));
         sp += tmp_sp;
-        spush(val_compound(VAL_TUPLE, len, tmp_sp + 1));
+        spush(val_compound(tag, len, tmp_sp + 1));
     }
 }
+static void prim_put(Frame *e) { prim_replace_at(e, VAL_TUPLE, "put"); }
 
-static void prim_compose(Frame *e) {
+static void prim_concat(Frame *e, ValTag tag, const char *label) {
     (void)e;
-    /* (a→b) (b→c) compose → (a→c) */
-    /* Just concatenate the two tuples' elements */
     Value top2 = stack[sp - 1];
-    if (top2.tag != VAL_TUPLE) die("compose: expected tuple");
-    int s2 = val_slots(top2);
-    int len2 = (int)top2.as.compound.len;
-    int base2 = sp - s2;
-
+    if (top2.tag != tag) die("%s: expected %s", label, tag == VAL_LIST ? "list" : "tuple");
+    int s2 = val_slots(top2), len2 = (int)top2.as.compound.len, base2 = sp - s2;
     Value below = stack[base2 - 1];
-    if (below.tag != VAL_TUPLE) die("compose: expected tuple");
-    int s1 = val_slots(below);
-    int len1 = (int)below.as.compound.len;
-    int base1 = base2 - s1;
-
-    /* Build new tuple: elements of first (without header) + elements of second (without header) + new header */
+    if (below.tag != tag) die("%s: expected %s", label, tag == VAL_LIST ? "list" : "tuple");
+    int s1 = val_slots(below), len1 = (int)below.as.compound.len, base1 = base2 - s1;
     int new_elem_slots = (s1 - 1) + (s2 - 1);
-    int new_slots = new_elem_slots + 1;
-
-    /* elements of first are at stack[base1 .. base1+s1-2] */
-    /* elements of second are at stack[base2 .. base2+s2-2] */
     Value tmp[4096];
     memcpy(tmp, &stack[base1], (s1 - 1) * sizeof(Value));
     memcpy(&tmp[s1 - 1], &stack[base2], (s2 - 1) * sizeof(Value));
-
     sp = base1;
     memcpy(&stack[sp], tmp, new_elem_slots * sizeof(Value));
     sp += new_elem_slots;
-    spush(val_compound(VAL_TUPLE, len1 + len2, new_slots));
+    spush(val_compound(tag, len1 + len2, new_elem_slots + 1));
 }
+static void prim_compose(Frame *e) { prim_concat(e, VAL_TUPLE, "compose"); }
 
 /* ---- list ops ---- */
 static void prim_list(Frame *e) {
@@ -2345,21 +2214,15 @@ static void prim_len(Frame *e) {
 
 static void prim_give(Frame *e) {
     (void)e;
-    /* list elem give → list */
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    Value val_buf[LOCAL_MAX];
-    memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-    sp -= val_s;
-
+    POP_VAL(v);
     Value list_top = stack[sp - 1];
     if (list_top.tag != VAL_LIST) die("give: expected list");
     int list_s = val_slots(list_top);
     int list_len = (int)list_top.as.compound.len;
-    sp--; /* remove header */
-    memcpy(&stack[sp], val_buf, val_s * sizeof(Value));
-    sp += val_s;
-    spush(val_compound(VAL_LIST, list_len + 1, list_s + val_s));
+    sp--;
+    memcpy(&stack[sp], v_buf, v_s * sizeof(Value));
+    sp += v_s;
+    spush(val_compound(VAL_LIST, list_len + 1, list_s + v_s));
 }
 
 static void prim_grab(Frame *e) {
@@ -2403,74 +2266,9 @@ static void prim_get(Frame *e) {
     sp += ref.slots;
 }
 
-static void prim_set(Frame *e) {
-    (void)e;
-    /* list index value set → list */
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    Value val_buf[LOCAL_MAX];
-    memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-    sp -= val_s;
+static void prim_set(Frame *e) { prim_replace_at(e, VAL_LIST, "set"); }
 
-    int64_t idx = pop_int();
-
-    Value top = speek();
-    if (top.tag != VAL_LIST) die("set: expected list");
-    int s = val_slots(top);
-    int len = (int)top.as.compound.len;
-    int base = sp - s;
-
-    ElemRef old_ref = compound_elem(&stack[base], s, len, (int)idx);
-
-    if (old_ref.slots == val_s) {
-        memcpy(&stack[base + old_ref.base], val_buf, val_s * sizeof(Value));
-    } else {
-        Value tmp[4096];
-        int tmp_sp = 0;
-        for (int i = 0; i < len; i++) {
-            ElemRef r = compound_elem(&stack[base], s, len, i);
-            if (i == (int)idx) {
-                memcpy(&tmp[tmp_sp], val_buf, val_s * sizeof(Value));
-                tmp_sp += val_s;
-            } else {
-                memcpy(&tmp[tmp_sp], &stack[base + r.base], r.slots * sizeof(Value));
-                tmp_sp += r.slots;
-            }
-        }
-        sp = base;
-        memcpy(&stack[sp], tmp, tmp_sp * sizeof(Value));
-        sp += tmp_sp;
-        spush(val_compound(VAL_LIST, len, tmp_sp + 1));
-    }
-}
-
-static void prim_cat(Frame *e) {
-    (void)e;
-    /* list list cat → list */
-    Value top2 = stack[sp - 1];
-    if (top2.tag != VAL_LIST) die("cat: expected list");
-    int s2 = val_slots(top2);
-    int len2 = (int)top2.as.compound.len;
-    int base2 = sp - s2;
-
-    Value below = stack[base2 - 1];
-    if (below.tag != VAL_LIST) die("cat: expected list");
-    int s1 = val_slots(below);
-    int len1 = (int)below.as.compound.len;
-    int base1 = base2 - s1;
-
-    int new_elem_slots = (s1 - 1) + (s2 - 1);
-    int new_slots = new_elem_slots + 1;
-
-    Value tmp[4096];
-    memcpy(tmp, &stack[base1], (s1 - 1) * sizeof(Value));
-    memcpy(&tmp[s1 - 1], &stack[base2], (s2 - 1) * sizeof(Value));
-
-    sp = base1;
-    memcpy(&stack[sp], tmp, new_elem_slots * sizeof(Value));
-    sp += new_elem_slots;
-    spush(val_compound(VAL_LIST, len1 + len2, new_slots));
-}
+static void prim_cat(Frame *e) { prim_concat(e, VAL_LIST, "cat"); }
 
 static void prim_take_n(Frame *e) {
     (void)e;
@@ -2532,109 +2330,41 @@ static void prim_range(Frame *e) {
 }
 
 static void prim_map(Frame *env) {
-    /* list (a → b) map → list */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("map: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("map: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-
-    /* save list elements */
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    /* apply fn to each element, collect results */
+    POP_BODY(fn, "map");
+    POP_LIST_BUF(list, "map");
     int result_base = sp;
-    int result_count = 0;
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
         sp += r.slots;
         eval_body(fn_buf, fn_s, env);
-        result_count++;
     }
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, result_count, result_slots + 1));
+    spush(val_compound(VAL_LIST, list_len, sp - result_base + 1));
 }
 
 static void prim_filter(Frame *env) {
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("filter: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("filter: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    int result_base = sp;
-    int result_count = 0;
+    POP_BODY(fn, "filter");
+    POP_LIST_BUF(list, "filter");
+    int result_base = sp, result_count = 0;
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
-        /* push element, dup, apply pred */
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
         sp += r.slots;
-        /* dup the element for the predicate */
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
         sp += r.slots;
         eval_body(fn_buf, fn_s, env);
-        int64_t keep = pop_int();
-        if (keep) {
-            result_count++;
-        } else {
-            sp -= r.slots; /* drop the element */
-        }
+        if (pop_int()) result_count++;
+        else sp -= r.slots;
     }
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, result_count, result_slots + 1));
+    spush(val_compound(VAL_LIST, result_count, sp - result_base + 1));
 }
 
 static void prim_fold(Frame *env) {
-    /* list init (acc a → acc) fold → acc */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("fold: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    /* pop init */
-    Value init_top = stack[sp - 1];
-    int init_s = val_slots(init_top);
-    Value init_buf[LOCAL_MAX];
-    memcpy(init_buf, &stack[sp - init_s], init_s * sizeof(Value));
-    sp -= init_s;
-
-    /* pop list */
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("fold: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    /* push init as accumulator */
+    POP_BODY(fn, "fold");
+    POP_VAL(init);
+    POP_LIST_BUF(list, "fold");
     memcpy(&stack[sp], init_buf, init_s * sizeof(Value));
     sp += init_s;
-
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
@@ -2644,29 +2374,13 @@ static void prim_fold(Frame *env) {
 }
 
 static void prim_reduce(Frame *env) {
-    /* list (a a → a) reduce → a */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("reduce: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("reduce: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    if (list_len == 0) die("reduce: empty list");
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    /* push first element as initial acc */
+    POP_BODY(fn, "reduce");
+    if (stack[sp-1].tag != VAL_LIST) die("reduce: expected list");
+    if ((int)stack[sp-1].as.compound.len == 0) die("reduce: empty list");
+    POP_LIST_BUF(list, "reduce");
     ElemRef first = compound_elem(list_buf, list_s, list_len, 0);
     memcpy(&stack[sp], &list_buf[first.base], first.slots * sizeof(Value));
     sp += first.slots;
-
     for (int i = 1; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
@@ -2676,24 +2390,8 @@ static void prim_reduce(Frame *env) {
 }
 
 static void prim_each(Frame *env) {
-    /* acc list (acc a → acc) each → acc */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("each: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("each: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    /* acc is now on top of stack */
+    POP_BODY(fn, "each");
+    POP_LIST_BUF(list, "each");
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
@@ -2747,47 +2445,13 @@ static void prim_index_of(Frame *e) {
 }
 
 static void prim_scan(Frame *env) {
-    /* list init (acc a → acc) scan → list (prefix scan) */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("scan: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value init_top = stack[sp - 1];
-    int init_s = val_slots(init_top);
-    Value init_buf[LOCAL_MAX];
-    memcpy(init_buf, &stack[sp - init_s], init_s * sizeof(Value));
-    sp -= init_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("scan: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    /* push init acc */
-    memcpy(&stack[sp], init_buf, init_s * sizeof(Value));
-    sp += init_s;
-
-    int result_base = sp;
-    int result_count = 0;
-
-    /* We need to track the accumulator. After applying fn, the acc is on top. */
-    /* For scan, we capture each intermediate acc as a list element. */
-    /* Strategy: use a separate acc tracker */
-    /* Actually: let's save acc, apply fn, save result as element, keep acc on stack */
-    sp -= init_s; /* remove init from stack, we'll manage manually */
-
+    POP_BODY(fn, "scan");
+    POP_VAL(init);
+    POP_LIST_BUF(list, "scan");
     Value acc_buf[LOCAL_MAX];
     int acc_s = init_s;
     memcpy(acc_buf, init_buf, init_s * sizeof(Value));
-
-    result_base = sp;
+    int result_base = sp;
     for (int i = 0; i < list_len; i++) {
         /* push acc */
         memcpy(&stack[sp], acc_buf, acc_s * sizeof(Value));
@@ -2802,39 +2466,16 @@ static void prim_scan(Frame *env) {
         Value new_acc_top = stack[sp - 1];
         acc_s = val_slots(new_acc_top);
         memcpy(acc_buf, &stack[sp - acc_s], acc_s * sizeof(Value));
-        /* the acc value stays on stack as part of result list */
-        result_count++;
     }
-
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, result_count, result_slots + 1));
+    spush(val_compound(VAL_LIST, list_len, sp - result_base + 1));
 }
 
 static void prim_keep_mask(Frame *e) {
     (void)e;
-    /* list mask keep-mask → list */
-    Value mask_top = stack[sp - 1];
-    if (mask_top.tag != VAL_LIST) die("keep-mask: expected mask list");
-    int mask_s = val_slots(mask_top);
-    int mask_len = (int)mask_top.as.compound.len;
-    int mask_base = sp - mask_s;
-    Value mask_buf[LOCAL_MAX];
-    memcpy(mask_buf, &stack[mask_base], mask_s * sizeof(Value));
-    sp -= mask_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("keep-mask: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
+    POP_LIST_BUF(mask, "keep-mask");
+    POP_LIST_BUF(list, "keep-mask");
     if (list_len != mask_len) die("keep-mask: list and mask must have same length");
-
-    int result_base = sp;
-    int result_count = 0;
+    int result_base = sp, result_count = 0;
     for (int i = 0; i < list_len; i++) {
         ElemRef mr = compound_elem(mask_buf, mask_s, mask_len, i);
         Value mv = mask_buf[mr.base];
@@ -2846,8 +2487,7 @@ static void prim_keep_mask(Frame *e) {
             result_count++;
         }
     }
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, result_count, result_slots + 1));
+    spush(val_compound(VAL_LIST, result_count, sp - result_base + 1));
 }
 
 /* ---- at (safe index with default) for lists ---- */
@@ -2871,20 +2511,14 @@ static void prim_at(Frame *env) {
        compound is a record or list.
     */
 
-    /* Pop the top value (could be key for record, or default for list) */
-    Value top1 = stack[sp - 1];
-    int top1_s = val_slots(top1);
-    Value top1_buf[LOCAL_MAX];
-    memcpy(top1_buf, &stack[sp - top1_s], top1_s * sizeof(Value));
-    sp -= top1_s;
+    POP_VAL(top1);
 
     /* Check what's now on top */
     if (sp <= 0) die("at: stack underflow");
     Value next = stack[sp - 1];
 
-    if (top1.tag == VAL_SYM && next.tag == VAL_RECORD) {
-        /* record 'key at → value */
-        uint32_t key = top1.as.sym;
+    if (top1_top.tag == VAL_SYM && next.tag == VAL_RECORD) {
+        uint32_t key = top1_top.as.sym;
         int s = val_slots(next);
         int len = (int)next.as.compound.len;
         int base = sp - s;
@@ -2930,17 +2564,10 @@ static void prim_rec(Frame *env) {
     spush(val_compound(VAL_RECORD, 0, 1));
 }
 
-/* into: record value 'key into → record (functional update / insert) */
 static void prim_into(Frame *env) {
     (void)env;
     uint32_t key = pop_sym();
-
-    Value val_top = stack[sp - 1];
-    int val_s = val_slots(val_top);
-    Value val_buf[LOCAL_MAX];
-    memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-    sp -= val_s;
-
+    POP_VAL(v);
     Value rec_top = stack[sp - 1];
     if (rec_top.tag != VAL_RECORD) die("into: expected record");
     int rec_s = val_slots(rec_top);
@@ -2951,9 +2578,8 @@ static void prim_into(Frame *env) {
     int found;
     ElemRef existing = record_field(&stack[rec_base], rec_s, rec_len, key, &found);
 
-    if (found && existing.slots == val_s) {
-        /* same size: update in-place */
-        memcpy(&stack[rec_base + existing.base], val_buf, val_s * sizeof(Value));
+    if (found && existing.slots == v_s) {
+        memcpy(&stack[rec_base + existing.base], v_buf, v_s * sizeof(Value));
     } else {
         /* rebuild record */
         Value tmp[4096];
@@ -2979,8 +2605,8 @@ static void prim_into(Frame *env) {
             uint32_t k = stack[rec_base + kpos[i]].as.sym;
             if (k == key) {
                 tmp[tmp_sp++] = val_sym(key);
-                memcpy(&tmp[tmp_sp], val_buf, val_s * sizeof(Value));
-                tmp_sp += val_s;
+                memcpy(&tmp[tmp_sp], v_buf, v_s * sizeof(Value));
+                tmp_sp += v_s;
                 replaced = 1;
             } else {
                 tmp[tmp_sp++] = stack[rec_base + kpos[i]];
@@ -2992,8 +2618,8 @@ static void prim_into(Frame *env) {
 
         if (!replaced) {
             tmp[tmp_sp++] = val_sym(key);
-            memcpy(&tmp[tmp_sp], val_buf, val_s * sizeof(Value));
-            tmp_sp += val_s;
+            memcpy(&tmp[tmp_sp], v_buf, v_s * sizeof(Value));
+            tmp_sp += v_s;
             new_len++;
         }
 
@@ -3035,13 +2661,7 @@ static void prim_free(Frame *e) {
 }
 
 static void prim_lend(Frame *env) {
-    /* box (snapshot →) lend → box .. */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("lend: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
+    POP_BODY(fn, "lend");
 
     Value box_val = spop();
     if (box_val.tag != VAL_BOX) die("lend: expected box");
@@ -3070,13 +2690,7 @@ static void prim_lend(Frame *env) {
 }
 
 static void prim_mutate(Frame *env) {
-    /* box (val → val) mutate → box */
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("mutate: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
+    POP_BODY(fn, "mutate");
 
     Value box_val = spop();
     if (box_val.tag != VAL_BOX) die("mutate: expected box");
@@ -3142,27 +2756,9 @@ static void prim_rotate(Frame *e) {
 
 static void prim_select(Frame *e) {
     (void)e;
-    /* list indices select → list */
-    Value idx_top = stack[sp - 1];
-    if (idx_top.tag != VAL_LIST) die("select: expected index list");
-    int idx_s = val_slots(idx_top);
-    int idx_len = (int)idx_top.as.compound.len;
-    int idx_base = sp - idx_s;
-    Value idx_buf[LOCAL_MAX];
-    memcpy(idx_buf, &stack[idx_base], idx_s * sizeof(Value));
-    sp -= idx_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("select: expected list");
-    int list_s = val_slots(list_top);
-    int list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    int result_base = sp;
-    int result_count = 0;
+    POP_LIST_BUF(idx, "select");
+    POP_LIST_BUF(list, "select");
+    int result_base = sp, result_count = 0;
     for (int i = 0; i < idx_len; i++) {
         ElemRef ir = compound_elem(idx_buf, idx_s, idx_len, i);
         Value iv = idx_buf[ir.base];
@@ -3177,45 +2773,11 @@ static void prim_select(Frame *e) {
     spush(val_compound(VAL_LIST, result_count, result_slots + 1));
 }
 
-static void prim_rise(Frame *e) {
-    (void)e;
-    /* list rise → list of ascending sort indices */
-    Value top = speek();
-    if (top.tag != VAL_LIST) die("rise: expected list");
-    int s = val_slots(top);
-    int len = (int)top.as.compound.len;
-    int base = sp - s;
-
-    /* build index array */
-    typedef struct { int idx; Value val; } IV;
-    IV *items = malloc(len * sizeof(IV));
-    for (int i = 0; i < len; i++) {
-        ElemRef r = compound_elem(&stack[base], s, len, i);
-        items[i].idx = i;
-        items[i].val = stack[base + r.base]; /* scalar only */
-    }
-    /* sort by value */
-    for (int i = 0; i < len - 1; i++)
-        for (int j = i + 1; j < len; j++) {
-            int cmp = 0;
-            if (items[i].val.tag == VAL_INT) cmp = items[i].val.as.i > items[j].val.as.i;
-            else if (items[i].val.tag == VAL_FLOAT) cmp = items[i].val.as.f > items[j].val.as.f;
-            if (cmp) { IV tmp = items[i]; items[i] = items[j]; items[j] = tmp; }
-        }
-    sp -= s;
-    for (int i = 0; i < len; i++) spush(val_int(items[i].idx));
-    spush(val_compound(VAL_LIST, len, len + 1));
-    free(items);
-}
-
-static void prim_fall(Frame *e) {
+static void prim_grade(Frame *e, int ascending) {
     (void)e;
     Value top = speek();
-    if (top.tag != VAL_LIST) die("fall: expected list");
-    int s = val_slots(top);
-    int len = (int)top.as.compound.len;
-    int base = sp - s;
-
+    if (top.tag != VAL_LIST) die(ascending ? "rise: expected list" : "fall: expected list");
+    int s = val_slots(top), len = (int)top.as.compound.len, base = sp - s;
     typedef struct { int idx; Value val; } IV;
     IV *items = malloc(len * sizeof(IV));
     for (int i = 0; i < len; i++) {
@@ -3226,8 +2788,12 @@ static void prim_fall(Frame *e) {
     for (int i = 0; i < len - 1; i++)
         for (int j = i + 1; j < len; j++) {
             int cmp = 0;
-            if (items[i].val.tag == VAL_INT) cmp = items[i].val.as.i < items[j].val.as.i;
-            else if (items[i].val.tag == VAL_FLOAT) cmp = items[i].val.as.f < items[j].val.as.f;
+            if (items[i].val.tag == VAL_INT)
+                cmp = ascending ? (items[i].val.as.i > items[j].val.as.i)
+                                : (items[i].val.as.i < items[j].val.as.i);
+            else if (items[i].val.tag == VAL_FLOAT)
+                cmp = ascending ? (items[i].val.as.f > items[j].val.as.f)
+                                : (items[i].val.as.f < items[j].val.as.f);
             if (cmp) { IV tmp = items[i]; items[i] = items[j]; items[j] = tmp; }
         }
     sp -= s;
@@ -3235,6 +2801,8 @@ static void prim_fall(Frame *e) {
     spush(val_compound(VAL_LIST, len, len + 1));
     free(items);
 }
+static void prim_rise(Frame *e) { prim_grade(e, 1); }
+static void prim_fall(Frame *e) { prim_grade(e, 0); }
 
 static void prim_windows(Frame *e) {
     (void)e;
@@ -3268,8 +2836,6 @@ static void prim_windows(Frame *e) {
     int result_slots = sp - result_base;
     spush(val_compound(VAL_LIST, win_count, result_slots + 1));
 }
-
-static void prim_pick(Frame *e) { prim_select(e); } /* alias */
 
 static void prim_reshape(Frame *e) {
     (void)e;
@@ -3314,80 +2880,50 @@ static void prim_reshape(Frame *e) {
 
 static void prim_transpose(Frame *e) {
     (void)e;
-    /* transpose a list of lists (2D matrix) */
     Value top = speek();
     if (top.tag != VAL_LIST) die("transpose: expected list");
     int s = val_slots(top);
     int rows = (int)top.as.compound.len;
     int base = sp - s;
-
     if (rows == 0) return;
 
-    /* get first row to determine cols */
     ElemRef r0 = compound_elem(&stack[base], s, rows, 0);
     Value row0_top = stack[base + r0.base + r0.slots - 1];
     if (row0_top.tag != VAL_LIST) die("transpose: expected list of lists");
     int cols = (int)row0_top.as.compound.len;
 
-    /* save entire matrix */
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
 
-    int result_base = sp;
-    for (int c = 0; c < cols; c++) {
-        for (int r = 0; r < rows; r++) {
-            ElemRef row_ref = compound_elem(buf, s, rows, r);
-            Value *row_data = &buf[row_ref.base];
-            int row_slots = row_ref.slots;
-            Value row_hdr = row_data[row_slots - 1];
-            int row_len = (int)row_hdr.as.compound.len;
-            ElemRef cell = compound_elem(row_data, row_slots, row_len, c);
-            memcpy(&stack[sp], &row_data[cell.base], cell.slots * sizeof(Value));
-            sp += cell.slots;
-        }
-        spush(val_compound(VAL_LIST, rows, sp - result_base - (c > 0 ? 0 : 0) ));
-        /* fix: need per-column slot count */
-    }
-    /* Hmm, this is getting complex. Let me simplify for scalar elements. */
-    /* Redo transpose for scalar-only matrices */
-    sp = base;
-    /* Extract all elements into a flat array */
-    int64_t *flat = malloc(rows * cols * sizeof(int64_t));
-    int is_int = 1;
-    double *flatf = malloc(rows * cols * sizeof(double));
-    int is_float_mat = 1;
+    /* extract into flat array (scalar elements only) */
+    double *flat = malloc(rows * cols * sizeof(double));
+    int all_int = 1;
     for (int r = 0; r < rows; r++) {
         ElemRef row_ref = compound_elem(buf, s, rows, r);
-        Value *row_data = &buf[row_ref.base];
-        int row_s = row_ref.slots;
-        Value row_hdr = row_data[row_s - 1];
-        int row_len = (int)row_hdr.as.compound.len;
-        if (row_len != cols) die("transpose: ragged matrix");
-        for (int c2 = 0; c2 < cols; c2++) {
-            ElemRef cell = compound_elem(row_data, row_s, row_len, c2);
-            Value cv = row_data[cell.base];
-            if (cv.tag == VAL_INT) { flat[r * cols + c2] = cv.as.i; is_float_mat = 0; }
-            else if (cv.tag == VAL_FLOAT) { flatf[r * cols + c2] = cv.as.f; is_int = 0; }
-            else { is_int = 0; is_float_mat = 0; }
+        Value *rd = &buf[row_ref.base];
+        Value rh = rd[row_ref.slots - 1];
+        if ((int)rh.as.compound.len != cols) die("transpose: ragged matrix");
+        for (int c = 0; c < cols; c++) {
+            ElemRef cell = compound_elem(rd, row_ref.slots, cols, c);
+            Value cv = rd[cell.base];
+            if (cv.tag == VAL_INT) flat[r * cols + c] = (double)cv.as.i;
+            else if (cv.tag == VAL_FLOAT) { flat[r * cols + c] = cv.as.f; all_int = 0; }
+            else die("transpose: only scalar matrices supported");
         }
     }
 
-    result_base = sp;
-    for (int c2 = 0; c2 < cols; c2++) {
+    int result_base = sp;
+    for (int c = 0; c < cols; c++) {
         for (int r = 0; r < rows; r++) {
-            if (is_int) spush(val_int(flat[c2 * 1 + r * 0]));  /* wrong indexing, fix: */
-            /* transposed: new[c][r] = old[r][c] */
-            if (is_int) { sp--; spush(val_int(flat[r * cols + c2])); }
-            else if (is_float_mat) spush(val_float(flatf[r * cols + c2]));
-            else die("transpose: only scalar matrices supported");
+            if (all_int) spush(val_int((int64_t)flat[r * cols + c]));
+            else spush(val_float(flat[r * cols + c]));
         }
         spush(val_compound(VAL_LIST, rows, rows + 1));
     }
     int result_slots = sp - result_base;
     spush(val_compound(VAL_LIST, cols, result_slots + 1));
     free(flat);
-    free(flatf);
 }
 
 static void prim_shape(Frame *e) {
@@ -3505,9 +3041,23 @@ static void prim_group(Frame *e) {
     spush(val_compound(VAL_LIST, group_count, result_slots + 1));
 }
 
-static void prim_partition(Frame *e) { prim_group(e); } /* alias — same semantics */
-
 /* ---- evaluator ---- */
+
+static void dispatch_word(uint32_t sym, Frame *env) {
+    PrimFn fn = prim_lookup(sym);
+    if (fn) { fn(env); return; }
+    Lookup lu = frame_lookup(env, sym);
+    if (!lu.found) die("unknown word: %s", sym_name(sym));
+    if (lu.kind == BIND_DEF) {
+        Value bound_top = lu.frame->vals[lu.offset + lu.slots - 1];
+        if (bound_top.tag == VAL_TUPLE) {
+            eval_body(&lu.frame->vals[lu.offset], lu.slots, env);
+            return;
+        }
+    }
+    memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value));
+    sp += lu.slots;
+}
 
 static void eval_body(Value *body, int slots, Frame *env) {
     /* body is a tuple: elements [0..slots-2], header at [slots-1] */
@@ -3515,32 +3065,21 @@ static void eval_body(Value *body, int slots, Frame *env) {
     if (hdr.tag != VAL_TUPLE) die("eval_body: expected tuple");
     int len = (int)hdr.as.compound.len;
     Frame *exec_env = hdr.as.compound.env ? hdr.as.compound.env : env;
-    /* save frame state for restore after function returns */
     int saved_bind_count = exec_env->bind_count;
     int saved_vals_used = exec_env->vals_used;
 
-    /* fast path: if all elements are 1-slot (slots == len+1), skip offset precompute */
+    static uint32_t sym_def = 0, sym_let = 0, sym_recur_kw = 0;
+    if (!sym_def) { sym_def = sym_intern("def"); sym_let = sym_intern("let"); sym_recur_kw = sym_intern("recur"); }
+
     int all_scalar = (slots == len + 1);
 
-    /* slow path: precompute element offsets for compound elements */
     int offsets_buf[4096], sizes_buf[4096];
-    int *offsets = offsets_buf, *sizes = sizes_buf;
-    if (!all_scalar) {
-        int elem_end = slots - 1;
-        for (int j = len - 1; j >= 0; j--) {
-            int lp = elem_end - 1;
-            Value l = body[lp];
-            int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD)
-                ? (int)l.as.compound.slots : 1;
-            offsets[j] = elem_end - sz;
-            sizes[j] = sz;
-            elem_end = offsets[j];
-        }
-    }
+    if (!all_scalar) compute_offsets(body, slots, len, offsets_buf, sizes_buf);
 
     for (int k = 0; k < len; k++) {
-        int eoff = all_scalar ? k : offsets[k];
-        int esz = all_scalar ? 1 : sizes[k];
+        int eoff, esz;
+        if (all_scalar) { eoff = k; esz = 1; }
+        else { eoff = offsets_buf[k]; esz = sizes_buf[k]; }
         Value elem = body[eoff + esz - 1];
 
                 if (elem.tag == VAL_INT || elem.tag == VAL_FLOAT || elem.tag == VAL_SYM) {
@@ -3556,73 +3095,47 @@ static void eval_body(Value *body, int slots, Frame *env) {
                 } else if (elem.tag == VAL_WORD) {
                     uint32_t sym = elem.as.sym;
 
-                    /* check for def */
-                    static uint32_t sym_def = 0, sym_let = 0, sym_recur_kw = 0;
-                    if (!sym_def) {
-                        sym_def = sym_intern("def");
-                        sym_let = sym_intern("let");
-                        sym_recur_kw = sym_intern("recur");
-                    }
-
                     if (sym == sym_def) {
-                        Value val_top = stack[sp - 1];
-                        int val_s = val_slots(val_top);
-                        Value val_buf_local[LOCAL_MAX];
-                        memcpy(val_buf_local, &stack[sp - val_s], val_s * sizeof(Value));
-                        sp -= val_s;
+                        Value dv_top = stack[sp - 1];
+                        int dv_s = val_slots(dv_top);
                         uint32_t name;
                         int rec = 0;
-                        if (recur_pending) {
-                            name = recur_sym;
-                            rec = 1;
-                            recur_pending = 0;
+                        if (recur_pending) { name = recur_sym; rec = 1; recur_pending = 0;
+                            frame_bind(exec_env, name, &stack[sp - dv_s], dv_s, BIND_DEF, rec);
+                            sp -= dv_s;
                         } else {
+                            Value dv_buf[LOCAL_MAX];
+                            memcpy(dv_buf, &stack[sp - dv_s], dv_s * sizeof(Value));
+                            sp -= dv_s;
                             name = pop_sym();
+                            frame_bind(exec_env, name, dv_buf, dv_s, BIND_DEF, rec);
                         }
-                        frame_bind(exec_env, name, val_buf_local, val_s, BIND_DEF, rec);
                     } else if (sym == sym_let) {
                         uint32_t name = pop_sym();
-                        Value val_top = stack[sp - 1];
-                        int val_s = val_slots(val_top);
-                        Value val_buf_local[LOCAL_MAX];
-                        memcpy(val_buf_local, &stack[sp - val_s], val_s * sizeof(Value));
-                        sp -= val_s;
-                        frame_bind(exec_env, name, val_buf_local, val_s, BIND_LET, 0);
+                        Value lv_top = stack[sp - 1];
+                        int lv_s = val_slots(lv_top);
+                        frame_bind(exec_env, name, &stack[sp - lv_s], lv_s, BIND_LET, 0);
+                        sp -= lv_s;
                     } else if (sym == sym_recur_kw) {
                         recur_sym = pop_sym();
                         recur_pending = 1;
                     } else if (sym == sym_type_kw) {
                         /* skip type annotations in body context */
                     } else {
-                        PrimFn fn = prim_lookup(sym);
-                        if (fn) {
-                            fn(exec_env);
-                        } else {
+                        PrimFn pfn = prim_lookup(sym);
+                        if (pfn) { pfn(exec_env); }
+                        else {
                             Lookup lu = frame_lookup(exec_env, sym);
-                            if (lu.found) {
-                                if (lu.kind == BIND_DEF) {
-                                    Value bound_top = lu.frame->vals[lu.offset + lu.slots - 1];
-                                    if (bound_top.tag == VAL_TUPLE) {
-                                        eval_body(&lu.frame->vals[lu.offset], lu.slots, exec_env);
-                                    } else {
-                                        memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value));
-                                        sp += lu.slots;
-                                    }
-                                } else {
-                                    memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value));
-                                    sp += lu.slots;
-                                }
-                            } else {
-                                die("unknown word: %s", sym_name(sym));
-                            }
+                            if (!lu.found) die("unknown word: %s", sym_name(sym));
+                            if (lu.kind == BIND_DEF && lu.frame->vals[lu.offset + lu.slots - 1].tag == VAL_TUPLE)
+                                eval_body(&lu.frame->vals[lu.offset], lu.slots, exec_env);
+                            else { memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value)); sp += lu.slots; }
                         }
                     }
                 } else if (elem.tag == VAL_BOX) {
                     spush(elem);
                 }
     }
-    /* free child frame if created and not captured by a closure */
-    /* restore frame state unless a closure captured this scope */
     if (!exec_env->on_stack) {
         exec_env->bind_count = saved_bind_count;
         exec_env->vals_used = saved_vals_used;
@@ -3802,29 +3315,16 @@ static void eval(Token *toks, int count, Frame *env) {
             uint32_t sym = t->as.sym;
 
             if (sym == sym_def) {
-                Value val_top = stack[sp - 1];
-                int val_s = val_slots(val_top);
-                Value val_buf[LOCAL_MAX];
-                memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-                sp -= val_s;
+                POP_VAL(dv);
                 uint32_t name;
                 int rec = 0;
-                if (recur_pending) {
-                    name = recur_sym;
-                    rec = 1;
-                    recur_pending = 0;
-                } else {
-                    name = pop_sym();
-                }
-                frame_bind(env, name, val_buf, val_s, BIND_DEF, rec);
+                if (recur_pending) { name = recur_sym; rec = 1; recur_pending = 0; }
+                else { name = pop_sym(); }
+                frame_bind(env, name, dv_buf, dv_s, BIND_DEF, rec);
             } else if (sym == sym_let) {
                 uint32_t name = pop_sym();
-                Value val_top = stack[sp - 1];
-                int val_s = val_slots(val_top);
-                Value val_buf[LOCAL_MAX];
-                memcpy(val_buf, &stack[sp - val_s], val_s * sizeof(Value));
-                sp -= val_s;
-                frame_bind(env, name, val_buf, val_s, BIND_LET, 0);
+                POP_VAL(lv);
+                frame_bind(env, name, lv_buf, lv_s, BIND_LET, 0);
             } else if (sym == sym_recur_kw) {
                 recur_sym = pop_sym();
                 recur_pending = 1;
@@ -3860,28 +3360,7 @@ static void eval(Token *toks, int count, Frame *env) {
                 /* else: pure type declaration for a primitive, nothing to bind */
                 break;
             } else {
-                PrimFn fn = prim_lookup(sym);
-                if (fn) {
-                    fn(env);
-                } else {
-                    Lookup lu = frame_lookup(env, sym);
-                    if (lu.found) {
-                        if (lu.kind == BIND_DEF) {
-                            Value bound_top = lu.frame->vals[lu.offset + lu.slots - 1];
-                            if (bound_top.tag == VAL_TUPLE) {
-                                eval_body(&lu.frame->vals[lu.offset], lu.slots, env);
-                            } else {
-                                memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value));
-                                sp += lu.slots;
-                            }
-                        } else {
-                            memcpy(&stack[sp], &lu.frame->vals[lu.offset], lu.slots * sizeof(Value));
-                            sp += lu.slots;
-                        }
-                    } else {
-                        die("unknown word: %s", sym_name(sym));
-                    }
-                }
+                dispatch_word(sym, env);
             }
             break;
         }
@@ -3894,121 +3373,58 @@ static void eval(Token *toks, int count, Frame *env) {
 }
 
 /* ---- bi / keep as primitives ---- */
-/* bi: x f g → f(x) g(x) */
 static void prim_bi(Frame *env) {
-    /* pop g */
-    Value g_top = stack[sp - 1];
-    if (g_top.tag != VAL_TUPLE) die("bi: expected tuple for g");
-    int g_s = val_slots(g_top);
-    Value g_buf[LOCAL_MAX];
-    memcpy(g_buf, &stack[sp - g_s], g_s * sizeof(Value));
-    sp -= g_s;
-    /* pop f */
-    Value f_top = stack[sp - 1];
-    if (f_top.tag != VAL_TUPLE) die("bi: expected tuple for f");
-    int f_s = val_slots(f_top);
-    Value f_buf[LOCAL_MAX];
-    memcpy(f_buf, &stack[sp - f_s], f_s * sizeof(Value));
-    sp -= f_s;
-    /* x is on top; save it */
-    Value x_top = stack[sp - 1];
-    int x_s = val_slots(x_top);
-    Value x_buf[LOCAL_MAX];
-    memcpy(x_buf, &stack[sp - x_s], x_s * sizeof(Value));
-    /* apply f (x already on stack) */
-    eval_body(f_buf, f_s, env);
-    /* push x again */
+    POP_BODY(g, "bi");
+    POP_BODY(f, "bi");
+    POP_VAL(x);
     memcpy(&stack[sp], x_buf, x_s * sizeof(Value));
     sp += x_s;
-    /* apply g */
+    eval_body(f_buf, f_s, env);
+    memcpy(&stack[sp], x_buf, x_s * sizeof(Value));
+    sp += x_s;
     eval_body(g_buf, g_s, env);
 }
 
-/* keep: x f → f(x) x */
 static void prim_keep(Frame *env) {
-    Value f_top = stack[sp - 1];
-    if (f_top.tag != VAL_TUPLE) die("keep: expected tuple");
-    int f_s = val_slots(f_top);
-    Value f_buf[LOCAL_MAX];
-    memcpy(f_buf, &stack[sp - f_s], f_s * sizeof(Value));
-    sp -= f_s;
-    /* x on top; save it */
-    Value x_top = stack[sp - 1];
-    int x_s = val_slots(x_top);
-    Value x_buf[LOCAL_MAX];
-    memcpy(x_buf, &stack[sp - x_s], x_s * sizeof(Value));
-    /* apply f (x on stack) */
+    POP_BODY(f, "keep");
+    POP_VAL(x);
+    memcpy(&stack[sp], x_buf, x_s * sizeof(Value));
+    sp += x_s;
     eval_body(f_buf, f_s, env);
-    /* push x back */
     memcpy(&stack[sp], x_buf, x_s * sizeof(Value));
     sp += x_s;
 }
 
-/* repeat: val n f → apply f to val n times */
 static void prim_repeat_op(Frame *env) {
-    Value f_top = stack[sp - 1];
-    if (f_top.tag != VAL_TUPLE) die("repeat: expected tuple");
-    int f_s = val_slots(f_top);
-    Value f_buf[LOCAL_MAX];
-    memcpy(f_buf, &stack[sp - f_s], f_s * sizeof(Value));
-    sp -= f_s;
+    POP_BODY(f, "repeat");
     int64_t n = pop_int();
     for (int64_t i = 0; i < n; i++)
         eval_body(f_buf, f_s, env);
 }
 
-/* zip: [a] [b] → [[a0 b0] [a1 b1] ...] */
 static void prim_zip(Frame *e) {
     (void)e;
-    Value top2 = stack[sp - 1];
-    if (top2.tag != VAL_LIST) die("zip: expected list");
-    int s2 = val_slots(top2), len2 = (int)top2.as.compound.len, base2 = sp - s2;
-    Value buf2[LOCAL_MAX];
-    memcpy(buf2, &stack[base2], s2 * sizeof(Value));
-    sp -= s2;
+    POP_LIST_BUF(b, "zip");
+    POP_LIST_BUF(a, "zip");
 
-    Value top1 = stack[sp - 1];
-    if (top1.tag != VAL_LIST) die("zip: expected list");
-    int s1 = val_slots(top1), len1 = (int)top1.as.compound.len, base1 = sp - s1;
-    Value buf1[LOCAL_MAX];
-    memcpy(buf1, &stack[base1], s1 * sizeof(Value));
-    sp = base1;
-
-    int n = len1 < len2 ? len1 : len2;
+    int n = a_len < b_len ? a_len : b_len;
     int result_base = sp;
     for (int i = 0; i < n; i++) {
-        ElemRef r1 = compound_elem(buf1, s1, len1, i);
-        ElemRef r2 = compound_elem(buf2, s2, len2, i);
-        memcpy(&stack[sp], &buf1[r1.base], r1.slots * sizeof(Value));
+        ElemRef r1 = compound_elem(a_buf, a_s, a_len, i);
+        ElemRef r2 = compound_elem(b_buf, b_s, b_len, i);
+        memcpy(&stack[sp], &a_buf[r1.base], r1.slots * sizeof(Value));
         sp += r1.slots;
-        memcpy(&stack[sp], &buf2[r2.base], r2.slots * sizeof(Value));
+        memcpy(&stack[sp], &b_buf[r2.base], r2.slots * sizeof(Value));
         sp += r2.slots;
-        int pair_slots = r1.slots + r2.slots;
-        spush(val_compound(VAL_LIST, 2, pair_slots + 1));
+        spush(val_compound(VAL_LIST, 2, r1.slots + r2.slots + 1));
     }
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, n, result_slots + 1));
+    spush(val_compound(VAL_LIST, n, sp - result_base + 1));
 }
 
-/* where: list pred → list of indices where pred is true */
 static void prim_where(Frame *env) {
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("where: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("where: expected list");
-    int list_s = val_slots(list_top), list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
-
-    int result_base = sp;
-    int result_count = 0;
+    POP_BODY(fn, "where");
+    POP_LIST_BUF(list, "where");
+    int result_base = sp, result_count = 0;
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
         memcpy(&stack[sp], &list_buf[r.base], r.slots * sizeof(Value));
@@ -4024,22 +3440,9 @@ static void prim_where(Frame *env) {
     spush(val_compound(VAL_LIST, result_count, result_slots + 1));
 }
 
-/* find: list pred → first matching element or -1 */
 static void prim_find_elem(Frame *env) {
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("find: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("find: expected list");
-    int list_s = val_slots(list_top), list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
+    POP_BODY(fn, "find");
+    POP_LIST_BUF(list, "find");
 
     for (int i = 0; i < list_len; i++) {
         ElemRef r = compound_elem(list_buf, list_s, list_len, i);
@@ -4056,22 +3459,9 @@ static void prim_find_elem(Frame *env) {
     spush(val_int(-1));
 }
 
-/* table: list fn → list of [x fn(x)] pairs */
 static void prim_table(Frame *env) {
-    Value fn_top = stack[sp - 1];
-    if (fn_top.tag != VAL_TUPLE) die("table: expected tuple");
-    int fn_s = val_slots(fn_top);
-    Value fn_buf[LOCAL_MAX];
-    memcpy(fn_buf, &stack[sp - fn_s], fn_s * sizeof(Value));
-    sp -= fn_s;
-
-    Value list_top = stack[sp - 1];
-    if (list_top.tag != VAL_LIST) die("table: expected list");
-    int list_s = val_slots(list_top), list_len = (int)list_top.as.compound.len;
-    int list_base = sp - list_s;
-    Value list_buf[LOCAL_MAX];
-    memcpy(list_buf, &stack[list_base], list_s * sizeof(Value));
-    sp = list_base;
+    POP_BODY(fn, "table");
+    POP_LIST_BUF(list, "table");
 
     int result_base = sp;
     for (int i = 0; i < list_len; i++) {
@@ -4110,23 +3500,10 @@ static const char *PRELUDE =
     "'peek (over) def\n"
     "'nip (swap drop) def\n"
     "'rot ((swap) dip swap) def\n"
-    "'inc (1 plus) def\n"
-    "'dec (1 sub) def\n"
-    "'neg (0 swap sub) def\n"
-    "'abs (dup 0 lt (neg) () if) def\n"
     "'sqr (dup mul) def\n"
     "'cube (dup dup mul mul) def\n"
-    "'iszero (0 eq) def\n"
     "'ispos (0 swap lt) def\n"
     "'isneg (0 lt) def\n"
-    "'iseven (2 mod 0 eq) def\n"
-    "'isodd (2 mod 1 eq) def\n"
-    "'neq (eq not) def\n"
-    "'gt (swap lt) def\n"
-    "'ge (lt not) def\n"
-    "'le (swap lt not) def\n"
-    "'max (over over lt (swap drop) (drop) if) def\n"
-    "'min (over over lt (drop) (swap drop) if) def\n"
     "'first (0 get) def\n"
     "'last (dup len 1 sub get) def\n"
     "'sum (0 (plus) fold) def\n"
@@ -4163,24 +3540,11 @@ static void prim_reverse(Frame *e) {
     int len = (int)top.as.compound.len;
     int base = sp - s;
 
-    /* extract elements, push in reverse, rebuild list */
-    /* only works for scalar elements currently */
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
-
-    /* compute element offsets */
     int offsets[4096], sizes[4096];
-    int elem_end = s - 1;
-    for (int i = len - 1; i >= 0; i--) {
-        int lp = elem_end - 1;
-        Value l = buf[lp];
-        int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD) ? (int)l.as.compound.slots : 1;
-        offsets[i] = elem_end - sz;
-        sizes[i] = sz;
-        elem_end = offsets[i];
-    }
-
+    compute_offsets(buf, s, len, offsets, sizes);
     int result_base = sp;
     for (int i = len - 1; i >= 0; i--) {
         memcpy(&stack[sp], &buf[offsets[i]], sizes[i] * sizeof(Value));
@@ -4202,33 +3566,20 @@ static void prim_dedup(Frame *e) {
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
-
     int offsets[4096], sizes2[4096];
-    int elem_end = s - 1;
-    for (int i = len - 1; i >= 0; i--) {
-        int lp = elem_end - 1;
-        Value l = buf[lp];
-        int sz = (l.tag == VAL_TUPLE || l.tag == VAL_LIST || l.tag == VAL_RECORD) ? (int)l.as.compound.slots : 1;
-        offsets[i] = elem_end - sz;
-        sizes2[i] = sz;
-        elem_end = offsets[i];
-    }
-
-    int result_base = sp;
-    int result_count = 0;
+    compute_offsets(buf, s, len, offsets, sizes2);
+    int result_base = sp, result_count = 0;
     for (int i = 0; i < len; i++) {
         int dup2 = 0;
-        for (int j = 0; j < i; j++) {
+        for (int j = 0; j < i; j++)
             if (val_equal(&buf[offsets[i]], sizes2[i], &buf[offsets[j]], sizes2[j])) { dup2 = 1; break; }
-        }
         if (!dup2) {
             memcpy(&stack[sp], &buf[offsets[i]], sizes2[i] * sizeof(Value));
             sp += sizes2[i];
             result_count++;
         }
     }
-    int result_slots = sp - result_base;
-    spush(val_compound(VAL_LIST, result_count, result_slots + 1));
+    spush(val_compound(VAL_LIST, result_count, sp - result_base + 1));
 }
 
 /* ---- main ---- */
@@ -4412,7 +3763,21 @@ static void register_prims(void) {
     prim_register("not", prim_not);
     prim_register("and", prim_and);
     prim_register("or", prim_or);
+    prim_register("neq", prim_neq);
+    prim_register("gt", prim_gt);
+    prim_register("ge", prim_ge);
+    prim_register("le", prim_le);
+    prim_register("inc", prim_inc);
+    prim_register("dec", prim_dec);
+    prim_register("neg", prim_neg);
+    prim_register("abs", prim_abs_op);
+    prim_register("iseven", prim_iseven);
+    prim_register("isodd", prim_isodd);
+    prim_register("iszero", prim_iszero);
+    prim_register("max", prim_max);
+    prim_register("min", prim_min);
 
+    prim_register("divides", prim_divides);
     prim_register("print", prim_print);
     prim_register("assert", prim_assert);
     prim_register("halt", prim_halt);
@@ -4471,13 +3836,13 @@ static void register_prims(void) {
     prim_register("rise", prim_rise);
     prim_register("fall", prim_fall);
     prim_register("windows", prim_windows);
-    prim_register("pick", prim_pick);
+    prim_register("pick", prim_select);
     prim_register("reshape", prim_reshape);
     prim_register("transpose", prim_transpose);
     prim_register("shape", prim_shape);
     prim_register("classify", prim_classify);
     prim_register("group", prim_group);
-    prim_register("partition", prim_partition);
+    prim_register("partition", prim_group);
 
     prim_register("rec", prim_rec);
     prim_register("into", prim_into);

@@ -10,11 +10,11 @@
   i 'n let
   1 'count let
   (n 1 neq)
-  (n 2 mod 0 eq (n 2 div 'n let) (n 3 mul 1 plus 'n let) if
-   count 1 plus 'count let)
+  (n iseven (n 2 div 'n let) (n 3 mul 1 plus 'n let) if
+   count inc 'count let)
   while
   count best-len gt (count 'best-len let i 'best-start let) () if
-  i 1 plus 'i let
+  i inc 'i let
 )
 while
 
