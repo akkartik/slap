@@ -21,9 +21,9 @@
   while
 ) def
 
-[1]
+[1] box
 2 'n let
 (n 100 le)
-(n mul-digits n 1 plus 'n let)
+((n mul-digits) mutate n 1 plus 'n let)
 while
-sum print
+() lend sum swap free print

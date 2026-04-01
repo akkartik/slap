@@ -2,29 +2,45 @@
 -- First triangle number with over 500 divisors.
 -- Answer: 76576500
 
-'count-divisors (
-  'n let 1 'result let 2 'p let
-  (p p mul n le)
+-- Precompute divisor counts using sieve in a boxed array.
+list 12377 (1 give) repeat box 'divs let
+
+divs (
+  'd let
+  2 'i let
+  (i 12377 lt)
   (
-    0 'exp let
-    (n p divides) (exp inc 'exp let n p div 'n let) while
-    result exp inc mul 'result let
-    p inc 'p let
+    i 'j let
+    (j 12377 lt)
+    (d j get inc 'v let d j v set 'd let j i plus 'j let)
+    while
+    i inc 'i let
   )
   while
-  n 1 gt (result 2 mul 'result let) () if
-  result
-) def
+  d
+) mutate 'divs let
 
+-- T(n) = n(n+1)/2. Split into coprime pair and look up divisor counts.
 0 'found let
 1 'n let
 (found not)
 (
   n iseven
-    (n 2 div count-divisors n inc count-divisors mul)
-    (n count-divisors n inc 2 div count-divisors mul)
+    (
+      n 2 div 'a let n inc 'b let
+      divs (a get) lend swap 'divs let
+      divs (b get) lend swap 'divs let
+      mul
+    )
+    (
+      n 'a let n inc 2 div 'b let
+      divs (a get) lend swap 'divs let
+      divs (b get) lend swap 'divs let
+      mul
+    )
   if
   500 gt (1 'found let) (n inc 'n let) if
 )
 while
+divs free
 n n inc mul 2 div print

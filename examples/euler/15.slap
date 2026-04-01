@@ -1,8 +1,8 @@
 -- Project Euler #15: Lattice Paths
--- Answer: 137846528640
+-- Answer: 137846528820
 -- C(40,20) using DP on a 21-element row
 
-list 21 (0 give) repeat 0 1 set 'row let
+list 21 (0 give) repeat 0 1 set box 'row let
 
 1 'i let
 (i 40 le)
@@ -11,8 +11,7 @@ list 21 (0 give) repeat 0 1 set 'row let
   (j 0 gt)
   (
     j 20 le (
-      row j get row j 1 sub get plus 'v let
-      row j v set 'row let
+      row ('r let r j get r j 1 sub get plus 'v let r j v set) mutate 'row let
     ) () if
     j 1 sub 'j let
   )
@@ -20,4 +19,4 @@ list 21 (0 give) repeat 0 1 set 'row let
   i 1 plus 'i let
 )
 while
-row 20 get print
+row (20 get) lend swap free print

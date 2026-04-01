@@ -36,10 +36,17 @@ typedef struct Value {
     } as;
 } Value;
 
+/* forward declare die so val_slots can use it */
+__attribute__((noreturn))
+static void die(const char *fmt, ...);
+
 static int val_slots(Value v) {
     switch (v.tag) {
-    case VAL_TUPLE: case VAL_LIST: case VAL_RECORD:
-        return (int)v.as.compound.slots;
+    case VAL_TUPLE: case VAL_LIST: case VAL_RECORD: {
+        int s = (int)v.as.compound.slots;
+        if (s < 1) die("corrupt value: compound with %d slots", s);
+        return s;
+    }
     default: return 1;
     }
 }
@@ -288,7 +295,7 @@ struct Frame {
     struct Frame *parent;
     int bind_count;
     int vals_used;
-    int on_stack; /* 1 = captured by closure, don't free */
+    int refcount; /* >0 = captured by closure(s), don't restore bindings */
     Binding bindings[FRAME_MAX];
     Value vals[FRAME_VALS_MAX];
 };
@@ -310,7 +317,7 @@ static Frame *frame_new(Frame *parent) {
             f->parent = parent;
             f->bind_count = 0;
             f->vals_used = 0;
-            f->on_stack = 0;
+            f->refcount = 0;
             return f;
         }
     }
@@ -318,7 +325,7 @@ static Frame *frame_new(Frame *parent) {
     f->parent = parent;
     f->bind_count = 0;
     f->vals_used = 0;
-    f->on_stack = 0;
+    f->refcount = 0;
     return f;
 }
 
@@ -555,7 +562,8 @@ static void val_print(Value *data, int slots, FILE *out) {
             fprintf(out, "\"");
         } else {
             fprintf(out, "[");
-            int offsets[1024], sizes[1024];
+            if (len > LOCAL_MAX) die("list too large to print (%d elements)", len);
+            int offsets[LOCAL_MAX], sizes[LOCAL_MAX];
             compute_offsets(data, slots, len, offsets, sizes);
             for (int i = 0; i < len; i++) {
                 if (i > 0) fprintf(out, " ");
@@ -568,7 +576,8 @@ static void val_print(Value *data, int slots, FILE *out) {
     case VAL_TUPLE: {
         int len = (int)top.as.compound.len;
         fprintf(out, "(");
-        int offsets[1024], sizes[1024];
+        if (len > LOCAL_MAX) die("tuple too large to print (%d elements)", len);
+        int offsets[LOCAL_MAX], sizes[LOCAL_MAX];
         compute_offsets(data, slots, len, offsets, sizes);
         for (int i = 0; i < len; i++) {
             if (i > 0) fprintf(out, " ");
@@ -582,7 +591,8 @@ static void val_print(Value *data, int slots, FILE *out) {
         fprintf(out, "{");
         int elem_end = slots - 1;
         /* walk backward to find key-value pairs */
-        int kpos[256], voff[256], vsz[256];
+        if (len > LOCAL_MAX) die("record too large to print (%d fields)", len);
+        int kpos[LOCAL_MAX], voff[LOCAL_MAX], vsz[LOCAL_MAX];
         for (int i = len - 1; i >= 0; i--) {
             int lp = elem_end - 1;
             Value l = data[lp];
@@ -833,6 +843,7 @@ static const char *constraint_name(TypeConstraint c) {
 typedef struct {
     TypeConstraint type;
     uint32_t type_var;     /* 0 = concrete, else polymorphic */
+    uint32_t sym_id;       /* symbol value for TC_SYM, 0 otherwise */
     OwnMode ownership;
     int is_linear;         /* 1 if contains box (transitively) */
     int consumed;          /* 1 if this linear value has been consumed */
@@ -841,6 +852,7 @@ typedef struct {
     int has_effect;        /* 1 if effect is known (for tuples) */
     int effect_consumed;   /* stack effect: how many values consumed from below */
     int effect_produced;   /* stack effect: how many values left on stack */
+    TypeConstraint effect_out_type; /* type of last produced value, or TC_NONE if unknown */
 } AbstractType;
 
 #define ASTACK_MAX 256
@@ -852,6 +864,9 @@ typedef struct {
     int is_def;  /* 1=def (tuple auto-exec), 0=let */
 } TCBinding;
 
+typedef struct { uint32_t sym; int line; } TCUnknown;
+#define TC_UNKNOWN_MAX 256
+
 typedef struct {
     AbstractType data[ASTACK_MAX];
     int sp;
@@ -860,6 +875,8 @@ typedef struct {
     int bind_count;
     int recur_pending;
     uint32_t recur_sym;
+    TCUnknown unknowns[TC_UNKNOWN_MAX];
+    int unknown_count;
 } TypeChecker;
 
 static void tc_push(TypeChecker *tc, TypeConstraint type, int is_linear, int line) {
@@ -876,10 +893,11 @@ static void tc_push(TypeChecker *tc, TypeConstraint type, int is_linear, int lin
    Returns consumed (how many values eaten from external stack) and
    produced (how many values left on stack after execution).
    Uses a lightweight simulation — no error reporting, just counting. */
-static void tc_infer_effect(Token *toks, int start, int end, int total_count,
+static TypeConstraint tc_infer_effect(Token *toks, int start, int end, int total_count,
                             int *out_consumed, int *out_produced) {
-    int vsp = 0;        /* virtual stack pointer */
-    int consumed = 0;   /* values consumed from below */
+    int vsp = 0;            /* virtual stack pointer */
+    int consumed = 0;       /* values consumed from below */
+    TypeConstraint top_type = TC_NONE; /* type of top-of-stack */
 
     static uint32_t s_def = 0, s_let = 0, s_recur = 0;
     if (!s_def) {
@@ -891,24 +909,25 @@ static void tc_infer_effect(Token *toks, int start, int end, int total_count,
     for (int i = start; i < end; i++) {
         Token *t = &toks[i];
         switch (t->tag) {
-        case TOK_INT: case TOK_FLOAT: case TOK_SYM: case TOK_STRING:
-            vsp++;
-            break;
+        case TOK_INT:    vsp++; top_type = TC_INT;   break;
+        case TOK_FLOAT:  vsp++; top_type = TC_FLOAT; break;
+        case TOK_SYM:    vsp++; top_type = TC_SYM;   break;
+        case TOK_STRING: vsp++; top_type = TC_LIST;  break;
         case TOK_LPAREN: {
             int close = find_matching(toks, i + 1, total_count, TOK_LPAREN, TOK_RPAREN);
-            vsp++; /* tuple is one value */
+            vsp++; top_type = TC_TUPLE;
             i = close;
             break;
         }
         case TOK_LBRACKET: {
             int close = find_matching(toks, i + 1, total_count, TOK_LBRACKET, TOK_RBRACKET);
-            vsp++; /* list is one value */
+            vsp++; top_type = TC_LIST;
             i = close;
             break;
         }
         case TOK_LBRACE: {
             int close = find_matching(toks, i + 1, total_count, TOK_LBRACE, TOK_RBRACE);
-            vsp++;
+            vsp++; top_type = TC_REC;
             i = close;
             break;
         }
@@ -928,13 +947,74 @@ static void tc_infer_effect(Token *toks, int start, int end, int total_count,
                 TypeSig *sig = typesig_find(sym);
                 if (sig && !sig->is_todo) {
                     int inputs = 0, outputs = 0;
+                    TypeConstraint last_out = TC_NONE;
                     for (int j = 0; j < sig->slot_count; j++) {
                         if (sig->slots[j].is_env) continue;
                         if (sig->slots[j].direction == DIR_IN) inputs++;
-                        else outputs++;
+                        else { outputs++; last_out = sig->slots[j].constraint; }
                     }
                     if (vsp < inputs) { consumed += inputs - vsp; vsp = 0; } else vsp -= inputs;
                     vsp += outputs;
+                    if (outputs > 0) top_type = last_out;
+                } else if (sig && sig->is_todo) {
+                    /* known higher-order ops: approximate their net stack effect */
+                    static uint32_t s_apply=0, s_dip=0, s_if=0, s_map=0, s_filter=0,
+                        s_fold=0, s_reduce=0, s_each=0, s_while=0, s_loop=0,
+                        s_lend=0, s_mutate=0, s_clone=0, s_cond=0, s_match=0,
+                        s_where=0, s_find=0, s_table=0, s_scan=0, s_at=0, s_into=0,
+                        s_repeat=0, s_bi=0, s_keep=0, s_on=0, s_show=0;
+                    if (!s_apply) {
+                        s_apply=sym_intern("apply"); s_dip=sym_intern("dip");
+                        s_if=sym_intern("if"); s_map=sym_intern("map");
+                        s_filter=sym_intern("filter"); s_fold=sym_intern("fold");
+                        s_reduce=sym_intern("reduce"); s_each=sym_intern("each");
+                        s_while=sym_intern("while"); s_loop=sym_intern("loop");
+                        s_lend=sym_intern("lend"); s_mutate=sym_intern("mutate");
+                        s_clone=sym_intern("clone"); s_cond=sym_intern("cond");
+                        s_match=sym_intern("match"); s_repeat=sym_intern("repeat");
+                        s_bi=sym_intern("bi"); s_keep=sym_intern("keep");
+                        s_on=sym_intern("on"); s_show=sym_intern("show");
+                        s_where=sym_intern("where"); s_find=sym_intern("find");
+                        s_table=sym_intern("table"); s_scan=sym_intern("scan");
+                        s_at=sym_intern("at"); s_into=sym_intern("into");
+                    }
+                    int need = 0, out = 0;
+                    if (sym == s_apply) { need = 1; out = 0; } /* fn → effect */
+                    else if (sym == s_dip) { need = 2; out = 1; } /* val fn → val */
+                    else if (sym == s_if) { need = 3; out = 1; } /* cond then else → result */
+                    else if (sym == s_map) { need = 2; out = 1; } /* list fn → list */
+                    else if (sym == s_filter) { need = 2; out = 1; } /* list fn → list */
+                    else if (sym == s_fold) { need = 3; out = 1; } /* list init fn → result */
+                    else if (sym == s_reduce) { need = 2; out = 1; } /* list fn → result */
+                    else if (sym == s_each) { need = 2; out = 0; } /* list fn → */
+                    else if (sym == s_while) { need = 2; out = 0; } /* pred body → */
+                    else if (sym == s_loop) { need = 1; out = 0; } /* fn → */
+                    else if (sym == s_lend) { need = 2; out = 2; } /* box fn → box result */
+                    else if (sym == s_mutate) { need = 2; out = 1; } /* box fn → box */
+                    else if (sym == s_clone) { need = 1; out = 2; } /* box → box box */
+                    else if (sym == s_cond) { need = 3; out = 1; } /* val clauses default → result */
+                    else if (sym == s_match) { need = 3; out = 1; } /* sym clauses default → result */
+                    else if (sym == s_where) { need = 2; out = 1; } /* list fn → list */
+                    else if (sym == s_find) { need = 2; out = 1; } /* list fn → result */
+                    else if (sym == s_table) { need = 2; out = 1; } /* list fn → list */
+                    else if (sym == s_scan) { need = 3; out = 1; } /* list init fn → list */
+                    else if (sym == s_at) { need = 3; out = 1; } /* list idx default → result */
+                    else if (sym == s_into) { need = 3; out = 1; } /* rec key val → rec */
+                    else if (sym == s_repeat) { need = 2; out = 0; } /* int fn → */
+                    else if (sym == s_bi) { need = 3; out = 2; } /* x f g → r1 r2 */
+                    else if (sym == s_keep) { need = 2; out = 2; } /* x f → r x */
+                    else if (sym == s_on) { need = 1; out = 0; } /* fn → */
+                    else if (sym == s_show) { need = 1; out = 0; } /* fn → */
+                    if (vsp < need) { consumed += need - vsp; vsp = 0; } else vsp -= need;
+                    vsp += out;
+                    /* track output types for common HO ops */
+                    if (out > 0) {
+                        if (sym == s_map || sym == s_filter || sym == s_where ||
+                            sym == s_table || sym == s_scan) top_type = TC_LIST;
+                        else if (sym == s_mutate || sym == s_lend || sym == s_clone) top_type = TC_BOX;
+                        else if (sym == s_into) top_type = TC_REC;
+                        else top_type = TC_NONE;
+                    }
                 }
                 /* unknown words: assume net 0 effect */
             }
@@ -946,26 +1026,34 @@ static void tc_infer_effect(Token *toks, int start, int end, int total_count,
 
     *out_consumed = consumed;
     *out_produced = vsp;
+    return top_type;
 }
 
 /* apply a tuple's inferred stack effect to the type checker.
-   Pops `consumed` values from tc->sp, pushes `produced` values (as TC_NONE). */
-static void tc_apply_effect(TypeChecker *tc, int consumed, int produced, int line) {
+   Pops `consumed` values from tc->sp, pushes `produced` values.
+   out_type is the inferred type of the last produced value. */
+static void tc_apply_effect(TypeChecker *tc, int consumed, int produced,
+                             TypeConstraint out_type, int line) {
     if (tc->sp < consumed) tc->sp = 0; else tc->sp -= consumed;
-    for (int i = 0; i < produced; i++)
-        tc_push(tc, TC_NONE, 0, line);
+    for (int i = 0; i < produced; i++) {
+        TypeConstraint t = (i == produced - 1) ? out_type : TC_NONE;
+        tc_push(tc, t, (t == TC_BOX) ? 1 : 0, line);
+    }
 }
 
 /* check if abstract stack top is a tuple and pop it, returning its effect.
-   Returns 1 if a tuple was found and popped, 0 otherwise. */
+   Returns 1 if a tuple was found and popped, 0 otherwise.
+   out_type receives the inferred output type of the tuple body. */
+static TypeConstraint tc_last_popped_out_type;
 static int tc_pop_tuple(TypeChecker *tc, int *eff_c, int *eff_p) {
+    tc_last_popped_out_type = TC_NONE;
     if (tc->sp <= 0) return 0;
     AbstractType *top = &tc->data[tc->sp - 1];
     if (top->type != TC_TUPLE) return 0;
     *eff_c = top->has_effect ? top->effect_consumed : 0;
     *eff_p = top->has_effect ? top->effect_produced : 0;
-    int s = 1; /* tuple occupies 1 abstract slot */
-    tc->sp -= s;
+    tc_last_popped_out_type = top->effect_out_type;
+    tc->sp--;
     return top->has_effect;
 }
 
@@ -1061,7 +1149,7 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                     /* fall through to normal sig checking below */
                 } else if (b->atype.has_effect) {
                     /* use inferred stack effect */
-                    tc_apply_effect(tc, b->atype.effect_consumed, b->atype.effect_produced, line);
+                    tc_apply_effect(tc, b->atype.effect_consumed, b->atype.effect_produced, b->atype.effect_out_type, line);
                     return;
                 }
                 if (!sig) return;
@@ -1071,7 +1159,13 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                 return;
             }
         } else {
-            return; /* unknown word, skip */
+            /* record unknown word for later checking */
+            if (tc->unknown_count < TC_UNKNOWN_MAX) {
+                tc->unknowns[tc->unknown_count].sym = sym;
+                tc->unknowns[tc->unknown_count].line = line;
+                tc->unknown_count++;
+            }
+            return;
         }
     }
 
@@ -1080,7 +1174,8 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
         static uint32_t s_apply=0, s_dip=0, s_if=0, s_map=0, s_filter=0,
             s_fold=0, s_reduce=0, s_each=0, s_while=0, s_loop=0,
             s_lend=0, s_mutate=0, s_clone=0, s_cond=0, s_match=0,
-            s_where=0, s_find=0, s_table=0, s_scan=0, s_at=0, s_into=0;
+            s_where=0, s_find=0, s_table=0, s_scan=0, s_at=0, s_into=0,
+            s_repeat=0, s_bi=0, s_keep=0, s_on=0, s_show=0;
         if (!s_apply) {
             s_apply=sym_intern("apply"); s_dip=sym_intern("dip");
             s_if=sym_intern("if"); s_map=sym_intern("map");
@@ -1089,7 +1184,9 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             s_while=sym_intern("while"); s_loop=sym_intern("loop");
             s_lend=sym_intern("lend"); s_mutate=sym_intern("mutate");
             s_clone=sym_intern("clone"); s_cond=sym_intern("cond");
-            s_match=sym_intern("match");
+            s_match=sym_intern("match"); s_repeat=sym_intern("repeat");
+            s_bi=sym_intern("bi"); s_keep=sym_intern("keep");
+            s_on=sym_intern("on"); s_show=sym_intern("show");
             s_where=sym_intern("where"); s_find=sym_intern("find");
             s_table=sym_intern("table"); s_scan=sym_intern("scan");
             s_at=sym_intern("at"); s_into=sym_intern("into");
@@ -1097,52 +1194,93 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
 
         if (sym == s_apply) {
             /* pop tuple, apply its effect */
-            int ec, ep;
-            if (tc_pop_tuple(tc, &ec, &ep))
-                tc_apply_effect(tc, ec, ep, line);
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'apply' expected tuple, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+                tc->sp--;
+            } else {
+                int ec, ep;
+                if (tc_pop_tuple(tc, &ec, &ep))
+                    tc_apply_effect(tc, ec, ep, tc_last_popped_out_type, line);
+            }
         } else if (sym == s_dip) {
             /* pop tuple, pop value, apply tuple effect, push value back */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'dip' expected tuple, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+                tc->sp--;
+            }
             int ec, ep;
             if (tc_pop_tuple(tc, &ec, &ep)) {
+                int had_saved = (tc->sp > 0);
                 AbstractType saved = {0};
-                if (tc->sp > 0) { saved = tc->data[tc->sp - 1]; tc->sp--; }
-                tc_apply_effect(tc, ec, ep, line);
-                if (tc->sp < ASTACK_MAX) tc->data[tc->sp++] = saved;
+                if (had_saved) { saved = tc->data[tc->sp - 1]; tc->sp--; }
+                tc_apply_effect(tc, ec, ep, tc_last_popped_out_type, line);
+                if (had_saved && tc->sp < ASTACK_MAX) tc->data[tc->sp++] = saved;
             }
         } else if (sym == s_if) {
-            /* pop else, pop then, pop condition. Apply one branch's effect. */
-            /* Approximate: pop 3 values (else, then, cond_or_pred).
-               If cond is tuple: also pop the scrutinee.
-               Use the then branch effect as the result. */
-            int ec, ep;
-            int else_has = tc_pop_tuple(tc, &ec, &ep); /* pop else */
+            /* pop else, pop then, pop condition. */
+            /* else can be tuple or plain value (-1 sentinel) */
+            int eec, eep;
+            int else_has;
+            if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE)
+                else_has = tc_pop_tuple(tc, &eec, &eep);
+            else { else_has = 0; eec = 0; eep = 0; if (tc->sp > 0) tc->sp--; }
+            /* then MUST be a tuple */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'if' then branch must be tuple, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
             int tec, tep;
-            int then_has = tc_pop_tuple(tc, &tec, &tep); /* pop then */
-            (void)else_has;
+            int then_has = tc_pop_tuple(tc, &tec, &tep);
+            TypeConstraint then_out = tc_last_popped_out_type;
+            (void)else_has; (void)eec; (void)eep;
             /* pop condition (int or tuple) */
             if (tc->sp > 0) {
                 AbstractType *cond = &tc->data[tc->sp - 1];
                 if (cond->type == TC_TUPLE) {
-                    /* tuple predicate: it consumes the value below */
                     tc->sp--;
-                    /* the pred also consumes from the scrutinee */
                 } else {
                     tc->sp--; /* int condition */
                 }
             }
-            /* apply then branch effect as approximation */
+            /* apply then branch effect */
             if (then_has)
-                tc_apply_effect(tc, tec, tep, line);
+                tc_apply_effect(tc, tec, tep, then_out, line);
         } else if (sym == s_cond || sym == s_match) {
             /* pop default, pop clauses, pop scrutinee. Result depends on branch. */
-            if (tc->sp >= 3) tc->sp -= 3;
-            else tc->sp = 0;
+            if (tc->sp >= 3) {
+                tc->sp--; /* pop default */
+                if (tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_REC
+                    && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: '%s' expected tuple or record of clauses, got %s\n",
+                            current_file, line, sym_name(sym), constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--; /* pop clauses */
+                if (sym == s_match && tc->data[tc->sp-1].type != TC_SYM
+                    && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'match' scrutinee must be a symbol, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--; /* pop scrutinee */
+            } else {
+                tc->sp = 0;
+            }
             tc_push(tc, TC_NONE, 0, line); /* result */
         } else if (sym == s_map) {
             /* pop body, pop list → list */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            /* consume list, produce list */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'map' expected list, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_LIST) {
                 /* list stays as list */
             } else if (tc->sp > 0) {
@@ -1152,6 +1290,11 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             /* pop body, keep list → list */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'filter' expected list, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
             /* list in, list out — no change */
         } else if (sym == s_fold) {
             /* pop fn, pop init, pop list → result (type of init) */
@@ -1159,76 +1302,146 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
             AbstractType init = {0};
             if (tc->sp > 0) { init = tc->data[tc->sp-1]; tc->sp--; }
-            if (tc->sp > 0) tc->sp--; /* pop list */
+            if (tc->sp > 0) {
+                if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'fold' expected list, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--; /* pop list */
+            }
             if (tc->sp < ASTACK_MAX) tc->data[tc->sp++] = init;
         } else if (sym == s_reduce) {
             /* pop fn, pop list → result */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0) tc->sp--; /* pop list */
+            if (tc->sp > 0) {
+                if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'reduce' expected list, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--; /* pop list */
+            }
             tc_push(tc, TC_NONE, 0, line);
         } else if (sym == s_each) {
-            /* pop fn, pop list, leave acc */
+            /* pop fn, pop list */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0) tc->sp--; /* pop list */
-            /* acc stays */
+            if (tc->sp > 0) {
+                if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'each' expected list, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--; /* pop list */
+            }
         } else if (sym == s_while || sym == s_loop) {
-            /* pop body, pop pred. Net effect depends on loop — approximate: pop 2 tuples. */
+            /* pop body (and pred for while). */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: '%s' expected tuple, got %s\n",
+                        current_file, line, sym_name(sym), constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            if (sym == s_while) {
+                if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'while' predicate must be tuple, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            }
+        } else if (sym == s_repeat) {
+            /* pop body, pop int. */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_TUPLE && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'repeat' expected tuple, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
+            int ec, ep;
+            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            if (tc->sp > 0) tc->sp--; /* pop int */
+        } else if (sym == s_bi) {
+            /* pop g, pop f, pop x. Apply f to x, apply g to x. Push both results. */
+            int ec1, ep1, ec2, ep2;
+            tc_pop_tuple(tc, &ec2, &ep2); (void)ec2; (void)ep2;
+            tc_pop_tuple(tc, &ec1, &ep1); (void)ec1; (void)ep1;
+            if (tc->sp > 0) tc->sp--; /* pop x */
+            tc_push(tc, TC_NONE, 0, line);
+            tc_push(tc, TC_NONE, 0, line);
+        } else if (sym == s_keep) {
+            /* pop f, pop x. Apply f to x, push x back. */
+            int ec, ep;
+            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
+            /* x stays, f's results are added on top, then x is pushed again */
+            /* approximate: leave stack as-is */
+        } else if (sym == s_on || sym == s_show) {
+            /* pop handler tuple — side-effect only */
+            int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
         } else if (sym == s_lend) {
-            /* pop body, pop box. Push snapshot, apply body, push box below results.
-               The box is borrowed during lend — it can't be consumed by the body. */
+            /* pop body, pop box. Push snapshot, apply body, push box below results. */
             int ec, ep;
             int has = tc_pop_tuple(tc, &ec, &ep);
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
-                /* mark box as borrowed */
                 tc->data[tc->sp-1].borrowed++;
                 int results = has ? (1 - ec + ep) : 1;
                 if (results < 0) results = 0;
                 for (int j = 0; j < results; j++)
                     tc_push(tc, TC_NONE, 0, line);
-                /* unborrow — the lend scope has ended */
-                /* find the box (it's below the results) */
                 int box_idx = tc->sp - results - 1;
                 if (box_idx >= 0) tc->data[box_idx].borrowed--;
+            } else if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'lend' expected box, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
             }
         } else if (sym == s_mutate) {
             /* pop body, pop box → box */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            /* box stays */
+            if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_BOX && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'mutate' expected box, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
+            }
         } else if (sym == s_clone) {
             /* pop box → box box */
             if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
                 tc_push(tc, TC_BOX, 1, line);
+            } else if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_NONE) {
+                fprintf(stderr, "%s:%d: type error: 'clone' expected box, got %s\n",
+                        current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                tc->errors++;
             }
-        } else if (sym == s_where) {
-            /* list pred → list_of_indices */
+        } else if (sym == s_where || sym == s_find || sym == s_table) {
+            /* list fn → result */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0) tc->sp--; /* pop list */
-            tc_push(tc, TC_LIST, 0, line);
-        } else if (sym == s_find) {
-            /* list pred → element_or_-1 */
-            int ec, ep;
-            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0) tc->sp--; /* pop list */
-            tc_push(tc, TC_NONE, 0, line);
-        } else if (sym == s_table) {
-            /* list fn → list_of_pairs */
-            int ec, ep;
-            tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
-            if (tc->sp > 0) tc->sp--; /* pop list */
-            tc_push(tc, TC_LIST, 0, line);
+            if (tc->sp > 0) {
+                if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: '%s' expected list, got %s\n",
+                            current_file, line, sym_name(sym), constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--;
+            }
+            tc_push(tc, sym == s_find ? TC_NONE : TC_LIST, 0, line);
         } else if (sym == s_scan) {
             /* list init fn → list */
             int ec, ep;
             tc_pop_tuple(tc, &ec, &ep); (void)ec; (void)ep;
             if (tc->sp > 0) tc->sp--; /* pop init */
-            if (tc->sp > 0) tc->sp--; /* pop list */
+            if (tc->sp > 0) {
+                if (tc->data[tc->sp-1].type != TC_LIST && tc->data[tc->sp-1].type != TC_NONE) {
+                    fprintf(stderr, "%s:%d: type error: 'scan' expected list, got %s\n",
+                            current_file, line, constraint_name(tc->data[tc->sp-1].type));
+                    tc->errors++;
+                }
+                tc->sp--;
+            }
             tc_push(tc, TC_LIST, 0, line);
         } else if (sym == s_at) {
             /* overloaded: record 'key at → value, OR list idx default at → value */
@@ -1255,6 +1468,12 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
     if (tc->sp < inputs) {
         fprintf(stderr, "%s:%d: type error: '%s' needs %d input(s), stack has %d\n",
                 current_file, line, sym_name(sym), inputs, tc->sp);
+        if (tc->sp > 0) {
+            fprintf(stderr, "    stack (top first):");
+            for (int d = tc->sp - 1; d >= 0 && d >= tc->sp - 5; d--)
+                fprintf(stderr, " %s", constraint_name(tc->data[d].type));
+            fprintf(stderr, "\n");
+        }
         tc->errors++;
         return;
     }
@@ -1292,9 +1511,16 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
         /* type constraint */
         if (slot->constraint != TC_NONE && at->type != TC_NONE) {
             if (!tc_constraint_matches(slot->constraint, at->type)) {
-                fprintf(stderr, "%s:%d: type error: '%s' expected %s, got %s\n",
+                fprintf(stderr, "%s:%d: type error: '%s' expected %s, got %s",
                         current_file, line, sym_name(sym),
                         constraint_name(slot->constraint), constraint_name(at->type));
+                if (at->source_line) fprintf(stderr, " (value from line %d)", at->source_line);
+                fprintf(stderr, "\n");
+                /* show stack context */
+                fprintf(stderr, "    stack (top first):");
+                for (int d = tc->sp - 1; d >= 0 && d >= tc->sp - 5; d--)
+                    fprintf(stderr, " %s", constraint_name(tc->data[d].type));
+                fprintf(stderr, "\n");
                 tc->errors++;
             }
         }
@@ -1306,12 +1532,26 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
                 if (tvars[j].var == slot->type_var) { found = j; break; }
             }
             if (found >= 0) {
-                if (tvars[found].bound_set && tvars[found].bound != at->type) {
-                    fprintf(stderr, "%s:%d: type error: '%s' type variable mismatch: "
-                            "expected %s (from earlier arg), got %s\n",
+                /* refine: if one side is NUM and other is INT/FLOAT, narrow to the concrete type */
+                if (tvars[found].bound_set && tvars[found].bound == TC_NUM &&
+                    (at->type == TC_INT || at->type == TC_FLOAT)) {
+                    tvars[found].bound = at->type; /* narrow NUM → INT or FLOAT */
+                } else if (tvars[found].bound_set && at->type == TC_NUM &&
+                    (tvars[found].bound == TC_INT || tvars[found].bound == TC_FLOAT)) {
+                    /* NUM is compatible with already-bound INT/FLOAT — keep the narrow type */
+                } else if (tvars[found].bound_set && tvars[found].bound != at->type) {
+                    fprintf(stderr, "%s:%d: type error: '%s' type variable '%s' mismatch: "
+                            "expected %s (from earlier arg), got %s",
                             current_file, line, sym_name(sym),
+                            sym_name(slot->type_var),
                             constraint_name(tvars[found].bound),
                             constraint_name(at->type));
+                    if (at->source_line) fprintf(stderr, " (value from line %d)", at->source_line);
+                    fprintf(stderr, "\n");
+                    fprintf(stderr, "    stack (top first):");
+                    for (int d = tc->sp - 1; d >= 0 && d >= tc->sp - 5; d--)
+                        fprintf(stderr, " %s", constraint_name(tc->data[d].type));
+                    fprintf(stderr, "\n");
                     tc->errors++;
                 }
             } else if (tvar_count < MAX_TVARS) {
@@ -1376,18 +1616,22 @@ static int typecheck_tokens(Token *toks, int count) {
         switch (t->tag) {
         case TOK_INT: tc_push(&tc, TC_INT, 0, t->line); break;
         case TOK_FLOAT: tc_push(&tc, TC_FLOAT, 0, t->line); break;
-        case TOK_SYM: tc_push(&tc, TC_SYM, 0, t->line); break;
+        case TOK_SYM:
+            tc_push(&tc, TC_SYM, 0, t->line);
+            tc.data[tc.sp - 1].sym_id = t->as.sym;
+            break;
         case TOK_STRING: tc_push(&tc, TC_LIST, 0, t->line); break;
         case TOK_LPAREN: {
             int close = find_matching(toks, i + 1, count, TOK_LPAREN, TOK_RPAREN);
             tc_push(&tc, TC_TUPLE, 0, t->line);
             /* infer stack effect of tuple body */
             int eff_c = 0, eff_p = 0;
-            tc_infer_effect(toks, i + 1, close, count, &eff_c, &eff_p);
+            TypeConstraint eff_out = tc_infer_effect(toks, i + 1, close, count, &eff_c, &eff_p);
             AbstractType *tup = &tc.data[tc.sp - 1];
             tup->has_effect = 1;
             tup->effect_consumed = eff_c;
             tup->effect_produced = eff_p;
+            tup->effect_out_type = eff_out;
             i = close;
             break;
         }
@@ -1419,15 +1663,10 @@ static int typecheck_tokens(Token *toks, int count) {
                     /* 'name (body) def: stack has [name_sym, body_val] */
                     if (tc.sp >= 2) {
                         AbstractType val_type = tc.data[tc.sp - 1]; /* body on top */
+                        uint32_t name_sym = tc.data[tc.sp - 2].sym_id; /* name from abstract stack */
                         tc.sp -= 2;
-                        /* recover name from token stream: scan back for the SYM */
-                        for (int j = i - 1; j >= 0; j--) {
-                            if (toks[j].tag == TOK_SYM) {
-                                tc_bind(&tc, toks[j].as.sym, &val_type, 1);
-                                break;
-                            }
-                            if (toks[j].tag == TOK_RPAREN || toks[j].tag == TOK_RBRACKET ||
-                                toks[j].tag == TOK_RBRACE) break; /* too far */
+                        if (name_sym) {
+                            tc_bind(&tc, name_sym, &val_type, 1);
                         }
                     } else {
                         tc.sp = 0;
@@ -1436,12 +1675,12 @@ static int typecheck_tokens(Token *toks, int count) {
             } else if (sym == sym_let_k) {
                 /* let: val 'name let → pop name, pop val, bind name=val */
                 if (tc.sp >= 2) {
+                    uint32_t name_sym = tc.data[tc.sp - 1].sym_id;
                     tc.sp--; /* pop name (SYM) */
                     AbstractType val_t = tc.data[tc.sp - 1];
                     tc.sp--; /* pop value */
-                    /* recover the name symbol from the token stream */
-                    if (i >= 2 && toks[i-1].tag == TOK_SYM) {
-                        tc_bind(&tc, toks[i-1].as.sym, &val_t, 0);
+                    if (name_sym) {
+                        tc_bind(&tc, name_sym, &val_t, 0);
                     }
                 } else {
                     tc.sp = 0;
@@ -1449,11 +1688,10 @@ static int typecheck_tokens(Token *toks, int count) {
             } else if (sym == sym_recur_k) {
                 /* recur: 'name recur → pop name, mark recur */
                 if (tc.sp >= 1) {
+                    uint32_t name_sym = tc.data[tc.sp - 1].sym_id;
                     tc.recur_pending = 1;
                     tc.sp--;
-                    /* recover name from token stream */
-                    if (i >= 1 && toks[i-1].tag == TOK_SYM)
-                        tc.recur_sym = toks[i-1].as.sym;
+                    if (name_sym) tc.recur_sym = name_sym;
                 }
             } else if (sym == sym_type_kw) {
                 /* parse type annotation and check body if present */
@@ -1467,12 +1705,8 @@ static int typecheck_tokens(Token *toks, int count) {
                 if (!sig.is_todo) {
                     /* recover name and register */
                     if (tc.sp >= 1 && tc.data[tc.sp-1].type == TC_SYM) {
-                        for (int j = type_start - 2; j >= 0; j--) {
-                            if (toks[j].tag == TOK_SYM) {
-                                typesig_register(toks[j].as.sym, &sig);
-                                break;
-                            }
-                        }
+                        uint32_t name_sym = tc.data[tc.sp-1].sym_id;
+                        if (name_sym) typesig_register(name_sym, &sig);
                     }
 
                     /* check body against sig if a tuple is on the stack below name */
@@ -1515,6 +1749,21 @@ static int typecheck_tokens(Token *toks, int count) {
             fprintf(stderr, "%s:%d: type error: linear value (box) created here "
                     "was never consumed (must free, lend, mutate, or clone)\n",
                     current_file, tc.data[i].source_line);
+            tc.errors++;
+        }
+    }
+
+    /* check for unknown words that were never defined */
+    for (int i = 0; i < tc.unknown_count; i++) {
+        uint32_t sym = tc.unknowns[i].sym;
+        /* check if it was defined by a later binding */
+        int defined = 0;
+        for (int j = 0; j < tc.bind_count; j++) {
+            if (tc.bindings[j].sym == sym) { defined = 1; break; }
+        }
+        if (!defined) {
+            fprintf(stderr, "%s:%d: type error: unknown word '%s'\n",
+                    current_file, tc.unknowns[i].line, sym_name(sym));
             tc.errors++;
         }
     }
@@ -1597,6 +1846,10 @@ static void register_builtin_types(void) {
     TSIG_BEGIN("fexp") TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_OUT(TC_FLOAT, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("flog") TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_OUT(TC_FLOAT, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("fpow") TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_OUT(TC_FLOAT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("ftan") TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_OUT(TC_FLOAT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("fatan2") TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_IN(TC_FLOAT, OWN_LENT) TSIG_OUT(TC_FLOAT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("divides") TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("millis") TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
 
     /* list ops */
     TSIG_BEGIN("list") TSIG_OUT(TC_LIST, OWN_MOVE) TSIG_END()
@@ -1637,7 +1890,8 @@ static void register_builtin_types(void) {
     TSIG_BEGIN("size") TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_OUT(TC_INT, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("push") TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_IN(TC_NONE, OWN_OWN) TSIG_OUT(TC_TUPLE, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("pop") TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_OUT(TC_TUPLE, OWN_MOVE) TSIG_OUT(TC_NONE, OWN_MOVE) TSIG_END()
-    TSIG_BEGIN("pull") TSIG_IN(TC_TUPLE, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_NONE, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("pull") TSIG_IN(TC_TUPLE, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_OUT(TC_TUPLE, OWN_MOVE) TSIG_OUT(TC_NONE, OWN_MOVE) TSIG_END()
+    TSIG_BEGIN("put") TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_NONE, OWN_OWN) TSIG_OUT(TC_TUPLE, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("compose") TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_IN(TC_TUPLE, OWN_OWN) TSIG_OUT(TC_TUPLE, OWN_MOVE) TSIG_END()
 
     /* record ops */
@@ -1653,6 +1907,12 @@ static void register_builtin_types(void) {
     TSIG_BEGIN("box") TSIG_IN(TC_NONE, OWN_OWN) TSIG_OUT(TC_BOX, OWN_MOVE) TSIG_END()
     TSIG_BEGIN("free") TSIG_IN(TC_BOX, OWN_OWN) TSIG_END()
 
+    /* SDL ops (may not be available in all builds) */
+    TSIG_BEGIN("clear") TSIG_IN(TC_INT, OWN_LENT) TSIG_END()
+    TSIG_BEGIN("pixel") TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_IN(TC_INT, OWN_LENT) TSIG_END()
+    TSIG_BEGIN("on") TSIG_TODO() TSIG_END()
+    TSIG_BEGIN("show") TSIG_TODO() TSIG_END()
+
     /* complex ops — mark as todo for now */
     TSIG_BEGIN("if") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("cond") TSIG_TODO() TSIG_END()
@@ -1666,6 +1926,9 @@ static void register_builtin_types(void) {
     TSIG_BEGIN("each") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("while") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("loop") TSIG_TODO() TSIG_END()
+    TSIG_BEGIN("repeat") TSIG_TODO() TSIG_END()
+    TSIG_BEGIN("bi") TSIG_TODO() TSIG_END()
+    TSIG_BEGIN("keep") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("lend") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("mutate") TSIG_TODO() TSIG_END()
     TSIG_BEGIN("clone") TSIG_TODO() TSIG_END()
@@ -1683,6 +1946,8 @@ static void register_builtin_types(void) {
 #define POP_VAL(name) \
     Value name##_top = stack[sp - 1]; \
     int name##_s = val_slots(name##_top); \
+    if (name##_s > LOCAL_MAX) die("value too large (%d slots, max %d)", name##_s, LOCAL_MAX); \
+    if (name##_s > sp) die("stack underflow: need %d slots, have %d", name##_s, sp); \
     Value name##_buf[LOCAL_MAX]; \
     memcpy(name##_buf, &stack[sp - name##_s], name##_s * sizeof(Value)); \
     sp -= name##_s
@@ -1695,6 +1960,8 @@ static void register_builtin_types(void) {
     if (stack[sp-1].tag != VAL_LIST) die(label ": expected list"); \
     Value name##_top = stack[sp - 1]; \
     int name##_s = val_slots(name##_top); \
+    if (name##_s > LOCAL_MAX) die(label ": list too large (%d slots, max %d)", name##_s, LOCAL_MAX); \
+    if (name##_s > sp) die(label ": stack underflow: need %d slots, have %d", name##_s, sp); \
     int name##_len = (int)name##_top.as.compound.len; \
     int name##_base __attribute__((unused)) = sp - name##_s; \
     Value name##_buf[LOCAL_MAX]; \
@@ -1735,7 +2002,7 @@ static void prim_swap(Frame *env) {
     if (sp < total) die("swap: stack underflow");
 
     /* swap using temp buffer */
-    Value tmp[4096];
+    Value tmp[LOCAL_MAX];
     int base = sp - total;
     /* currently: [below(below_s) | top(top_s)] */
     /* want:     [top(top_s) | below(below_s)] */
@@ -1805,8 +2072,10 @@ static void prim_eq(Frame *env) {
     (void)env;
     Value bt = stack[sp-1];
     int bs = val_slots(bt);
+    if (sp - 1 - bs < 0) die("eq: stack underflow");
     Value at = stack[sp-1-bs];
     int as = val_slots(at);
+    if (sp - bs - as < 0) die("eq: stack underflow");
     int r = val_equal(&stack[sp-bs-as], as, &stack[sp-bs], bs);
     sp -= as + bs;
     spush(val_int(r ? 1 : 0));
@@ -1816,8 +2085,10 @@ static void prim_lt(Frame *env) {
     (void)env;
     Value bt = stack[sp-1];
     int bs = val_slots(bt);
+    if (sp - 1 - bs < 0) die("lt: stack underflow");
     Value at = stack[sp-1-bs];
     int as = val_slots(at);
+    if (sp - bs - as < 0) die("lt: stack underflow");
     int r = val_less(&stack[sp-bs-as], as, &stack[sp-bs], bs);
     sp -= as + bs;
     spush(val_int(r ? 1 : 0));
@@ -1907,27 +2178,31 @@ static void prim_if(Frame *env) {
     if (cond_top.tag == VAL_INT) {
         int64_t cond = cond_top.as.i;
         if (cond) {
-            Value then_buf[LOCAL_MAX];
+            Value then_buf[then_s];
             memcpy(then_buf, &stack[then_end - then_s], then_s * sizeof(Value));
             sp = cond_end - 1;
             eval_body(then_buf, then_s, env);
         } else {
-            Value el_buf[LOCAL_MAX];
+            Value el_buf[el_s];
             memcpy(el_buf, &stack[sp - el_s], el_s * sizeof(Value));
             sp = cond_end - 1;
             eval_default(el_buf, el_s, el_top, NULL, 0, env);
         }
     } else if (cond_top.tag == VAL_TUPLE) {
         /* tuple predicate: save everything, apply pred, branch */
-        POP_VAL(el);
-        POP_VAL(then);
+        Value el_buf[el_s];
+        memcpy(el_buf, &stack[sp - el_s], el_s * sizeof(Value));
+        sp -= el_s;
+        Value then_buf[then_s];
+        memcpy(then_buf, &stack[sp - then_s], then_s * sizeof(Value));
+        sp -= then_s;
         int cond_s2 = val_slots(cond_top);
-        Value cond_buf[LOCAL_MAX];
+        Value cond_buf[cond_s2];
         memcpy(cond_buf, &stack[sp - cond_s2], cond_s2 * sizeof(Value));
         sp -= cond_s2;
         Value val_t = stack[sp - 1];
         int val_s2 = val_slots(val_t);
-        Value val_save[LOCAL_MAX];
+        Value val_save[val_s2];
         memcpy(val_save, &stack[sp - val_s2], val_s2 * sizeof(Value));
         eval_body(cond_buf, cond_s2, env);
         int64_t cond = pop_int();
@@ -2020,7 +2295,13 @@ static void prim_match(Frame *env) {
 }
 
 static void prim_loop(Frame *env) {
-    POP_BODY(body, "loop");
+    if (stack[sp-1].tag != VAL_TUPLE) die("loop: expected tuple");
+    int body_s = val_slots(stack[sp-1]);
+    if (body_s > LOCAL_MAX) die("loop: body too large (%d slots)", body_s);
+    if (body_s > sp) die("loop: stack underflow");
+    Value body_buf[body_s];
+    memcpy(body_buf, &stack[sp - body_s], body_s * sizeof(Value));
+    sp -= body_s;
     for (;;) {
         eval_body(body_buf, body_s, env);
         if (!pop_int()) break;
@@ -2028,8 +2309,22 @@ static void prim_loop(Frame *env) {
 }
 
 static void prim_while(Frame *env) {
-    POP_BODY(body, "while");
-    POP_BODY(pred, "while");
+    if (stack[sp-1].tag != VAL_TUPLE) die("while: expected tuple");
+    int body_s = val_slots(stack[sp-1]);
+    if (body_s > LOCAL_MAX) die("while: body too large (%d slots)", body_s);
+    if (body_s > sp) die("while: stack underflow");
+    Value body_buf[body_s];
+    memcpy(body_buf, &stack[sp - body_s], body_s * sizeof(Value));
+    sp -= body_s;
+
+    if (stack[sp-1].tag != VAL_TUPLE) die("while: expected tuple");
+    int pred_s = val_slots(stack[sp-1]);
+    if (pred_s > LOCAL_MAX) die("while: pred too large (%d slots)", pred_s);
+    if (pred_s > sp) die("while: stack underflow");
+    Value pred_buf[pred_s];
+    memcpy(pred_buf, &stack[sp - pred_s], pred_s * sizeof(Value));
+    sp -= pred_s;
+
     for (;;) {
         eval_body(pred_buf, pred_s, env);
         if (!pop_int()) break;
@@ -2157,7 +2452,7 @@ static void prim_replace_at(Frame *e, ValTag tag, const char *label) {
     if (old_ref.slots == v_s) {
         memcpy(&stack[base + old_ref.base], v_buf, v_s * sizeof(Value));
     } else {
-        Value tmp[4096];
+        Value tmp[LOCAL_MAX];
         int tmp_sp = 0;
         for (int i = 0; i < len; i++) {
             ElemRef r = compound_elem(&stack[base], s, len, i);
@@ -2186,7 +2481,7 @@ static void prim_concat(Frame *e, ValTag tag, const char *label) {
     if (below.tag != tag) die("%s: expected %s", label, tag == VAL_LIST ? "list" : "tuple");
     int s1 = val_slots(below), len1 = (int)below.as.compound.len, base1 = base2 - s1;
     int new_elem_slots = (s1 - 1) + (s2 - 1);
-    Value tmp[4096];
+    Value tmp[LOCAL_MAX];
     memcpy(tmp, &stack[base1], (s1 - 1) * sizeof(Value));
     memcpy(&tmp[s1 - 1], &stack[base2], (s2 - 1) * sizeof(Value));
     sp = base1;
@@ -2281,7 +2576,7 @@ static void prim_take_n(Frame *e) {
 
     if (n < 0 || n > len) die("take-n: n out of range");
 
-    Value tmp[4096];
+    Value tmp[LOCAL_MAX];
     int tmp_sp = 0;
     for (int i = 0; i < (int)n; i++) {
         ElemRef r = compound_elem(&stack[base], s, len, i);
@@ -2305,7 +2600,7 @@ static void prim_drop_n(Frame *e) {
 
     if (n < 0 || n > len) die("drop-n: n out of range");
 
-    Value tmp[4096];
+    Value tmp[LOCAL_MAX];
     int tmp_sp = 0;
     for (int i = (int)n; i < len; i++) {
         ElemRef r = compound_elem(&stack[base], s, len, i);
@@ -2582,7 +2877,7 @@ static void prim_into(Frame *env) {
         memcpy(&stack[rec_base + existing.base], v_buf, v_s * sizeof(Value));
     } else {
         /* rebuild record */
-        Value tmp[4096];
+        Value tmp[LOCAL_MAX];
         int tmp_sp = 0;
         int new_len = 0;
 
@@ -2590,7 +2885,8 @@ static void prim_into(Frame *env) {
         int elem_end = rec_s - 1;
         int replaced = 0;
         /* walk backward to get field info, then copy forward */
-        int kpos[256], voff[256], vsz[256];
+        if (rec_len > LOCAL_MAX) die("into: record too large (%d fields)", rec_len);
+        int kpos[LOCAL_MAX], voff[LOCAL_MAX], vsz[LOCAL_MAX];
         for (int i = rec_len - 1; i >= 0; i--) {
             int lp = elem_end - 1;
             Value l = stack[rec_base + lp];
@@ -2602,6 +2898,7 @@ static void prim_into(Frame *env) {
         }
 
         for (int i = 0; i < rec_len; i++) {
+            if (stack[rec_base + kpos[i]].tag != VAL_SYM) die("into: record key is not a symbol");
             uint32_t k = stack[rec_base + kpos[i]].as.sym;
             if (k == key) {
                 tmp[tmp_sp++] = val_sym(key);
@@ -2677,6 +2974,7 @@ static void prim_lend(Frame *env) {
     int results_slots = sp - sp_before;
 
     /* save results */
+    if (results_slots > LOCAL_MAX) die("lend: result too large (%d slots)", results_slots);
     Value results[LOCAL_MAX];
     memcpy(results, &stack[sp_before], results_slots * sizeof(Value));
     sp = sp_before;
@@ -2715,6 +3013,20 @@ static void prim_mutate(Frame *env) {
     spush(box_val);
 }
 
+static void deep_copy_values(Value *dst, const Value *src, int slots) {
+    memcpy(dst, src, slots * sizeof(Value));
+    for (int i = 0; i < slots; i++) {
+        if (dst[i].tag == VAL_BOX) {
+            BoxData *orig_inner = (BoxData *)dst[i].as.box;
+            BoxData *copy_inner = malloc(sizeof(BoxData));
+            copy_inner->slots = orig_inner->slots;
+            copy_inner->data = malloc(orig_inner->slots * sizeof(Value));
+            deep_copy_values(copy_inner->data, orig_inner->data, orig_inner->slots);
+            dst[i].as.box = copy_inner;
+        }
+    }
+}
+
 static void prim_clone(Frame *e) {
     (void)e;
     Value v = spop();
@@ -2723,7 +3035,7 @@ static void prim_clone(Frame *e) {
     BoxData *copy = malloc(sizeof(BoxData));
     copy->data = malloc(orig->slots * sizeof(Value));
     copy->slots = orig->slots;
-    memcpy(copy->data, orig->data, orig->slots * sizeof(Value));
+    deep_copy_values(copy->data, orig->data, orig->slots);
     spush(v); /* original */
     Value v2;
     v2.tag = VAL_BOX;
@@ -2746,7 +3058,8 @@ static void prim_rotate(Frame *e) {
     n = ((n % len) + len) % len;
     if (n == 0) return;
 
-    Value tmp[4096];
+    if (len > LOCAL_MAX) die("rotate: list too large (%d elements)", len);
+    Value tmp[LOCAL_MAX];
     /* rotate: move last n elements to front */
     int split = len - (int)n;
     memcpy(tmp, &stack[base + split], (int)n * sizeof(Value));
@@ -2850,8 +3163,12 @@ static void prim_reshape(Frame *e) {
     if (dims_len != 2) die("reshape: only 2D reshape supported");
     ElemRef d0 = compound_elem(&stack[dims_base], dims_s, dims_len, 0);
     ElemRef d1 = compound_elem(&stack[dims_base], dims_s, dims_len, 1);
+    if (stack[dims_base + d0.base].tag != VAL_INT) die("reshape: row dimension must be int");
+    if (stack[dims_base + d1.base].tag != VAL_INT) die("reshape: col dimension must be int");
     int rows = (int)stack[dims_base + d0.base].as.i;
     int cols = (int)stack[dims_base + d1.base].as.i;
+    if (rows < 0 || cols < 0) die("reshape: dimensions must be non-negative");
+    if (rows > 0 && cols > INT32_MAX / rows) die("reshape: dimension overflow");
     sp -= dims_s;
 
     Value list_top = stack[sp - 1];
@@ -2892,18 +3209,21 @@ static void prim_transpose(Frame *e) {
     if (row0_top.tag != VAL_LIST) die("transpose: expected list of lists");
     int cols = (int)row0_top.as.compound.len;
 
+    if (s > LOCAL_MAX) die("transpose: matrix too large (%d slots)", s);
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
 
     /* extract into flat array (scalar elements only) */
+    if (rows > 0 && cols > INT32_MAX / rows) die("transpose: dimension overflow");
     double *flat = malloc(rows * cols * sizeof(double));
     int all_int = 1;
     for (int r = 0; r < rows; r++) {
         ElemRef row_ref = compound_elem(buf, s, rows, r);
         Value *rd = &buf[row_ref.base];
         Value rh = rd[row_ref.slots - 1];
-        if ((int)rh.as.compound.len != cols) die("transpose: ragged matrix");
+        if (rh.tag != VAL_LIST) die("transpose: row %d is not a list", r);
+        if ((int)rh.as.compound.len != cols) die("transpose: ragged matrix (row %d has %d cols, expected %d)", r, (int)rh.as.compound.len, cols);
         for (int c = 0; c < cols; c++) {
             ElemRef cell = compound_elem(rd, row_ref.slots, cols, c);
             Value cv = rd[cell.base];
@@ -2980,6 +3300,7 @@ static void prim_classify(Frame *e) {
             classes[i] = found;
         } else {
             classes[i] = unique_count;
+            if (unique_count >= LOCAL_MAX) die("classify: too many unique values (%d)", unique_count);
             uniques[unique_count++] = stack[base + r.base];
         }
     }
@@ -3073,7 +3394,8 @@ static void eval_body(Value *body, int slots, Frame *env) {
 
     int all_scalar = (slots == len + 1);
 
-    int offsets_buf[4096], sizes_buf[4096];
+    if (len > LOCAL_MAX) die("tuple body too large (%d elements, max %d)", len, LOCAL_MAX);
+    int offsets_buf[LOCAL_MAX], sizes_buf[LOCAL_MAX];
     if (!all_scalar) compute_offsets(body, slots, len, offsets_buf, sizes_buf);
 
     for (int k = 0; k < len; k++) {
@@ -3089,7 +3411,7 @@ static void eval_body(Value *body, int slots, Frame *env) {
                     sp += esz;
                     /* update tuple's captured env to current execution scope */
                     if (elem.tag == VAL_TUPLE) {
-                        exec_env->on_stack = 1; /* mark as captured */
+                        exec_env->refcount++; /* mark as captured */
                         stack[sp - 1].as.compound.env = exec_env;
                     }
                 } else if (elem.tag == VAL_WORD) {
@@ -3136,7 +3458,7 @@ static void eval_body(Value *body, int slots, Frame *env) {
                     spush(elem);
                 }
     }
-    if (!exec_env->on_stack) {
+    if (exec_env->refcount == 0) {
         exec_env->bind_count = saved_bind_count;
         exec_env->vals_used = saved_vals_used;
     }
@@ -3204,7 +3526,7 @@ static void build_tuple(Token *toks, int start, int end, int total_count, Frame 
     int total_elem_slots = sp - elem_base;
     spush(val_compound(VAL_TUPLE, elem_count, total_elem_slots + 1));
     /* capture creation-site environment for closures */
-    if (env) env->on_stack = 1; /* mark as captured — don't free */
+    if (env) env->refcount++; /* mark as captured */
     stack[sp - 1].as.compound.env = env;
 }
 
@@ -3396,7 +3718,13 @@ static void prim_keep(Frame *env) {
 }
 
 static void prim_repeat_op(Frame *env) {
-    POP_BODY(f, "repeat");
+    if (stack[sp-1].tag != VAL_TUPLE) die("repeat: expected tuple");
+    int f_s = val_slots(stack[sp-1]);
+    if (f_s > LOCAL_MAX) die("repeat: body too large (%d slots)", f_s);
+    if (f_s > sp) die("repeat: stack underflow");
+    Value f_buf[f_s];
+    memcpy(f_buf, &stack[sp - f_s], f_s * sizeof(Value));
+    sp -= f_s;
     int64_t n = pop_int();
     for (int64_t i = 0; i < n; i++)
         eval_body(f_buf, f_s, env);
@@ -3540,10 +3868,12 @@ static void prim_reverse(Frame *e) {
     int len = (int)top.as.compound.len;
     int base = sp - s;
 
+    if (s > LOCAL_MAX) die("reverse: list too large (%d slots)", s);
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
-    int offsets[4096], sizes[4096];
+    if (len > LOCAL_MAX) die("reverse: list too large (%d elements)", len);
+    int offsets[LOCAL_MAX], sizes[LOCAL_MAX];
     compute_offsets(buf, s, len, offsets, sizes);
     int result_base = sp;
     for (int i = len - 1; i >= 0; i--) {
@@ -3566,7 +3896,8 @@ static void prim_dedup(Frame *e) {
     Value buf[LOCAL_MAX];
     memcpy(buf, &stack[base], s * sizeof(Value));
     sp = base;
-    int offsets[4096], sizes2[4096];
+    if (len > LOCAL_MAX) die("dedup: list too large (%d elements)", len);
+    int offsets[LOCAL_MAX], sizes2[LOCAL_MAX];
     compute_offsets(buf, s, len, offsets, sizes2);
     int result_base = sp, result_count = 0;
     for (int i = 0; i < len; i++) {
@@ -3900,6 +4231,9 @@ int main(int argc, char **argv) {
     Frame *global = frame_new(NULL);
     current_file = "<prelude>";
     lex(PRELUDE);
+    int prelude_tok_count = tok_count;
+    Token prelude_tokens[TOK_MAX];
+    memcpy(prelude_tokens, tokens, prelude_tok_count * sizeof(Token));
     eval(tokens, tok_count, global);
 
     /* load user file */
@@ -3949,15 +4283,24 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (check_only) {
-        int errors = typecheck_tokens(tokens, tok_count);
+    /* typecheck prelude + user code together so TC knows prelude bindings */
+    int combined_count = prelude_tok_count + tok_count;
+    if (combined_count > TOK_MAX) die("too many tokens (prelude + user)");
+    Token combined[TOK_MAX];
+    memcpy(combined, prelude_tokens, prelude_tok_count * sizeof(Token));
+    memcpy(&combined[prelude_tok_count], tokens, tok_count * sizeof(Token));
+    int errors = typecheck_tokens(combined, combined_count);
+    if (errors > 0) {
+        fprintf(stderr, "%d type error(s)\n", errors);
         free(src);
         frame_free(global);
-        if (errors > 0) {
-            fprintf(stderr, "%d type error(s)\n", errors);
-            return 1;
-        }
+        return 1;
+    }
+
+    if (check_only) {
         fprintf(stderr, "type check passed\n");
+        free(src);
+        frame_free(global);
         return 0;
     }
 

@@ -6,13 +6,13 @@
 -- FORMAT: -- EXPECT: <error substring>
 -- <code that should panic>
 
--- EXPECT: stack underflow
+-- EXPECT: type error
 drop
 
--- EXPECT: stack underflow
+-- EXPECT: type error
 swap
 
--- EXPECT: stack underflow
+-- EXPECT: type error
 plus
 
 -- EXPECT: division by zero
@@ -33,7 +33,7 @@ false assert
 -- EXPECT: then branch must be tuple
 1 2 3 if
 
--- EXPECT: type mismatch
+-- EXPECT: type variable
 1 2.0 plus
 
 -- EXPECT: index 5 out of bounds
@@ -59,3 +59,27 @@ false assert
 
 -- EXPECT: unknown word
 nonexistent_word_xyz
+
+-- EXPECT: out of bounds
+[1 2 3] 5 99 set
+
+-- EXPECT: expected box
+1 mutate
+
+-- EXPECT: expected box
+1 lend
+
+-- EXPECT: expected box
+1 clone
+
+-- EXPECT: empty tuple
+stack pop
+
+-- EXPECT: expected list
+42 (1 plus) map
+
+-- EXPECT: expected list
+42 (1 eq) filter
+
+-- EXPECT: expected tuple or record of clauses
+1 2 3 match

@@ -17,7 +17,7 @@
 91 71 52 38 17 14 91 43 58 50 27 29 48
 63 66 04 68 89 53 67 30 73 16 69 87 40 31
 04 62 98 27 23 09 70 98 73 93 38 53 60 04 23]
-'tri let
+box 'tri let
 
 -- DP: bottom-up. Start from second-to-last row.
 -- Row r starts at index r*(r+1)/2 and has r+1 elements.
@@ -30,9 +30,7 @@
     r 1 plus r 2 plus mul 2 div c plus 'left-idx let
     left-idx 1 plus 'right-idx let
     r r 1 plus mul 2 div c plus 'cur-idx let
-    tri left-idx get tri right-idx get max
-    tri cur-idx get plus 'v let
-    tri cur-idx v set 'tri let
+    tri ('t let t left-idx get t right-idx get max t cur-idx get plus 'v let t cur-idx v set) mutate 'tri let
     c 1 plus 'c let
   )
   while
@@ -40,4 +38,4 @@
 )
 while
 
-tri 0 get print
+tri (0 get) lend swap free print

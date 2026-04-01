@@ -485,5 +485,193 @@ free
 [] dedup [] eq assert
 [] sort [] eq assert
 
+-- ===== Complex: curried closure =====
+'make-adder2 (
+  'a let
+  ('b let a b plus)
+) def
+3 make-adder2 'add3 let
+4 add3 apply 7 eq assert
+10 add3 apply 13 eq assert
+
+-- ===== Complex: closure over captured variable in map =====
+'scale (
+  'factor let
+  (factor mul)
+) def
+3 scale 'triple let
+[1 2 3 4] (triple apply) map [3 6 9 12] eq assert
+
+-- ===== Complex: GCD via recursion =====
+'gcd recur (
+  dup 0 eq (drop) (swap over mod gcd) if
+) def
+12 8 gcd 4 eq assert
+100 75 gcd 25 eq assert
+17 13 gcd 1 eq assert
+0 5 gcd 5 eq assert
+
+-- ===== Complex: iterative power =====
+'pow (
+  1 rot rot
+  (dup 0 eq not) (
+    1 sub (swap over mul swap) dip
+  ) while
+  drop drop
+) def
+2 10 pow 1024 eq assert
+3 4 pow 81 eq assert
+5 0 pow 1 eq assert
+7 1 pow 7 eq assert
+
+-- ===== Complex: records built incrementally =====
+rec 10 'x into 20 'y into 30 'z into
+  dup 'x at 10 eq assert
+  dup 'y at 20 eq assert
+  'z at 30 eq assert
+
+-- ===== Complex: record overwrite =====
+{'x 1 'y 2} 99 'x into 'x at 99 eq assert
+
+-- ===== Complex: box mutate in while loop =====
+0 box
+  5 (dup 0 eq not) (1 sub swap (1 plus) mutate swap) while
+  drop
+  () lend 5 eq assert
+free
+
+-- ===== Complex: clone and diverge boxes =====
+10 box clone
+  (100 plus) mutate
+  swap
+  () lend 10 eq assert
+  swap
+  () lend 110 eq assert
+free free
+
+-- ===== Complex: pipeline — range → map → filter → fold =====
+1 21 range (sqr) map (100 lt) filter (plus) reduce
+285 eq assert
+
+-- ===== Complex: dot product via zip + fold =====
+[1 2 3] [4 5 6] zip
+  0 (dup 0 get swap 1 get mul plus) fold
+32 eq assert
+
+-- ===== Complex: windows + map for pairwise differences =====
+[10 13 17 22] 2 windows
+  (dup 1 get swap 0 get sub) map
+[3 4 5] eq assert
+
+-- ===== Complex: rise + select = sort by derived key =====
+[30 10 50 20 40] dup rise select [10 20 30 40 50] eq assert
+
+-- ===== Complex: classify =====
+['a 'b 'a 'c 'b 'a] classify [0 1 0 2 1 0] eq assert
+
+-- ===== Complex: deep dip nesting =====
+1 2 3 (10 plus) dip (20 plus) dip
+3 eq assert 32 eq assert 1 eq assert
+
+-- ===== Complex: keep + bi combinations =====
+10 (2 mul) keep 10 eq assert 20 eq assert
+6 (1 plus) (1 sub) bi 5 eq assert 7 eq assert
+
+-- ===== Complex: repeat for exponentiation =====
+1 10 (2 mul) repeat 1024 eq assert
+
+-- ===== Complex: collatz sequence length (iterative) =====
+'collatz-len (
+  0 swap
+  (dup 1 eq not) (
+    dup 2 mod 0 eq (2 div) (3 mul 1 plus) if
+    swap 1 plus swap
+  ) while
+  drop
+) def
+27 collatz-len 111 eq assert
+6 collatz-len 8 eq assert
+1 collatz-len 0 eq assert
+
+-- ===== Complex: build list in while loop =====
+list 1
+(dup 6 lt) (dup (give) dip 1 plus) while
+drop
+[1 2 3 4 5] eq assert
+
+-- ===== Complex: Newton's method sqrt(2) =====
+1.0 10 (dup 2.0 swap div plus 2.0 div) repeat
+dup dup mul 2.0 sub fabs 0.0001 lt assert drop
+
+-- ===== Complex: match in function =====
+'color-val (
+  {'red (0) 'green (1) 'blue (2)} -1 match
+) def
+'red color-val 0 eq assert
+'blue color-val 2 eq assert
+'green color-val 1 eq assert
+
+-- ===== Complex: cumulative sum via scan =====
+[1 2 3 4 5] 0 (plus) scan [1 3 6 10 15] eq assert
+[10 20 30] 0 (plus) scan [10 30 60] eq assert
+
+-- ===== Complex: fibonacci via repeat (no recursion) =====
+0 1 10 (swap over plus) repeat drop 55 eq assert
+0 1 20 (swap over plus) repeat drop 6765 eq assert
+
+-- ===== Complex: table + filter + map pipeline =====
+[1 2 3 4 5] (sqr) table
+  (1 get 10 lt) filter
+  (0 get) map
+[1 2 3] eq assert
+
+-- ===== Complex: compose chain =====
+(1 plus) (2 mul) compose (3 sub) compose (sqr) compose
+5 swap apply 81 eq assert
+
+-- ===== Complex: mutual recursion depth =====
+10 even? assert
+11 odd? assert
+7 even? not assert
+
+-- ===== Complex: where + map + fold pipeline =====
+[10 25 30 5 40 15]
+  dup (20 lt) where select
+  (sqr) map (plus) reduce
+350 eq assert
+
+-- ===== Complex: zip self for pairs =====
+[1 2 3 4] dup 1 drop-n zip [[1 2] [2 3] [3 4]] eq assert
+
+-- ===== Complex: nested closures =====
+'make-between (
+  'lo let 'hi let
+  (dup lo le not swap hi lt and)
+) def
+10 1 make-between 'in-range let
+5 in-range apply assert
+0 in-range apply not assert
+10 in-range apply not assert
+
+-- ===== Complex: box with record inside =====
+{'count 0 'total 0} box
+  (dup 'count at 1 plus 'count into) mutate
+  (dup 'count at 1 plus 'count into) mutate
+  (dup 'total at 100 plus 'total into) mutate
+  () lend
+  dup 'count at 2 eq assert
+  'total at 100 eq assert
+free
+
+-- ===== Complex: triple nested list operations =====
+[[1 2 3] [4 5 6] [7 8 9]]
+  ((plus) reduce) map
+  (plus) reduce
+45 eq assert
+
+-- ===== Complex: rotate + windows =====
+[1 2 3 4 5] 1 rotate 3 windows
+[[5 1 2] [1 2 3] [2 3 4]] eq assert
+
 -- ===== Done =====
 "All tests passed!" print

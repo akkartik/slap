@@ -50,11 +50,11 @@
 -- TYPE ERROR: can't drop a box (not copyable, must free)
 42 box drop
 
--- EXPECT: type variable mismatch
+-- EXPECT: type variable
 -- TYPE ERROR: int + float (type var 'a must be same for both args)
 1 2.0 mul
 
--- EXPECT: type variable mismatch
+-- EXPECT: type variable
 -- TYPE ERROR: sub with mismatched types
 3 1.0 sub
 
@@ -92,6 +92,34 @@
 -- EXPECT: function body produces
 -- TYPE ERROR: body produces wrong number of outputs
 (dup) 'bad2 type
+  int lent in
+  int move out
+  def
+
+-- EXPECT: type error
+-- TYPE ERROR: plus on int result (eq returns int, plus expects num)
+1 2 eq 3.0 plus
+
+-- EXPECT: type error
+-- TYPE ERROR: plus on box
+42 box 1 plus
+
+-- EXPECT: type error
+-- TYPE ERROR: and on float (int-only)
+1.0 2.0 and
+
+-- EXPECT: type error
+-- TYPE ERROR: or on float (int-only)
+1.0 2.0 or
+
+-- EXPECT: type error
+-- TYPE ERROR: swap with only 1 value (box)
+42 box swap
+
+-- EXPECT: function body consumes
+-- TYPE ERROR: body declares 2 inputs but only consumes 1
+(drop) 'foo type
+  int lent in
   int lent in
   int move out
   def
