@@ -1,0 +1,30 @@
+-- Project Euler #7: 10001st Prime
+-- What is the 10001st prime number?
+-- Answer: 104743
+
+'is-prime (
+  'n let
+  n 2 lt (0) (
+    2 'i let
+    1 'result let
+    (i i mul n le result and)
+    (
+      n i mod 0 eq (0 'result let) () if
+      i 1 plus 'i let
+    )
+    while
+    result
+  ) if
+) def
+
+0 'count let
+1 'candidate let
+
+(count 10001 lt)
+(
+  candidate 1 plus 'candidate let
+  candidate is-prime (count 1 plus 'count let) () if
+)
+while
+
+candidate print

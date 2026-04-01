@@ -1,0 +1,8 @@
+-- Project Euler #1: Multiples of 3 or 5
+-- Find the sum of all multiples of 3 or 5 below 1000.
+-- Answer: 233168
+
+1 1000 range
+  (dup 3 mod 0 eq swap 5 mod 0 eq or) filter
+  sum
+print

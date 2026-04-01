@@ -1,0 +1,43 @@
+-- Project Euler #19: Counting Sundays
+-- How many Sundays fell on the first of the month from 1 Jan 1901 to 31 Dec 2000?
+-- Answer: 171
+
+-- Zeller-like: count day of week.
+-- 1 Jan 1900 was a Monday (day=1, 0=Sun,1=Mon,...,6=Sat).
+-- Advance day-of-week through each month.
+
+'is-leap (
+  'y let
+  y 400 mod 0 eq (1) (
+    y 100 mod 0 eq (0) (
+      y 4 mod 0 eq
+    ) if
+  ) if
+) def
+
+[31 28 31 30 31 30 31 31 30 31 30 31] 'mdays let
+
+-- Start: 1 Jan 1900 = Monday (dow=1)
+1 'dow let
+0 'count let
+
+1900 'y let
+(y 2000 le)
+(
+  0 'm let
+  (m 12 lt)
+  (
+    -- count if Sunday on 1st, and year >= 1901
+    y 1901 ge dow 0 eq and (count 1 plus 'count let) () if
+    -- advance dow by days in this month
+    mdays m get 'days let
+    m 1 eq y is-leap and (days 1 plus 'days let) () if
+    dow days plus 7 mod 'dow let
+    m 1 plus 'm let
+  )
+  while
+  y 1 plus 'y let
+)
+while
+
+count print

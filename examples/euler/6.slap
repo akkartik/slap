@@ -1,0 +1,9 @@
+-- Project Euler #6: Sum Square Difference
+-- Difference between sum-of-squares and square-of-sum for 1-100.
+-- Answer: 25164150
+
+1 101 range dup
+(sqr) map sum 'sum-of-sq let
+sum sqr 'sq-of-sum let
+
+sq-of-sum sum-of-sq sub print

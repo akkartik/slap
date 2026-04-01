@@ -1,0 +1,25 @@
+-- Project Euler #10: Summation of Primes
+-- Sum of all primes below 2,000,000.
+-- Answer: 142913828922
+
+'is-prime (
+  'n let
+  n 2 lt (0) (
+  n 3 le (1) (
+  n 2 mod 0 eq (0) (
+  n 3 mod 0 eq (0) (
+    5 'i let 1 'ok let
+    (i i mul n le ok and)
+    (n i mod 0 eq (0 'ok let)
+      (n i 2 plus mod 0 eq (0 'ok let) (i 6 plus 'i let) if)
+    if)
+    while ok
+  ) if) if) if) if
+) def
+
+2 'total let
+3 'n let
+(n 2000000 lt)
+(n is-prime (total n plus 'total let) () if n 2 plus 'n let)
+while
+total print

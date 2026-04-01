@@ -1,0 +1,31 @@
+-- Project Euler #12: Highly Divisible Triangular Number
+-- First triangle number with over 500 divisors.
+-- Answer: 76576500
+
+-- Count divisors via prime factorization
+'count-divisors (
+  'n let 1 'result let 2 'p let
+  (p p mul n le)
+  (
+    0 'exp let
+    (n p mod 0 eq) (exp 1 plus 'exp let n p div 'n let) while
+    result exp 1 plus mul 'result let
+    p 1 plus 'p let
+  )
+  while
+  n 1 gt (result 2 mul 'result let) () if
+  result
+) def
+
+0 'found let
+1 'n let
+(found not)
+(
+  n 2 mod 0 eq
+    (n 2 div count-divisors n 1 plus count-divisors mul)
+    (n count-divisors n 1 plus 2 div count-divisors mul)
+  if
+  500 gt (1 'found let) (n 1 plus 'n let) if
+)
+while
+n n 1 plus mul 2 div print

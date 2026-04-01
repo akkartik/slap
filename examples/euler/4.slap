@@ -1,0 +1,35 @@
+-- Project Euler #4: Largest Palindrome Product
+-- Largest palindrome made from the product of two 3-digit numbers.
+-- Answer: 906609
+
+'is-palindrome (
+  'num let
+  0 'rev let
+  num 'tmp let
+  (tmp 0 gt)
+  (
+    rev 10 mul tmp 10 mod plus 'rev let
+    tmp 10 div 'tmp let
+  )
+  while
+  rev num eq
+) def
+
+0 'best let
+999 'i let
+
+(i 100 ge)
+(
+  999 'j let
+  (j i ge)
+  (
+    i j mul 'p let
+    p best gt (p is-palindrome (p 'best let) () if) () if
+    j 1 sub 'j let
+  )
+  while
+  i 1 sub 'i let
+)
+while
+
+best print

@@ -1,0 +1,111 @@
+-- Type system tests
+-- Run with: ./slap --check tests/type.slap
+-- All code here should type-check cleanly
+
+-- ===== Typed primitive declarations =====
+
+-- Declare types for user-defined functions using the type DSL
+
+'double type
+  int lent in
+  int move out
+  def
+
+-- The body must be provided before the type annotation
+(2 mul) 'double type
+  int lent in
+  int move out
+  def
+
+-- ===== Basic arithmetic types =====
+2 3 plus drop
+2.0 3.0 plus drop
+5 neg drop
+
+-- ===== Comparison types =====
+3 5 eq drop
+3 5 lt drop
+
+-- ===== Logic types =====
+1 not drop
+1 0 and drop
+0 1 or drop
+
+-- ===== Conversions =====
+42 itof drop
+3.14 ftoi drop
+
+-- ===== Float math =====
+2.0 fsqrt drop
+1.0 fsin drop
+1.0 fcos drop
+3.7 ffloor drop
+3.2 fceil drop
+2.5 fround drop
+1.0 fexp drop
+1.0 flog drop
+2.0 3.0 fpow drop
+
+-- ===== List operations =====
+list drop
+[1 2 3] len drop
+
+-- ===== Box lifecycle =====
+42 box free
+
+-- ===== Integer modulo =====
+10 3 mod drop
+
+-- ===== String (list of int) =====
+"hello" len drop
+
+-- ===== Assertions =====
+1 assert
+true assert
+
+-- ===== Multiple operations in sequence =====
+2 3 plus 4 mul 1 sub drop
+
+-- ===== Nested arithmetic =====
+1 2 plus 3 4 plus mul drop
+
+-- ===== User-defined typed functions =====
+
+-- Define a typed increment function
+(1 plus) 'my-inc type
+  int lent in
+  int move out
+  def
+
+5 my-inc 6 eq assert
+
+-- Define typed double
+(2 mul) 'my-double type
+  'a num lent in
+  'a num move out
+  def
+
+3 my-double 6 eq assert
+
+-- Define typed identity (polymorphic)
+'not type
+  int lent in
+  int move out
+  def
+
+-- Type declarations for existing primitives (should not re-bind)
+'eq type
+  'a lent in
+  'a lent in
+  int move out
+  def
+
+-- ===== End-to-end: typed program =====
+(1 plus) 'bump type
+  int lent in
+  int move out
+  def
+
+0 bump bump bump 3 eq assert
+
+"Type check tests passed!" print

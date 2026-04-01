@@ -1,0 +1,21 @@
+-- Project Euler #14: Longest Collatz Sequence
+-- Which starting number under 1,000,000 produces the longest Collatz chain?
+-- Answer: 837799
+
+0 'best-len let
+1 'best-start let
+1 'i let
+(i 1000000 lt)
+(
+  i 'n let
+  1 'count let
+  (n 1 neq)
+  (n 2 mod 0 eq (n 2 div 'n let) (n 3 mul 1 plus 'n let) if
+   count 1 plus 'count let)
+  while
+  count best-len gt (count 'best-len let i 'best-start let) () if
+  i 1 plus 'i let
+)
+while
+
+best-start print

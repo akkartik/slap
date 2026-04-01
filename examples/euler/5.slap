@@ -1,0 +1,13 @@
+-- Project Euler #5: Smallest Multiple
+-- Smallest positive number evenly divisible by all numbers 1-20.
+-- Answer: 232792560
+
+'gcd recur (
+  dup 0 eq (drop) (swap over mod gcd) if
+) def
+
+'lcm (over over gcd div mul) def
+
+1 2 lcm 3 lcm 4 lcm 5 lcm 6 lcm 7 lcm 8 lcm 9 lcm 10 lcm
+11 lcm 12 lcm 13 lcm 14 lcm 15 lcm 16 lcm 17 lcm 18 lcm 19 lcm 20 lcm
+print

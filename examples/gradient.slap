@@ -1,0 +1,24 @@
+-- Fantasy console: draw a gradient
+-- Run with: ./slap-sdl examples/gradient.slap
+
+-- model is just a frame counter
+0
+
+-- on tick: increment model
+'tick (drop 1 plus) on
+
+-- render: draw gradient based on model
+(
+  drop  -- drop the model copy from show's dup
+  0 (dup 480 lt) (
+    dup 0 swap (dup 640 lt) (
+      -- x y on stack
+      over over plus 4 mod
+      pixel
+      1 plus
+    ) while
+    drop  -- drop x=640
+    1 plus
+  ) while
+  drop  -- drop y=480
+) show

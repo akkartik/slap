@@ -1,0 +1,23 @@
+-- Project Euler #15: Lattice Paths
+-- Answer: 137846528640
+-- C(40,20) using DP on a 21-element row
+
+list 21 (0 give) repeat 0 1 set 'row let
+
+1 'i let
+(i 40 le)
+(
+  i 'j let
+  (j 0 gt)
+  (
+    j 20 le (
+      row j get row j 1 sub get plus 'v let
+      row j v set 'row let
+    ) () if
+    j 1 sub 'j let
+  )
+  while
+  i 1 plus 'i let
+)
+while
+row 20 get print

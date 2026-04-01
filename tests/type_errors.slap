@@ -1,0 +1,97 @@
+-- Type error tests
+-- Each case should produce exactly one type error when run with --check
+-- Run via: python3 tests/run_type_errors.py
+
+-- EXPECT: type error
+-- TYPE ERROR: dup on box (not copyable)
+42 box dup
+
+-- EXPECT: type error
+-- TYPE ERROR: plus on mismatched types (int + float)
+1 2.0 plus
+
+-- EXPECT: type error
+-- TYPE ERROR: mod on float (int-only)
+2.0 3.0 mod
+
+-- EXPECT: type error
+-- TYPE ERROR: not on float (int-only)
+2.0 not
+
+-- EXPECT: type error
+-- TYPE ERROR: assert on float (int-only)
+1.0 assert
+
+-- EXPECT: type error
+-- TYPE ERROR: len on int (list-only)
+42 len
+
+-- EXPECT: type error
+-- TYPE ERROR: fsqrt on int (float-only)
+42 fsqrt
+
+-- EXPECT: type error
+-- TYPE ERROR: ftoi on int (float-only)
+42 ftoi
+
+-- EXPECT: type error
+-- TYPE ERROR: itof on float (int-only)
+3.14 itof
+
+-- EXPECT: type error
+-- TYPE ERROR: free on int (box-only)
+42 free
+
+-- EXPECT: type error
+-- TYPE ERROR: plus needs 2 args, stack has 1
+42 plus
+
+-- EXPECT: copyable
+-- TYPE ERROR: can't drop a box (not copyable, must free)
+42 box drop
+
+-- EXPECT: type variable mismatch
+-- TYPE ERROR: int + float (type var 'a must be same for both args)
+1 2.0 mul
+
+-- EXPECT: type variable mismatch
+-- TYPE ERROR: sub with mismatched types
+3 1.0 sub
+
+-- EXPECT: type error
+-- TYPE ERROR: give to non-list
+42 99 give
+
+-- EXPECT: type error
+-- TYPE ERROR: len of non-list
+42 len
+
+-- EXPECT: type error
+-- TYPE ERROR: range with float args
+1.0 5.0 range
+
+-- EXPECT: type error
+-- TYPE ERROR: sort of non-list
+42 sort
+
+-- EXPECT: type error
+-- TYPE ERROR: get on int (not a list)
+42 0 get
+
+-- EXPECT: copyable
+-- TYPE ERROR: dup a box (linear)
+42 box dup free free
+
+-- EXPECT: function body consumes
+-- TYPE ERROR: body consumes wrong number of inputs
+(drop drop) 'bad type
+  int lent in
+  int move out
+  def
+
+-- EXPECT: function body produces
+-- TYPE ERROR: body produces wrong number of outputs
+(dup) 'bad2 type
+  int lent in
+  int move out
+  def

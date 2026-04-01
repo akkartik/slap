@@ -1,0 +1,29 @@
+-- Project Euler #20: Factorial Digit Sum
+-- Sum of the digits of 100!
+-- Answer: 648
+
+-- mul-digits: digits n → digits' (keeps result on stack)
+'mul-digits (
+  'n let 'ds let
+  0 'carry let
+  0 'j let
+  list
+  (j ds len lt)
+  (
+    ds j get n mul carry plus 'v let
+    v 10 mod give
+    v 10 div 'carry let
+    j 1 plus 'j let
+  )
+  while
+  (carry 0 gt)
+  (carry 10 mod give carry 10 div 'carry let)
+  while
+) def
+
+[1]
+2 'n let
+(n 100 le)
+(n mul-digits n 1 plus 'n let)
+while
+sum print

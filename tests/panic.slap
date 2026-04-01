@@ -1,0 +1,61 @@
+-- Runtime panic tests
+-- Each test is a single line that should crash with a specific error.
+-- Run via: make test-panic (see Makefile)
+-- This file is NOT run directly; the test harness runs each line separately.
+
+-- FORMAT: -- EXPECT: <error substring>
+-- <code that should panic>
+
+-- EXPECT: stack underflow
+drop
+
+-- EXPECT: stack underflow
+swap
+
+-- EXPECT: stack underflow
+plus
+
+-- EXPECT: division by zero
+1 0 div
+
+-- EXPECT: division by zero
+1 0 mod
+
+-- EXPECT: assertion failed
+0 assert
+
+-- EXPECT: assertion failed
+false assert
+
+-- EXPECT: expected tuple
+1 apply
+
+-- EXPECT: then branch must be tuple
+1 2 3 if
+
+-- EXPECT: type mismatch
+1 2.0 plus
+
+-- EXPECT: index 5 out of bounds
+[1 2 3] 5 get
+
+-- EXPECT: index -1 out of bounds
+[1 2 3] -1 get
+
+-- EXPECT: expected list
+1 len
+
+-- EXPECT: expected list
+1 2 give
+
+-- EXPECT: expected box
+1 free
+
+-- EXPECT: grab: empty list
+[] grab
+
+-- EXPECT: reduce: empty list
+[] (plus) reduce
+
+-- EXPECT: unknown word
+nonexistent_word_xyz

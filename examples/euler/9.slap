@@ -1,0 +1,20 @@
+-- Project Euler #9: Special Pythagorean Triplet
+-- Find a*b*c where a+b+c=1000 and a^2+b^2=c^2.
+-- Answer: 31875000
+
+1 'a let
+(a 998 lt)
+(
+  a 1 plus 'b let
+  (b 1000 a sub lt)
+  (
+    1000 a sub b sub 'c let
+    a sqr b sqr plus c sqr eq
+      (a b mul c mul print halt)
+    () if
+    b 1 plus 'b let
+  )
+  while
+  a 1 plus 'a let
+)
+while

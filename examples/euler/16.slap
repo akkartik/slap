@@ -1,0 +1,27 @@
+-- Project Euler #16: Power Digit Sum
+-- Sum of the digits of 2^1000.
+-- Answer: 1366
+
+-- Big number as list of digits (LSB first).
+-- double-digits: digits → digits' (on stack, no let for result)
+'double-digits (
+  'ds let
+  0 'carry let
+  0 'j let
+  list
+  (j ds len lt)
+  (
+    ds j get 2 mul carry plus 'val let
+    val 10 mod give
+    val 10 div 'carry let
+    j 1 plus 'j let
+  )
+  while
+  (carry 0 gt)
+  (carry 10 mod give carry 10 div 'carry let)
+  while
+) def
+
+[1]
+1000 (double-digits) repeat
+sum print

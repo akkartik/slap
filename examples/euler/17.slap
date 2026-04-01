@@ -1,0 +1,35 @@
+-- Project Euler #17: Number Letter Counts
+-- Total letters if 1-1000 written out in words (no spaces/hyphens).
+-- Answer: 21124
+
+[0 3 3 5 4 4 3 5 5 4] 'ones let
+[3 6 6 8 8 7 7 9 8 8] 'teens let
+[0 0 6 6 5 5 5 7 6 6] 'tens let
+
+'word-len (
+  'n let
+  n 1000 eq (11) (
+    0 'wl let
+    n 100 ge (
+      ones n 100 div get 7 plus 'wl let
+      n 100 mod 0 neq (wl 3 plus 'wl let) () if
+      n 100 mod 'n let
+    ) () if
+    n 20 ge (
+      wl tens n 10 div get plus ones n 10 mod get plus
+    ) (
+      n 10 ge (
+        wl teens n 10 sub get plus
+      ) (
+        n 0 gt (wl ones n get plus) (wl) if
+      ) if
+    ) if
+  ) if
+) def
+
+0 'total let
+1 'i let
+(i 1000 le)
+(total i word-len plus 'total let i 1 plus 'i let)
+while
+total print
