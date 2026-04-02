@@ -1,0 +1,79 @@
+-- Project Euler #35: Circular Primes
+-- How many circular primes are there below one million?
+-- Answer: 55
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        1 'ip-ok let
+        3 'ip-i let
+        (ip-i ip-i mul ip-n le ip-ok and)
+        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        while
+        ip-ok
+      ) if
+    ) if
+  ) if
+) def
+
+'num-digits (
+  'nd-n let
+  0 'nd-c let
+  (nd-n 0 gt) (nd-c 1 plus 'nd-c let nd-n 10 div 'nd-n let) while
+  nd-c
+) def
+
+'check-circular (
+  'cc-n let
+  cc-n num-digits 'cc-d let
+  1 cc-d 1 sub (10 mul) repeat 'cc-pow let
+  1 'cc-ok let
+  cc-n 'cc-r let
+  0 'cc-i let
+  (cc-i cc-d lt cc-ok and)
+  (
+    cc-r is-prime not (0 'cc-ok let) () if
+    cc-r 10 mod cc-pow mul cc-r 10 div plus 'cc-r let
+    cc-i 1 plus 'cc-i let
+  ) while
+  cc-ok
+) def
+
+[1 3 7 9] 'cds let
+
+-- 2 and 5 are circular primes (special single-digit cases)
+4 'count let
+
+-- Generate candidates with digits from {1,3,7,9}, 2..6 digits
+-- 2-digit
+0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (
+  cds d0 get 10 mul cds d1 get plus check-circular (count 1 plus 'count let) () if
+d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+
+-- 3-digit
+0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (
+  cds d0 get 100 mul cds d1 get 10 mul plus cds d2 get plus
+  check-circular (count 1 plus 'count let) () if
+d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+
+-- 4-digit
+0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (
+  cds d0 get 1000 mul cds d1 get 100 mul plus cds d2 get 10 mul plus cds d3 get plus
+  check-circular (count 1 plus 'count let) () if
+d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+
+-- 5-digit
+0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (0 'd4 let (d4 4 lt) (
+  cds d0 get 10000 mul cds d1 get 1000 mul plus cds d2 get 100 mul plus cds d3 get 10 mul plus cds d4 get plus
+  check-circular (count 1 plus 'count let) () if
+d4 1 plus 'd4 let) while d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+
+-- 6-digit
+0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (0 'd4 let (d4 4 lt) (0 'd5 let (d5 4 lt) (
+  cds d0 get 100000 mul cds d1 get 10000 mul plus cds d2 get 1000 mul plus cds d3 get 100 mul plus cds d4 get 10 mul plus cds d5 get plus
+  check-circular (count 1 plus 'count let) () if
+d5 1 plus 'd5 let) while d4 1 plus 'd4 let) while d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+
+count print

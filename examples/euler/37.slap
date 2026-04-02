@@ -1,0 +1,61 @@
+-- Project Euler #37: Truncatable Primes
+-- Sum of the 11 primes that are truncatable from both left and right
+-- Answer: 748317
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        1 'ip-ok let
+        3 'ip-i let
+        (ip-i ip-i mul ip-n le ip-ok and)
+        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        while
+        ip-ok
+      ) if
+    ) if
+  ) if
+) def
+
+'left-trunc (
+  'lt-n let
+  1 'lt-ok let
+  -- Find 10^(d-1)
+  1 'lt-pow let
+  (lt-pow 10 mul lt-n le) (lt-pow 10 mul 'lt-pow let) while
+  -- Remove leading digit repeatedly
+  (lt-pow 1 gt lt-ok and)
+  (
+    lt-n lt-pow mod 'lt-n let
+    lt-pow 10 div 'lt-pow let
+    lt-n 0 eq (0 'lt-ok let) (lt-n is-prime not (0 'lt-ok let) () if) if
+  ) while
+  lt-ok
+) def
+
+'right-trunc (
+  'rt-n let
+  1 'rt-ok let
+  (rt-n 9 gt rt-ok and)
+  (
+    rt-n 10 div 'rt-n let
+    rt-n is-prime not (0 'rt-ok let) () if
+  ) while
+  rt-ok
+) def
+
+0 'total let
+0 'found let
+11 'n let
+(found 11 lt)
+(
+  n is-prime (
+    n left-trunc n right-trunc and (
+      total n plus 'total let
+      found 1 plus 'found let
+    ) () if
+  ) () if
+  n 2 plus 'n let
+) while
+total print

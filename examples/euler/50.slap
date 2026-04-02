@@ -1,0 +1,62 @@
+-- Project Euler #50: Consecutive Prime Sum
+-- Prime below 1M that is sum of most consecutive primes
+-- Answer: 997651
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        1 'ip-ok let
+        3 'ip-i let
+        (ip-i ip-i mul ip-n le ip-ok and)
+        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        while
+        ip-ok
+      ) if
+    ) if
+  ) if
+) def
+
+-- Generate primes up to 4600 on stack
+list
+2 'pn let
+(pn 4600 lt) (pn is-prime (pn give) () if pn 1 plus 'pn let) while
+'primes let
+primes len 'pcount let
+
+-- Compute prefix sums on stack
+list 0 give
+0 'ps let
+0 'pxi let
+(pxi pcount lt)
+(
+  ps 'primes pxi nth plus 'ps let
+  ps give
+  pxi 1 plus 'pxi let
+) while
+'prefix let
+prefix len 'pflen let
+
+-- Find max window where prefix[w] < 1M
+pflen 1 sub 'maxw let
+('prefix maxw nth 1000000 ge) (maxw 1 sub 'maxw let) while
+
+-- Search from largest window down
+0 'best-len let
+0 'best-val let
+maxw 'w let
+(w best-len gt)
+(
+  0 'wi let
+  (wi w plus pflen lt)
+  (
+    'prefix wi w plus nth 'prefix wi nth sub 'wsum let
+    wsum 1000000 lt wsum is-prime and (
+      w best-len gt (w 'best-len let wsum 'best-val let) () if
+    ) () if
+    wi 1 plus 'wi let
+  ) while
+  w 1 sub 'w let
+) while
+best-val print

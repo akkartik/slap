@@ -1,0 +1,70 @@
+-- Project Euler #49: Prime Permutations
+-- 4-digit primes: arithmetic sequence of 3 that are permutations of each other
+-- Answer: 296962999629 (not the 1487 sequence)
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        1 'ip-ok let
+        3 'ip-i let
+        (ip-i ip-i mul ip-n le ip-ok and)
+        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        while
+        ip-ok
+      ) if
+    ) if
+  ) if
+) def
+
+'digit-sig (
+  'ds-n let
+  ds-n 1000 div 'ds-a let
+  ds-n 100 div 10 mod 'ds-b let
+  ds-n 10 div 10 mod 'ds-c let
+  ds-n 10 mod 'ds-d let
+  ds-a ds-b gt (ds-b 'ds-tmp let ds-a 'ds-b let ds-tmp 'ds-a let) () if
+  ds-c ds-d gt (ds-d 'ds-tmp let ds-c 'ds-d let ds-tmp 'ds-c let) () if
+  ds-a ds-c gt (ds-c 'ds-tmp let ds-a 'ds-c let ds-tmp 'ds-a let) () if
+  ds-b ds-d gt (ds-d 'ds-tmp let ds-b 'ds-d let ds-tmp 'ds-b let) () if
+  ds-b ds-c gt (ds-c 'ds-tmp let ds-b 'ds-c let ds-tmp 'ds-b let) () if
+  ds-a 1000 mul ds-b 100 mul plus ds-c 10 mul plus ds-d plus
+) def
+
+-- Build encoded list on stack (sig*10000+prime), sort
+list
+1001 'en let
+(en 9999 le)
+(en is-prime (en digit-sig 10000 mul en plus give) () if en 2 plus 'en let)
+while
+sort 'encoded let
+encoded len 'elen let
+
+-- Scan for arithmetic sequences of 3 with same digit signature
+0 'answer let
+0 'ei let
+(ei elen lt answer 0 eq and)
+(
+  'encoded ei nth 'ev let
+  ev 10000 div 'esig let
+  ev 10000 mod 'ep1 let
+  ei 1 plus 'ej let
+  (ej elen lt answer 0 eq and)
+  (
+    'encoded ej nth 'ev2 let
+    ev2 10000 div esig eq (
+      ev2 10000 mod 'ep2 let
+      ep2 ep1 sub 'ediff let
+      ep2 ediff plus 'ep3 let
+      ep3 9999 le ep3 is-prime and (ep3 digit-sig esig eq) (0) if (
+        ep1 1487 neq (
+          ep1 100000000 mul ep2 10000 mul plus ep3 plus 'answer let
+        ) () if
+      ) () if
+    ) () if
+    ej 1 plus 'ej let
+  ) while
+  ei 1 plus 'ei let
+) while
+answer print

@@ -1,0 +1,43 @@
+-- Project Euler #23: Non-abundant Sums
+-- Sum of positive integers not expressible as sum of two abundant numbers
+-- Answer: 4179871
+
+-- All work inside one mutate: sieve divisor sums, then check pairs via nth.
+list 28124 (0 give) repeat box 'divs let
+divs (
+  'dv let
+  -- Sieve: dv[n] = sum of proper divisors of n
+  1 'si let
+  (si 14062 le)
+  (
+    si 2 mul 'sj let
+    (sj 28124 lt)
+    (
+      'dv sj nth si plus 'sv let
+      dv sj sv set 'dv let
+      sj si plus 'sj let
+    ) while
+    si 1 plus 'si let
+  ) while
+
+  -- For each n, check if expressible as sum of two abundant numbers
+  0 'total let
+  1 'sn let
+  (sn 28124 lt)
+  (
+    0 'sfound let
+    12 'sa let
+    (sa 2 mul sn le sfound not and)
+    (
+      'dv sa nth sa gt (
+        'dv sn sa sub nth sn sa sub gt (1 'sfound let) () if
+      ) () if
+      sa 1 plus 'sa let
+    ) while
+    sfound not (total sn plus 'total let) () if
+    sn 1 plus 'sn let
+  ) while
+  total print
+  dv
+) mutate 'divs let
+divs free

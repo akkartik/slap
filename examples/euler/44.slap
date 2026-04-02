@@ -1,0 +1,30 @@
+-- Project Euler #44: Pentagon Numbers
+-- Find pair of pentagonal numbers whose sum and difference are pentagonal
+-- Answer: 5482660
+
+'is-pentagonal (
+  'ipn-x let
+  1 24 ipn-x mul plus itof fsqrt 'ipn-s let
+  ipn-s ftoi 'ipn-si let
+  ipn-si ipn-si mul itof ipn-s ipn-s mul sub fabs 0.5 lt (
+    ipn-si 1 plus 6 mod 0 eq
+  ) (0) if
+) def
+
+0 'answer let
+2 'k let
+(answer 0 eq)
+(
+  k 3 k mul 1 sub mul 2 div 'pk let
+  1 'j let
+  (j k lt answer 0 eq and)
+  (
+    j 3 j mul 1 sub mul 2 div 'pj let
+    pk pj sub 'diff let
+    pk pj plus 'sum let
+    diff is-pentagonal sum is-pentagonal and (diff 'answer let) () if
+    j 1 plus 'j let
+  ) while
+  k 1 plus 'k let
+) while
+answer print

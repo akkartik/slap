@@ -1,0 +1,27 @@
+-- Project Euler #47: Distinct Prime Factors
+-- First of 4 consecutive integers each having 4 distinct prime factors
+-- Answer: 134043
+
+'count-factors (
+  'cf-n let
+  0 'cf-count let
+  2 'cf-p let
+  (cf-p cf-p mul cf-n le)
+  (
+    cf-n cf-p mod 0 eq (
+      cf-count 1 plus 'cf-count let
+      (cf-n cf-p mod 0 eq) (cf-n cf-p div 'cf-n let) while
+    ) () if
+    cf-p 1 plus 'cf-p let
+  ) while
+  cf-n 1 gt (cf-count 1 plus) (cf-count) if
+) def
+
+0 'run let
+2 'n let
+(run 4 lt)
+(
+  n count-factors 4 eq (run 1 plus 'run let) (0 'run let) if
+  n 1 plus 'n let
+) while
+n 4 sub print

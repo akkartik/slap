@@ -1,0 +1,64 @@
+-- Project Euler #41: Pandigital Prime
+-- Largest n-digit pandigital prime (digits 1..n used exactly once)
+-- Answer: 7652413
+-- Note: 8 and 9 digit pandigitals have digit sums divisible by 3, so check 7 first.
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        1 'ip-ok let
+        3 'ip-i let
+        (ip-i ip-i mul ip-n le ip-ok and)
+        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        while
+        ip-ok
+      ) if
+    ) if
+  ) if
+) def
+
+'digits-to-num (
+  'dn-ds let
+  0 'dn-r let
+  0 'dn-i let
+  (dn-i dn-ds len lt)
+  (dn-r 10 mul dn-ds dn-i get plus 'dn-r let dn-i 1 plus 'dn-i let)
+  while
+  dn-r
+) def
+
+-- Generate permutations of [7 6 5 4 3 2 1] in descending order
+-- Use "previous permutation" algorithm: find rightmost ascent, swap, reverse
+[7 6 5 4 3 2 1] 'perm let
+0 'answer let
+(answer 0 eq)
+(
+  perm digits-to-num 'pn let
+  pn is-prime (pn 'answer let) (
+    -- Find previous permutation
+    -- Find rightmost i where perm[i] > perm[i+1]
+    perm len 2 sub 'pi let
+    (pi 0 ge perm pi get perm pi 1 plus get le and) (pi 1 sub 'pi let) while
+    pi 0 lt (1 'answer let) (
+      -- Find rightmost j > i where perm[j] < perm[i]
+      perm len 1 sub 'pj let
+      (perm pj get perm pi get ge) (pj 1 sub 'pj let) while
+      -- Swap perm[i] and perm[j]
+      perm pi get 'tmp let
+      perm pi perm pj get set pj tmp set 'perm let
+      -- Reverse perm[i+1..end]
+      pi 1 plus 'lo let
+      perm len 1 sub 'hi let
+      (lo hi lt)
+      (
+        perm lo get 'tmp let
+        perm lo perm hi get set hi tmp set 'perm let
+        lo 1 plus 'lo let
+        hi 1 sub 'hi let
+      ) while
+    ) if
+  ) if
+) while
+answer print
