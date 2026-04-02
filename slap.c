@@ -16,12 +16,14 @@
 #define PRIM_MAX  256
 #define LOCAL_MAX 4096
 
-typedef enum { VAL_INT, VAL_FLOAT, VAL_SYM, VAL_WORD, VAL_TUPLE, VAL_LIST, VAL_RECORD, VAL_BOX } ValTag;
+typedef enum { VAL_INT, VAL_FLOAT, VAL_SYM, VAL_WORD, VAL_XT, VAL_TUPLE, VAL_LIST, VAL_RECORD, VAL_BOX } ValTag;
 typedef struct Frame Frame;
+typedef void (*PrimFn)(Frame *env);
 typedef struct Value {
     ValTag tag;
     union {
         int64_t i; double f; uint32_t sym;
+        struct { uint32_t sym; PrimFn fn; } xt;
         struct { uint32_t len; uint32_t slots; Frame *env; } compound;
         void *box;
     } as;
@@ -80,6 +82,7 @@ static Value val_int(int64_t i) { Value v; v.tag = VAL_INT; v.as.i = i; return v
 static Value val_float(double f) { Value v; v.tag = VAL_FLOAT; v.as.f = f; return v; }
 static Value val_sym(uint32_t s) { Value v; v.tag = VAL_SYM; v.as.sym = s; return v; }
 static Value val_word(uint32_t s) { Value v; v.tag = VAL_WORD; v.as.sym = s; return v; }
+static Value val_xt(uint32_t s, PrimFn fn) { Value v; v.tag = VAL_XT; v.as.xt.sym = s; v.as.xt.fn = fn; return v; }
 static Value val_compound(ValTag tag, uint32_t len, uint32_t slots) {
     Value v; v.tag = tag; v.as.compound.len = len; v.as.compound.slots = slots; v.as.compound.env = NULL; return v;
 }
@@ -225,7 +228,6 @@ static void eval_body(Value *body, int slots, Frame *env);
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *exec_env);
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close);
 
-typedef void (*PrimFn)(Frame *env);
 #define PRIM_HASH_SIZE 512
 static struct { uint32_t sym; PrimFn fn; int used; } prim_hash[PRIM_HASH_SIZE];
 
@@ -304,6 +306,7 @@ static void val_print(Value *data, int slots, FILE *out) {
     case VAL_FLOAT: fprintf(out, "%g", top.as.f); break;
     case VAL_SYM: fprintf(out, "'%s", sym_name(top.as.sym)); break;
     case VAL_WORD: fprintf(out, "%s", sym_name(top.as.sym)); break;
+    case VAL_XT: fprintf(out, "%s", sym_name(top.as.xt.sym)); break;
     case VAL_LIST: {
         int len = (int)top.as.compound.len;
         int is_string = 1, elem_end = slots - 1;
@@ -376,7 +379,7 @@ static int val_equal(Value *a, int aslots, Value *b, int bslots) {
     switch (atop.tag) {
     case VAL_INT: return atop.as.i == btop.as.i;
     case VAL_FLOAT: return atop.as.f == btop.as.f;
-    case VAL_SYM: case VAL_WORD: return atop.as.sym == btop.as.sym;
+    case VAL_SYM: case VAL_WORD: case VAL_XT: return atop.as.sym == btop.as.sym;
     case VAL_TUPLE: case VAL_LIST: case VAL_RECORD:
         if (atop.as.compound.len != btop.as.compound.len) return 0;
         for (int i = 0; i < aslots - 1; i++) if (!val_equal(&a[i], 1, &b[i], 1)) return 0;
@@ -1662,8 +1665,8 @@ static void prim_group(Frame *e) {
 /* ---- EVAL ---- */
 
 static void dispatch_word(uint32_t sym, Frame *env) {
-    PrimFn fn=prim_lookup(sym); if(fn){fn(env);return;}
-    Lookup lu=frame_lookup(env,sym); if(!lu.found) die("unknown word: %s",sym_name(sym));
+    Lookup lu=frame_lookup(env,sym);
+    if(!lu.found){PrimFn fn=prim_lookup(sym);if(fn){fn(env);return;}die("unknown word: %s",sym_name(sym));}
     if(lu.kind==BIND_DEF){Value bt=lu.frame->vals[lu.offset+lu.slots-1];if(bt.tag==VAL_TUPLE){eval_body(&lu.frame->vals[lu.offset],lu.slots,env);return;}}
     memcpy(&stack[sp],&lu.frame->vals[lu.offset],lu.slots*sizeof(Value)); sp+=lu.slots;
 }
@@ -1686,6 +1689,8 @@ static void eval_body(Value *body, int slots, Frame *env) {
         else if(is_compound(elem.tag)){
             memcpy(&stack[sp],&body[eoff],esz*sizeof(Value)); sp+=esz;
             if(elem.tag==VAL_TUPLE){exec_env->refcount++;stack[sp-1].as.compound.env=exec_env;}
+        } else if(elem.tag==VAL_XT){
+            elem.as.xt.fn(exec_env);
         } else if(elem.tag==VAL_WORD){
             uint32_t sym=elem.as.sym;
             if(sym==sym_def){
@@ -1719,8 +1724,8 @@ static void build_tuple(Token *toks, int start, int end, int total_count, Frame 
         case TOK_FLOAT: spush(val_float(tt->as.f)); elem_count++; break;
         case TOK_SYM: spush(val_sym(tt->as.sym)); elem_count++; break;
         case TOK_WORD:
-            if(tt->as.sym==s_check){if(elem_count>0&&stack[sp-1].tag==VAL_WORD){sp--;elem_count--;}else die("check: expected preceding type word");}
-            else{spush(val_word(tt->as.sym));elem_count++;}
+            if(tt->as.sym==s_check){if(elem_count>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;elem_count--;}else die("check: expected preceding type word");}
+            else{PrimFn xt_fn=prim_lookup(tt->as.sym);if(xt_fn)spush(val_xt(tt->as.sym,xt_fn));else spush(val_word(tt->as.sym));elem_count++;}
             break;
         case TOK_STRING:
             for(int c=0;c<tt->as.str.len;c++) spush(val_int(tt->as.str.codes[c]));
