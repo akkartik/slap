@@ -215,16 +215,12 @@ static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind 
     b->sym = sym; b->offset = off; b->slots = slots; b->kind = kind; b->recur = recur;
 }
 
-typedef struct { int found; int offset; int slots; BindKind kind; int recur; Frame *frame; } Lookup;
+typedef struct { Binding *bind; Frame *frame; } Lookup;
 static Lookup frame_lookup(Frame *f, uint32_t sym) {
-    Lookup r = {0};
     for (Frame *cur = f; cur; cur = cur->parent)
         for (int i = cur->bind_count - 1; i >= 0; i--)
-            if (cur->bindings[i].sym == sym) {
-                r.found = 1; r.offset = cur->bindings[i].offset; r.slots = cur->bindings[i].slots;
-                r.kind = cur->bindings[i].kind; r.recur = cur->bindings[i].recur; r.frame = cur; return r;
-            }
-    return r;
+            if (cur->bindings[i].sym == sym) { Lookup r = {&cur->bindings[i], cur}; return r; }
+    Lookup r = {NULL, NULL}; return r;
 }
 
 static void eval(Token *toks, int count, Frame *env);
@@ -399,10 +395,7 @@ static int val_less(Value *a, int aslots, Value *b, int bslots) {
 static uint32_t recur_sym = 0;
 static int recur_pending = 0;
 static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK;
-static void syms_init(void) {
-    S_DEF=sym_intern("def"); S_LET=sym_intern("let"); S_RECUR=sym_intern("recur");
-    S_IF=sym_intern("if"); S_EFFECT=sym_intern("effect"); S_CHECK=sym_intern("check");
-}
+static void syms_init(void);
 
 /* ---- TYPE SYSTEM ---- */
 
@@ -427,9 +420,12 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
 };
-static int ho_ops_init = 0;
-static void ho_ops_ensure_init(void) { if (ho_ops_init) return; ho_ops_init = 1; for (int i = 0; i < HO_OP_COUNT; i++) ho_ops[i].sym = sym_intern(ho_ops[i].name); }
-static HOEffect *ho_ops_find(uint32_t sym) { ho_ops_ensure_init(); for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i]; return NULL; }
+static HOEffect *ho_ops_find(uint32_t sym) { for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i]; return NULL; }
+static void syms_init(void) {
+    S_DEF=sym_intern("def"); S_LET=sym_intern("let"); S_RECUR=sym_intern("recur");
+    S_IF=sym_intern("if"); S_EFFECT=sym_intern("effect"); S_CHECK=sym_intern("check");
+    for (int i = 0; i < HO_OP_COUNT; i++) ho_ops[i].sym = sym_intern(ho_ops[i].name);
+}
 
 typedef struct {
     uint32_t type_var; TypeConstraint constraint, elem_constraint; OwnMode ownership; SlotDir direction;
@@ -450,12 +446,13 @@ static TypeSig *typesig_find(uint32_t sym) {
     return NULL;
 }
 
+static const struct { const char *name; TypeConstraint tc; } tc_names[] = {
+    {"int",TC_INT},{"float",TC_FLOAT},{"sym",TC_SYM},{"num",TC_NUM},
+    {"list",TC_LIST},{"tuple",TC_TUPLE},{"rec",TC_REC},{"box",TC_BOX},{"stack",TC_STACK},{NULL,TC_NONE}
+};
 static TypeConstraint parse_constraint(const char *tw) {
-    if (strcmp(tw,"int")==0) return TC_INT; if (strcmp(tw,"float")==0) return TC_FLOAT;
-    if (strcmp(tw,"sym")==0) return TC_SYM; if (strcmp(tw,"num")==0) return TC_NUM;
-    if (strcmp(tw,"list")==0) return TC_LIST; if (strcmp(tw,"tuple")==0) return TC_TUPLE;
-    if (strcmp(tw,"rec")==0) return TC_REC; if (strcmp(tw,"box")==0) return TC_BOX;
-    if (strcmp(tw,"stack")==0) return TC_STACK; return TC_NONE;
+    for (int i=0; tc_names[i].name; i++) if (strcmp(tw,tc_names[i].name)==0) return tc_names[i].tc;
+    return TC_NONE;
 }
 
 static TypeSig parse_type_annotation(Token *toks, int start, int end) {
@@ -492,12 +489,8 @@ static TypeSig parse_type_annotation(Token *toks, int start, int end) {
 }
 
 static const char *constraint_name(TypeConstraint c) {
-    switch (c) {
-    case TC_NONE: return "any"; case TC_INT: return "int"; case TC_FLOAT: return "float";
-    case TC_SYM: return "sym"; case TC_NUM: return "num"; case TC_LIST: return "list";
-    case TC_TUPLE: return "tuple"; case TC_REC: return "rec"; case TC_BOX: return "box";
-    case TC_STACK: return "stack";
-    }
+    if (c == TC_NONE) return "any";
+    for (int i=0; tc_names[i].name; i++) if (tc_names[i].tc == c) return tc_names[i].name;
     return "?";
 }
 
@@ -668,7 +661,6 @@ static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int t
                 if (sig) {
                     int inputs = 0, outputs = 0; TypeConstraint last_out = TC_NONE;
                     for (int j = 0; j < sig->slot_count; j++) {
-
                         if (sig->slots[j].direction == DIR_IN) inputs++;
                         else { outputs++; last_out = sig->slots[j].constraint; }
                     }
@@ -720,10 +712,8 @@ static void tc_apply_effect(TypeChecker *tc, int consumed, int produced, TypeCon
 
 static int tc_check_body_against_sig(Token *toks, int start, int end, int total_count, TypeSig *sig) {
     int errors = 0, n_in = 0, n_out = 0;
-    for (int i = 0; i < sig->slot_count; i++) {
-
+    for (int i = 0; i < sig->slot_count; i++)
         if (sig->slots[i].direction == DIR_IN) n_in++; else n_out++;
-    }
     int eff_consumed, eff_produced;
     tc_infer_effect_ctx(toks, start, end, total_count, &eff_consumed, &eff_produced, NULL);
     if (eff_consumed != n_in) { fprintf(stderr, "%s:%d: type error: function body consumes %d value(s) but type declares %d input(s)\n", current_file, toks[start].line, eff_consumed, n_in); errors++; }
@@ -1006,6 +996,10 @@ static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int s
     return elem_type;
 }
 
+static void tc_check_redef(TypeChecker *tc, uint32_t sym, int line) {
+    if (tc_is_builtin(sym, tc->prelude_sig_count)) tc_error(tc, line, 0, "'%s' is already defined", sym_name(sym));
+    else { TCBinding *existing = tc_lookup(tc, sym); if (existing) tc_error(tc, line, 0, "'%s' is already defined (first defined on line %d)", sym_name(sym), existing->def_line); }
+}
 static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, int total_count) {
     for (int i = start; i < end; i++) {
         if (i == tc->user_start && !tc->prelude_sig_count) tc->prelude_sig_count = type_sig_count;
@@ -1134,10 +1128,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 if (tc->recur_pending) {
                     if (tc->sp >= 1) {
                         AbstractType vt = tc->data[tc->sp-1]; tc->sp--;
-                        if (i >= tc->user_start) {
-                            if (tc_is_builtin(tc->recur_sym, tc->prelude_sig_count)) tc_error(tc, t->line, 0, "'%s' is already defined", sym_name(tc->recur_sym));
-                            else { TCBinding *existing = tc_lookup(tc, tc->recur_sym); if (existing) tc_error(tc, t->line, 0, "'%s' is already defined (first defined on line %d)", sym_name(tc->recur_sym), existing->def_line); }
-                        }
+                        if (i >= tc->user_start) tc_check_redef(tc, tc->recur_sym, t->line);
                         tc_bind(tc, tc->recur_sym, &vt, 1, t->line);
                     }
                     tc->recur_pending = 0;
@@ -1146,10 +1137,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         AbstractType vt = tc->data[tc->sp-1]; uint32_t name_sym = tc->data[tc->sp-2].sym_id;
                         tc->sp -= 2;
                         if (name_sym) {
-                            if (i >= tc->user_start && tc->sp_floor == 0) {
-                                if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, 0, "'%s' is already defined", sym_name(name_sym));
-                                else { TCBinding *existing = tc_lookup(tc, name_sym); if (existing) tc_error(tc, t->line, 0, "'%s' is already defined (first defined on line %d)", sym_name(name_sym), existing->def_line); }
-                            }
+                            if (i >= tc->user_start && tc->sp_floor == 0) tc_check_redef(tc, name_sym, t->line);
                             tc_bind(tc, name_sym, &vt, 1, t->line);
                         }
                     } else if (tc->sp_floor == 0) tc->sp = 0;
@@ -1395,7 +1383,6 @@ static void prim_elem(int consume) {
     if(consume) sp-=s;
     memcpy(&stack[sp],eb,ref.slots*sizeof(Value)); sp+=ref.slots;
 }
-static void prim_pull(Frame *e){(void)e;prim_elem(0);}
 
 static void prim_replace_at(Frame *e) {
     (void)e; POP_VAL(v); int64_t idx=pop_int(); Value top=speek();
@@ -1429,15 +1416,14 @@ static void prim_concat(Frame *e) {
     spush(val_compound(tag,len1+len2,new_elem_slots+1));
 }
 
-static void prim_list(Frame *e){(void)e;spush(val_compound(VAL_LIST,0,1));}
 static void prim_grab(Frame *e){(void)e;prim_pop_impl("grab");}
 
-static void prim_get(Frame *e){(void)e;prim_elem(1);}
+
 
 static void prim_nth(Frame *env) {
     int64_t idx=pop_int(); uint32_t sym=pop_sym();
-    Lookup lu=frame_lookup(env,sym); if(!lu.found) die("nth: unknown word: %s",sym_name(sym));
-    Value *data=&lu.frame->vals[lu.offset]; int s=lu.slots;
+    Lookup lu=frame_lookup(env,sym); if(!lu.bind) die("nth: unknown word: %s",sym_name(sym));
+    Value *data=&lu.frame->vals[lu.bind->offset]; int s=lu.bind->slots;
     Value top=data[s-1]; if(!is_compound(top.tag)) die("nth: expected compound");
     int len=(int)top.as.compound.len;
     ElemRef ref=compound_elem(data,s,len,(int)idx);
@@ -1454,8 +1440,6 @@ static void prim_slice_n(int take) {
     sp=base; memcpy(&stack[sp],tmp,tmp_sp*sizeof(Value)); sp+=tmp_sp;
     spush(val_compound(VAL_LIST,end_i-start,tmp_sp+1));
 }
-static void prim_take_n(Frame *e){(void)e;prim_slice_n(1);}
-static void prim_drop_n(Frame *e){(void)e;prim_slice_n(0);}
 
 static void prim_range(Frame *e){(void)e;int64_t end=pop_int(),start=pop_int();int count=0;for(int64_t i=start;i<end;i++){spush(val_int(i));count++;}spush(val_compound(VAL_LIST,count,count+1));}
 
@@ -1531,7 +1515,6 @@ static void prim_at(Frame *env) {
     sp-=s; memcpy(&stack[sp],vb,ref.slots*sizeof(Value)); sp+=ref.slots;
 }
 
-static void prim_rec(Frame *e){(void)e;spush(val_compound(VAL_RECORD,0,1));}
 
 static void prim_into(Frame *e) {
     (void)e; uint32_t key=pop_sym(); POP_VAL(v);
@@ -1540,21 +1523,18 @@ static void prim_into(Frame *e) {
     int found; ElemRef existing=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
     if(found&&existing.slots==v_s) memcpy(&stack[rec_base+existing.base],v_buf,v_s*sizeof(Value));
     else {
-        Value tmp[LOCAL_MAX]; int tmp_sp=0,new_len=0;
-        int replaced=0;
+        Value tmp[LOCAL_MAX]; int tmp_sp=0,replaced=0;
         if(rec_len>LOCAL_MAX) die("into: record too large");
         int kpos[LOCAL_MAX],voff[LOCAL_MAX],vsz[LOCAL_MAX];
         record_offsets(&stack[rec_base],rec_s,rec_len,kpos,voff,vsz);
         for(int i=0;i<rec_len;i++){
-            if(stack[rec_base+kpos[i]].tag!=VAL_SYM) die("into: record key is not a symbol");
             uint32_t k=stack[rec_base+kpos[i]].as.sym;
             if(k==key){tmp[tmp_sp++]=val_sym(key);memcpy(&tmp[tmp_sp],v_buf,v_s*sizeof(Value));tmp_sp+=v_s;replaced=1;}
             else{tmp[tmp_sp++]=stack[rec_base+kpos[i]];memcpy(&tmp[tmp_sp],&stack[rec_base+voff[i]],vsz[i]*sizeof(Value));tmp_sp+=vsz[i];}
-            new_len++;
         }
-        if(!replaced){tmp[tmp_sp++]=val_sym(key);memcpy(&tmp[tmp_sp],v_buf,v_s*sizeof(Value));tmp_sp+=v_s;new_len++;}
+        if(!replaced){tmp[tmp_sp++]=val_sym(key);memcpy(&tmp[tmp_sp],v_buf,v_s*sizeof(Value));tmp_sp+=v_s;}
         sp=rec_base; memcpy(&stack[sp],tmp,tmp_sp*sizeof(Value)); sp+=tmp_sp;
-        spush(val_compound(VAL_RECORD,new_len,tmp_sp+1));
+        spush(val_compound(VAL_RECORD,rec_len+!replaced,tmp_sp+1));
     }
 }
 
@@ -1608,8 +1588,6 @@ static void prim_grade(Frame *e,int ascending) {
     sp-=s; for(int i=0;i<len;i++) spush(val_int(items[i].idx));
     spush(val_compound(VAL_LIST,len,len+1)); free(items);
 }
-static void prim_rise(Frame *e){prim_grade(e,1);}
-static void prim_fall(Frame *e){prim_grade(e,0);}
 static void prim_shape(Frame *e) {
     (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("shape: expected list");
     int len=(int)top.as.compound.len,s=val_slots(top),base=sp-s;
@@ -1622,9 +1600,10 @@ static void prim_shape(Frame *e) {
 
 static void dispatch_word(uint32_t sym, Frame *env) {
     Lookup lu=frame_lookup(env,sym);
-    if(!lu.found){PrimFn fn=prim_lookup(sym);if(fn){fn(env);return;}die("unknown word: %s",sym_name(sym));}
-    if(lu.kind==BIND_DEF){Value bt=lu.frame->vals[lu.offset+lu.slots-1];if(bt.tag==VAL_TUPLE){eval_body(&lu.frame->vals[lu.offset],lu.slots,env);return;}}
-    memcpy(&stack[sp],&lu.frame->vals[lu.offset],lu.slots*sizeof(Value)); sp+=lu.slots;
+    if(!lu.bind){PrimFn fn=prim_lookup(sym);if(fn){fn(env);return;}die("unknown word: %s",sym_name(sym));}
+    Binding *b=lu.bind; Value *v=&lu.frame->vals[b->offset];
+    if(b->kind==BIND_DEF&&v[b->slots-1].tag==VAL_TUPLE){eval_body(v,b->slots,env);return;}
+    memcpy(&stack[sp],v,b->slots*sizeof(Value)); sp+=b->slots;
 }
 
 static void eval_body(Value *body, int slots, Frame *env) {
@@ -1764,8 +1743,9 @@ static const char *BUILTIN_TYPES =
 #define F1E " [float lent in  float move out] effect\n"
     "'fsqrt" F1E "'fsin" F1E "'fcos" F1E "'ftan" F1E "'ffloor" F1E "'fceil" F1E "'fround" F1E "'fexp" F1E "'flog" F1E
 #undef F1E
-    "'fpow [float lent in  float lent in  float move out] effect\n"
-    "'fatan2 [float lent in  float lent in  float move out] effect\n"
+#define F2E " [float lent in  float lent in  float move out] effect\n"
+    "'fpow" F2E "'fatan2" F2E
+#undef F2E
     "'list [list move out] effect\n"
     "'len [list lent in  int move out] effect\n"
     "'give ['a list own in  'a own in  'a list move out] effect\n"
@@ -1774,9 +1754,8 @@ static const char *BUILTIN_TYPES =
     "'nth [sym lent in  int lent in  'a move out] effect\n"
     "'set ['a list own in  int lent in  'a own in  'a list move out] effect\n"
     "'cat ['a list own in  'a list own in  'a list move out] effect\n"
-#define LSE " ['a list own in  int lent in  'a list move out] effect\n"
-    "'take-n" LSE "'drop-n" LSE
-#undef LSE
+#define LNE " ['a list own in  int lent in  'a list move out] effect\n"
+    "'take-n" LNE "'drop-n" LNE
     "'range [int lent in  int lent in  int list move out] effect\n"
 #define L1E " ['a list own in  'a list move out] effect\n"
     "'sort" L1E "'reverse" L1E "'dedup" L1E
@@ -1806,9 +1785,8 @@ static const char *BUILTIN_TYPES =
     "'clear [int lent in] effect\n"
     "'pixel [int lent in  int lent in  int lent in] effect\n"
     "'fill-rect [int lent in  int lent in  int lent in  int lent in  int lent in] effect\n"
-#define LLE " ['a list own in  int lent in  'a list move out] effect\n"
-    "'rotate" LLE "'windows" LLE
-#undef LLE
+    "'rotate" LNE "'windows" LNE
+#undef LNE
     "'zip ['a list own in  'a list own in  list move out] effect\n"
 #define LDE " ['a list own in  int list own in  list move out] effect\n"
     "'group" LDE "'partition" LDE "'reshape" LDE
@@ -1871,7 +1849,6 @@ static void prim_reverse(Frame *e) {
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     if(s>LOCAL_MAX) die("reverse: list too large");
     Value buf[LOCAL_MAX]; memcpy(buf,&stack[base],s*sizeof(Value)); sp=base;
-    if(len>LOCAL_MAX) die("reverse: list too large");
     int offsets[LOCAL_MAX],sizes[LOCAL_MAX]; compute_offsets(buf,s,len,offsets,sizes);
     int rb=sp;
     for(int i=len-1;i>=0;i--){memcpy(&stack[sp],&buf[offsets[i]],sizes[i]*sizeof(Value));sp+=sizes[i];}
@@ -1938,14 +1915,17 @@ static void show_intern_syms(void) {
     if(!sym_tick){sym_tick=sym_intern("tick");sym_keydown=sym_intern("keydown");sym_mousedown=sym_intern("mousedown");sym_mouseup=sym_intern("mouseup");sym_mousemove=sym_intern("mousemove");}
 }
 static void show_dispatch_event(SDL_Event *ev, Frame *env) {
-    if(ev->type==SDL_KEYDOWN) for(int h=0;h<handler_count;h++)
-        if(event_handlers[h].event_sym==sym_keydown){spush(val_int((int64_t)ev->key.keysym.sym));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
-    if(ev->type==SDL_MOUSEBUTTONDOWN) for(int h=0;h<handler_count;h++)
-        if(event_handlers[h].event_sym==sym_mousedown){spush(val_int((int64_t)ev->button.x));spush(val_int((int64_t)ev->button.y));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
-    if(ev->type==SDL_MOUSEBUTTONUP) for(int h=0;h<handler_count;h++)
-        if(event_handlers[h].event_sym==sym_mouseup){spush(val_int((int64_t)ev->button.x));spush(val_int((int64_t)ev->button.y));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
-    if(ev->type==SDL_MOUSEMOTION) for(int h=0;h<handler_count;h++)
-        if(event_handlers[h].event_sym==sym_mousemove){spush(val_int((int64_t)ev->motion.x));spush(val_int((int64_t)ev->motion.y));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
+    if(ev->type==SDL_KEYDOWN){for(int h=0;h<handler_count;h++)if(event_handlers[h].event_sym==sym_keydown){spush(val_int((int64_t)ev->key.keysym.sym));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}}
+    int64_t mx=0,my=0; int is_mouse=0;
+    if(ev->type==SDL_MOUSEBUTTONDOWN||ev->type==SDL_MOUSEBUTTONUP){mx=ev->button.x;my=ev->button.y;is_mouse=1;}
+    else if(ev->type==SDL_MOUSEMOTION){mx=ev->motion.x;my=ev->motion.y;is_mouse=1;}
+    if(is_mouse){uint32_t sym=ev->type==SDL_MOUSEBUTTONDOWN?sym_mousedown:ev->type==SDL_MOUSEBUTTONUP?sym_mouseup:sym_mousemove;
+        for(int h=0;h<handler_count;h++)if(event_handlers[h].event_sym==sym){spush(val_int(mx));spush(val_int(my));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}}
+}
+static void show_tick_render(int64_t frame, Frame *env) {
+    for(int h=0;h<handler_count;h++) if(event_handlers[h].event_sym==sym_tick){spush(val_int(frame));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
+    if(render_slots>0){Value mt=stack[sp-1];int ms=val_slots(mt);memcpy(&stack[sp],&stack[sp-ms],ms*sizeof(Value));sp+=ms;eval_body(render_body,render_slots,env);}
+    sdl_present();
 }
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1956,9 +1936,7 @@ static void show_one_frame(void) {
         if(ev.type==SDL_QUIT){emscripten_cancel_main_loop();return;}
         show_dispatch_event(&ev,show_env);
     }
-    for(int h=0;h<handler_count;h++) if(event_handlers[h].event_sym==sym_tick){spush(val_int(show_frame));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,show_env);}
-    if(render_slots>0){Value mt=stack[sp-1];int ms=val_slots(mt);memcpy(&stack[sp],&stack[sp-ms],ms*sizeof(Value));sp+=ms;eval_body(render_body,render_slots,show_env);}
-    sdl_present(); show_frame++;
+    show_tick_render(show_frame++, show_env);
 }
 #endif
 static void prim_show(Frame *env) {
@@ -1976,9 +1954,7 @@ static void prim_show(Frame *env) {
             if(ev.type==SDL_QUIT){running=0;break;}
             show_dispatch_event(&ev,env);
         }
-        for(int h=0;h<handler_count;h++) if(event_handlers[h].event_sym==sym_tick){spush(val_int(frame));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}
-        if(render_slots>0){Value mt=stack[sp-1];int ms=val_slots(mt);memcpy(&stack[sp],&stack[sp-ms],ms*sizeof(Value));sp+=ms;eval_body(render_body,render_slots,env);}
-        sdl_present(); frame++;
+        show_tick_render(frame++, env);
         if(sdl_test_mode) break; SDL_Delay(16);
     }
     SDL_DestroyTexture(sdl_texture);SDL_DestroyRenderer(sdl_renderer);SDL_DestroyWindow(sdl_window);SDL_Quit();exit(0);
@@ -1986,6 +1962,13 @@ static void prim_show(Frame *env) {
 }
 #endif
 
+#define PRIM(nm,body) static void prim_##nm(Frame *e){(void)e;body;}
+PRIM(list, spush(val_compound(VAL_LIST,0,1)))
+PRIM(rec, spush(val_compound(VAL_RECORD,0,1)))
+PRIM(pull, prim_elem(0)) PRIM(get, prim_elem(1))
+PRIM(take_n, prim_slice_n(1)) PRIM(drop_n, prim_slice_n(0))
+PRIM(rise, prim_grade(e,1)) PRIM(fall, prim_grade(e,0))
+#undef PRIM
 static void register_prims(void) {
     static struct{const char*n;PrimFn f;} t[]={
         {"dup",prim_dup},{"drop",prim_drop},{"swap",prim_swap},{"dip",prim_dip},{"apply",prim_apply},
