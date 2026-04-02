@@ -57,6 +57,29 @@ static int current_line = 0;
 static const char *current_file = "<input>";
 static void print_stack_summary(FILE *out);
 
+static char *source_text = NULL;
+static const char **source_lines = NULL;
+static int source_line_count = 0;
+
+static void store_source_lines(const char *src) {
+    source_text = strdup(src);
+    int count = 1;
+    for (const char *p = source_text; *p; p++) if (*p == '\n') count++;
+    source_lines = malloc(count * sizeof(char *));
+    source_line_count = 0;
+    char *p = source_text;
+    while (*p) {
+        source_lines[source_line_count++] = p;
+        char *nl = strchr(p, '\n');
+        if (nl) { *nl = '\0'; p = nl + 1; } else break;
+    }
+}
+
+static void print_source_line(FILE *out, int line) {
+    if (!source_lines || line < 1 || line > source_line_count) return;
+    fprintf(out, "    %4d| %s\n", line, source_lines[line - 1]);
+}
+
 __attribute__((noreturn))
 static void die(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -65,7 +88,8 @@ static void die(const char *fmt, ...) {
     for (int i = hdr_len; i < 60; i++) fprintf(stderr, "-");
     fprintf(stderr, "\n\n    ");
     vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    fprintf(stderr, "\n\n");
+    print_source_line(stderr, current_line);
     va_end(ap);
     print_stack_summary(stderr);
     fprintf(stderr, "\n");
@@ -521,7 +545,7 @@ typedef struct {
 
 #define ASTACK_MAX 256
 #define TC_BINDS_MAX 256
-typedef struct { uint32_t sym; AbstractType atype; int is_def; } TCBinding;
+typedef struct { uint32_t sym; AbstractType atype; int is_def; int def_line; } TCBinding;
 typedef struct { uint32_t sym; int line; } TCUnknown;
 #define TC_UNKNOWN_MAX 256
 
@@ -622,8 +646,28 @@ static TCBinding *tc_lookup(TypeChecker *tc, uint32_t sym) {
 
 static void tc_error(TypeChecker *tc, int line, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
-    fprintf(stderr, "%s:%d: type error: ", current_file, line);
-    vfprintf(stderr, fmt, ap); fprintf(stderr, "\n"); va_end(ap); tc->errors++;
+    fprintf(stderr, "\n-- TYPE ERROR %s:%d ", current_file, line);
+    int hdr_len = 15 + (int)strlen(current_file) + 10;
+    for (int i = hdr_len; i < 60; i++) fprintf(stderr, "-");
+    fprintf(stderr, "\n\n    ");
+    vfprintf(stderr, fmt, ap); fprintf(stderr, "\n\n"); va_end(ap);
+    print_source_line(stderr, line);
+    fprintf(stderr, "\n");
+    tc->errors++;
+}
+
+static void tc_error2(TypeChecker *tc, int line, int origin_line, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "\n-- TYPE ERROR %s:%d ", current_file, line);
+    int hdr_len = 15 + (int)strlen(current_file) + 10;
+    for (int i = hdr_len; i < 60; i++) fprintf(stderr, "-");
+    fprintf(stderr, "\n\n    ");
+    vfprintf(stderr, fmt, ap); fprintf(stderr, "\n\n"); va_end(ap);
+    print_source_line(stderr, line);
+    if (origin_line > 0 && origin_line != line)
+        print_source_line(stderr, origin_line);
+    fprintf(stderr, "\n");
+    tc->errors++;
 }
 
 static void tc_dump_stack(TypeChecker *tc) {
@@ -718,13 +762,13 @@ static int tc_is_builtin(uint32_t sym, int prelude_sig_count) {
     for (int i = 0; i < prelude_sig_count; i++) if (type_sigs[i].sym == sym) return 1;
     return ho_ops_find(sym) != NULL;
 }
-static void tc_bind(TypeChecker *tc, uint32_t sym, AbstractType *atype, int is_def) {
+static void tc_bind(TypeChecker *tc, uint32_t sym, AbstractType *atype, int is_def, int line) {
     for (int i = 0; i < tc->bind_count; i++) {
-        if (tc->bindings[i].sym == sym) { tc->bindings[i].atype = *atype; tc->bindings[i].is_def = is_def; return; }
+        if (tc->bindings[i].sym == sym) { tc->bindings[i].atype = *atype; tc->bindings[i].is_def = is_def; tc->bindings[i].def_line = line; return; }
     }
     if (tc->bind_count < TC_BINDS_MAX) {
         tc->bindings[tc->bind_count].sym = sym; tc->bindings[tc->bind_count].atype = *atype;
-        tc->bindings[tc->bind_count].is_def = is_def; tc->bind_count++;
+        tc->bindings[tc->bind_count].is_def = is_def; tc->bindings[tc->bind_count].def_line = line; tc->bind_count++;
     }
 }
 
@@ -895,11 +939,11 @@ apply_sig:;
         if (stack_pos < 0) break;
         AbstractType *at = &tc->data[stack_pos];
         if (slot->ownership == OWN_COPY && !tc_is_copyable(at))
-            tc_error(tc, line, "'%s' requires copyable value, got linear type (box or box-containing)", sym_name(sym));
+            tc_error2(tc, line, at->source_line, "'%s' requires copyable value, got linear type (value from line %d)", sym_name(sym), at->source_line);
         if (slot->ownership == OWN_OWN && at->borrowed > 0)
-            tc_error(tc, line, "'%s' cannot consume value that is currently borrowed (lent)", sym_name(sym));
+            tc_error2(tc, line, at->source_line, "'%s' cannot consume value that is currently borrowed (lent, value from line %d)", sym_name(sym), at->source_line);
         if (slot->constraint != TC_NONE && at->type != TC_NONE && !tc_constraint_matches(slot->constraint, at->type))
-            tc_error(tc, line, "'%s' expected %s, got %s (value from line %d)", sym_name(sym), constraint_name(slot->constraint), constraint_name(at->type), at->source_line);
+            tc_error2(tc, line, at->source_line, "'%s' expected %s, got %s (value from line %d)", sym_name(sym), constraint_name(slot->constraint), constraint_name(at->type), at->source_line);
         if (slot->type_var) {
             int tv = FIND_TVAR(slot->type_var);
             if (tv > 0) {
@@ -907,10 +951,10 @@ apply_sig:;
                 if (is_container && at->tvar_id > 0) {
                     int ef = (slot->constraint == TC_LIST) ? tc->tvars[tvar_find(tc, at->tvar_id)].elem : tc->tvars[tvar_find(tc, at->tvar_id)].box_c;
                     if (ef > 0 && tvar_unify(tc, tv, ef, line))
-                        tc_error(tc, line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(tvar_resolve(tc, ef)));
+                        tc_error2(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(tvar_resolve(tc, ef)));
                 } else if (!is_container) {
                     int fail = at->tvar_id > 0 ? tvar_unify(tc, tv, at->tvar_id, line) : (at->type != TC_NONE ? tvar_bind(tc, tv, at->type, line) : 0);
-                    if (fail) tc_error(tc, line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(at->type != TC_NONE ? at->type : tvar_resolve(tc, at->tvar_id)));
+                    if (fail) tc_error2(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(at->type != TC_NONE ? at->type : tvar_resolve(tc, at->tvar_id)));
                 }
             }
         }
@@ -1085,9 +1129,9 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         AbstractType vt = tc->data[tc->sp-1]; tc->sp--;
                         if (i >= tc->user_start) {
                             if (tc_is_builtin(tc->recur_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' is already defined", sym_name(tc->recur_sym));
-                            else { TCBinding *existing = tc_lookup(tc, tc->recur_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined", sym_name(tc->recur_sym)); }
+                            else { TCBinding *existing = tc_lookup(tc, tc->recur_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined (first defined on line %d)", sym_name(tc->recur_sym), existing->def_line); }
                         }
-                        tc_bind(tc, tc->recur_sym, &vt, 1);
+                        tc_bind(tc, tc->recur_sym, &vt, 1, t->line);
                     }
                     tc->recur_pending = 0;
                 } else {
@@ -1097,9 +1141,9 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         if (name_sym) {
                             if (i >= tc->user_start) {
                                 if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' is already defined", sym_name(name_sym));
-                                else { TCBinding *existing = tc_lookup(tc, name_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined", sym_name(name_sym)); }
+                                else { TCBinding *existing = tc_lookup(tc, name_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined (first defined on line %d)", sym_name(name_sym), existing->def_line); }
                             }
-                            tc_bind(tc, name_sym, &vt, 1);
+                            tc_bind(tc, name_sym, &vt, 1, t->line);
                         }
                     } else tc->sp = 0;
                 }
@@ -1113,12 +1157,12 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                             else {
                                 TCBinding *existing = tc_lookup(tc, name_sym);
                                 if (existing) {
-                                    if (existing->is_def) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
-                                    else tc_error(tc, t->line, "'%s' is already bound", sym_name(name_sym));
+                                    if (existing->is_def) tc_error(tc, t->line, "'%s' shadows existing definition (defined on line %d)", sym_name(name_sym), existing->def_line);
+                                    else tc_error(tc, t->line, "'%s' is already bound (bound on line %d)", sym_name(name_sym), existing->def_line);
                                 }
                             }
                         }
-                        tc_bind(tc, name_sym, &val_t, 0);
+                        tc_bind(tc, name_sym, &val_t, 0, t->line);
                     }
                 } else tc->sp = 0;
             } else if (sym == s_recur) {
@@ -2126,6 +2170,7 @@ int main(int argc, char **argv) {
     FILE *f=fopen(filename,"r"); if(!f){fprintf(stderr,"error: cannot open '%s'\n",filename);return 1;}
     fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
     char *src=malloc(sz+1); if((long)fread(src,1,sz,f)!=sz){fprintf(stderr,"error: read failed\n");return 1;} src[sz]=0; fclose(f);
+    store_source_lines(src);
     lex(src); int user_tok_count=tok_count;
     static Token user_tokens[TOK_MAX]; memcpy(user_tokens,tokens,user_tok_count*sizeof(Token));
     if(dump_types){
