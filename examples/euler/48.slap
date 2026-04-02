@@ -31,11 +31,11 @@
   mp-r
 ) def
 
-0 'total let
-1 'k let
-(k 1000 le)
+-- stack: total k
+0 1
+(dup 1000 le)
 (
-  total k k modulus mod-pow plus modulus mod 'total let
-  k 1 plus 'k let
+  swap over dup modulus mod-pow plus modulus mod
+  swap 1 plus
 ) while
-total print
+drop print

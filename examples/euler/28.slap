@@ -2,13 +2,13 @@
 -- Sum of diagonals in a 1001x1001 number spiral
 -- Answer: 669171001
 
-1 'total let
-1 'k let
-(k 500 le)
+-- stack: total k
+1 1
+(dup 500 le)
 (
-  2 k mul 1 sub 's let
-  s s mul 4 mul 20 k mul plus
-  total plus 'total let
-  k 1 plus 'k let
+  dup 2 mul 1 sub 's let
+  s s mul 4 mul over 20 mul plus
+  rot plus swap
+  1 plus
 ) while
-total print
+drop print

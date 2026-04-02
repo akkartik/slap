@@ -664,5 +664,14 @@ free
 [1 2 3 4 5] 1 rotate 3 windows
 [[5 1 2] [1 2 3] [2 3 4]] eq assert
 
+-- ===== Non-simple tuple type checking =====
+'add-lists ([1 2 3] [4 5 6] cat) def
+add-lists [1 2 3 4 5 6] eq assert
+'dip-test (3 (2 plus) dip) def
+1 dip-test 3 eq assert 3 eq assert
+'nested-if (dup 0 eq (drop 42) (1 sub) if) def
+0 nested-if 42 eq assert
+5 nested-if 4 eq assert
+
 -- ===== Done =====
 "All tests passed!" print

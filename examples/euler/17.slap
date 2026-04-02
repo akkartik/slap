@@ -27,9 +27,9 @@
   ) if
 ) def
 
-0 'total let
-1 'i let
-(i 1000 le)
-(total i word-len plus 'total let i 1 plus 'i let)
+-- stack: total i
+0 1
+(dup 1000 le)
+(dup word-len rot plus swap 1 plus)
 while
-total print
+drop print

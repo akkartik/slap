@@ -39,8 +39,8 @@
   ax ay 1 cell sub 0 eq (0) (3) if draw-block
 
   -- move forward
-  ax (0 1 0 -1) dir get plus W plus W mod 'ax let
-  ay (-1 0 1 0) dir get plus H plus H mod 'ay let
+  ax [0 1 0 -1] dir get plus W plus W mod 'ax let
+  ay [-1 0 1 0] dir get plus H plus H mod 'ay let
 
   steps 1 plus 'steps let
 ) def

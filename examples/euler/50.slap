@@ -25,22 +25,14 @@ list
 'primes let
 primes len 'pcount let
 
--- Compute prefix sums on stack
-list 0 give
-0 'ps let
-0 'pxi let
-(pxi pcount lt)
-(
-  ps 'primes pxi nth plus 'ps let
-  ps give
-  pxi 1 plus 'pxi let
-) while
-'prefix let
+-- Prefix sums: [0, p0, p0+p1, p0+p1+p2, ...]
+list 0 give primes 0 (plus) scan cat 'prefix let
 prefix len 'pflen let
 
 -- Find max window where prefix[w] < 1M
-pflen 1 sub 'maxw let
-('prefix maxw nth 1000000 ge) (maxw 1 sub 'maxw let) while
+pflen 1 sub
+(dup 'prefix swap nth 1000000 ge) (1 sub) while
+'maxw let
 
 -- Search from largest window down
 0 'best-len let
