@@ -15,17 +15,7 @@
 -- Draw SxS block at grid (gx, gy) with color c
 'draw-block (
   'c let 'gy let 'gx let
-  gx S mul 'x0 let
-  gy S mul 'y0 let
-  0 'dy let
-  (dy S lt) (
-    0 'dx let
-    (dx S lt) (
-      x0 dx plus y0 dy plus c pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  gx S mul gy S mul S S c fill-rect
 ) def
 
 -- One ant step: grid on stack → updated grid on stack

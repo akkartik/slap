@@ -1191,6 +1191,7 @@ static void prim_div(Frame *e) { (void)e; Value b=spop(),a=spop();
     else if(a.tag==VAL_FLOAT&&b.tag==VAL_FLOAT)spush(val_float(a.as.f/b.as.f)); else die("div: type mismatch"); }
 static void prim_mod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("mod: division by zero");spush(val_int(a%b));}
 static void prim_divmod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("divmod: division by zero");spush(val_int(a%b));spush(val_int(a/b));}
+static void prim_wrap(Frame *e){(void)e;int64_t m=pop_int(),v=pop_int();if(m==0)die("wrap: modulus must be non-zero");spush(val_int(((v%m)+m)%m));}
 
 #define CMP2(nm,expr) static void prim_##nm(Frame *e){(void)e;Value bt=stack[sp-1];int bs=val_slots(bt);int as=val_slots(stack[sp-1-bs]);int r=(expr);sp-=as+bs;spush(val_int(r?1:0));}
 CMP2(eq, val_equal(&stack[sp-bs-as],as,&stack[sp-bs],bs))
@@ -1814,6 +1815,7 @@ static const char *BUILTIN_TYPES =
     "'div ['a num lent in  'a num lent in  'a num move out] effect\n"
     "'mod [int lent in  int lent in  int move out] effect\n"
     "'divmod [int lent in  int lent in  int move out  int move out] effect\n"
+    "'wrap [int lent in  int lent in  int move out] effect\n"
     "'eq [lent in  lent in  int move out] effect\n"
     "'lt [lent in  lent in  int move out] effect\n"
     "'and [int lent in  int lent in  int move out] effect\n"
@@ -1878,7 +1880,8 @@ static const char *BUILTIN_TYPES =
     "'into [rec own in  own in  sym lent in  rec move out] effect\n"
     "'clone ['a box own in  'a box move out  'a box move out] effect\n"
     "'clear [int lent in] effect\n"
-    "'pixel [int lent in  int lent in  int lent in] effect\n";
+    "'pixel [int lent in  int lent in  int lent in] effect\n"
+    "'fill-rect [int lent in  int lent in  int lent in  int lent in  int lent in] effect\n";
 
 static const char *PRELUDE =
     "'over (swap dup (swap) dip) def\n'peek (over) def\n'nip (swap drop) def\n"
@@ -1919,10 +1922,8 @@ static const char *PRELUDE =
     "'iseven (2 mod 0 eq) [int lent in  int move out] effect def\n"
     "'isodd (2 mod 0 neq) [int lent in  int move out] effect def\n"
     "'divides (mod 0 eq) [int lent in  int lent in  int move out] effect def\n"
-    "'times-i ('f swap def 0 (over over lt) (dup f 1 plus) while drop drop) def\n"
-    "'wrap (dup rot swap plus swap mod) [int lent in  int lent in  int move out] effect def\n"
-    "'fill-rect ('c let 'h let 'w let 'y0 let 'x0 let h (dup y0 plus 'py let w (dup x0 plus py c pixel) times-i drop) times-i drop) def\n"
-    "3.14159265358979323846 'pi let\n6.28318530717958647692 'tau let\n2.71828182845904523536 'e let\n";
+    "'times-i ('f swap def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) def\n"
+            "3.14159265358979323846 'pi let\n6.28318530717958647692 'tau let\n2.71828182845904523536 'e let\n";
 
 static void prim_reverse(Frame *e) {
     (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("reverse: expected list");
@@ -1982,6 +1983,7 @@ static void sdl_present(void) {
 }
 static void prim_clear(Frame *e){(void)e;memset(canvas,(int)(pop_int()&3),sizeof(canvas));}
 static void prim_pixel(Frame *e){(void)e;int64_t color=pop_int(),y=pop_int(),x=pop_int();if(x>=0&&x<CANVAS_W&&y>=0&&y<CANVAS_H)canvas[y*CANVAS_W+x]=(uint8_t)(color&3);}
+static void prim_fill_rect(Frame *e){(void)e;int64_t c=pop_int(),h=pop_int(),w=pop_int(),y0=pop_int(),x0=pop_int();uint8_t cv=(uint8_t)(c&3);for(int dy=0;dy<h;dy++)for(int dx=0;dx<w;dx++){int x=x0+dx,y=y0+dy;if(x>=0&&x<CANVAS_W&&y>=0&&y<CANVAS_H)canvas[y*CANVAS_W+x]=cv;}}
 static void prim_millis(Frame *e){(void)e;spush(val_int((int64_t)SDL_GetTicks()));}
 static void prim_on(Frame *e) {
     (void)e; Value fn_top=stack[sp-1]; if(fn_top.tag!=VAL_TUPLE) die("on: expected tuple handler");
@@ -2046,7 +2048,7 @@ static void prim_show(Frame *env) {
 static void register_prims(void) {
     static struct{const char*n;PrimFn f;} t[]={
         {"dup",prim_dup},{"drop",prim_drop},{"swap",prim_swap},{"dip",prim_dip},{"apply",prim_apply},
-        {"plus",prim_plus},{"sub",prim_sub},{"mul",prim_mul},{"div",prim_div},{"mod",prim_mod},{"divmod",prim_divmod},
+        {"plus",prim_plus},{"sub",prim_sub},{"mul",prim_mul},{"div",prim_div},{"mod",prim_mod},{"divmod",prim_divmod},{"wrap",prim_wrap},
         {"eq",prim_eq},{"lt",prim_lt},{"and",prim_and},{"or",prim_or},
         {"print",prim_print},{"assert",prim_assert},{"halt",prim_halt},{"random",prim_random},
         {"if",prim_if},{"cond",prim_cond},{"match",prim_match},{"loop",prim_loop},{"while",prim_while},
@@ -2069,7 +2071,7 @@ static void register_prims(void) {
         {"millis",prim_millis},{"box",prim_box},{"free",prim_free},
         {"lend",prim_lend},{"mutate",prim_mutate},{"clone",prim_clone},
 #ifdef SLAP_SDL
-        {"clear",prim_clear},{"pixel",prim_pixel},{"millis",prim_millis},{"on",prim_on},{"show",prim_show},
+        {"clear",prim_clear},{"pixel",prim_pixel},{"fill-rect",prim_fill_rect},{"millis",prim_millis},{"on",prim_on},{"show",prim_show},
 #endif
         {NULL,NULL}
     };

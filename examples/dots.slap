@@ -5,8 +5,6 @@
 35 'N let
 -1 'mx let  -1 'my let
 
-'sign (dup 0 gt (drop 1) (0 lt (-1) (0) if) if) def
-
 -- Home positions: 7x5 grid
 0 N range (COLS mod 88 mul 36 plus) map
 dup 'hxs let 'xs let
@@ -32,8 +30,8 @@ list N (0 give) repeat 'vys let
 
     -- Flee from mouse
     dist2 10000 lt mx -1 neq and (
-      vx dx 0 gt (6) (-6) if plus 'vx let
-      vy dy 0 gt (6) (-6) if plus 'vy let
+      vx dx sign 6 mul plus 'vx let
+      vy dy sign 6 mul plus 'vy let
     ) () if
 
     -- Damping
@@ -68,15 +66,7 @@ list N (0 give) repeat 'vys let
 'draw-sq (
   'c let 'sz let 'cy let 'cx let
   sz 2 div 'r let
-  0 r sub 'dy let
-  (dy r 1 plus lt) (
-    0 r sub 'dx let
-    (dx r 1 plus lt) (
-      cx dx plus cy dy plus c pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  cx r sub cy r sub r 2 mul 1 plus dup c fill-rect
 ) def
 
 (

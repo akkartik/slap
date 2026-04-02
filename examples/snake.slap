@@ -4,33 +4,13 @@
 -- Draw filled 20x20 cell
 'draw-cell (
   'c let 'gy let 'gx let
-  gx 20 mul 'x0 let
-  gy 20 mul 'y0 let
-  0 'dy let
-  (dy 20 lt) (
-    0 'dx let
-    (dx 20 lt) (
-      x0 dx plus y0 dy plus c pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  gx 20 mul gy 20 mul 20 20 c fill-rect
 ) def
 
 -- Draw 16x16 cell inset by 2px (grid lines effect)
 'draw-inset (
   'c let 'gy let 'gx let
-  gx 20 mul 2 plus 'x0 let
-  gy 20 mul 2 plus 'y0 let
-  0 'dy let
-  (dy 16 lt) (
-    0 'dx let
-    (dx 16 lt) (
-      x0 dx plus y0 dy plus c pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  gx 20 mul 2 plus gy 20 mul 2 plus 16 16 c fill-rect
 ) def
 
 -- Decode grid position
@@ -140,13 +120,7 @@ reset
   score 0 gt (
     0 'si let
     (si score lt si 32 lt and) (
-      si 20 mul 'sx let
-      0 'dx let
-      (dx 20 lt) (
-        sx dx plus 0 3 pixel
-        sx dx plus 1 3 pixel
-        dx 1 plus 'dx let
-      ) while
+      si 20 mul 0 20 2 3 fill-rect
       si 1 plus 'si let
     ) while
   ) () if

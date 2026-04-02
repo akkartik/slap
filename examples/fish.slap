@@ -63,8 +63,8 @@ list NR (-1 give) repeat 'rages let
     x mx sub 'dx let  y my sub 'dy let
     dx abs dy abs plus 'dist let
     dist 80 lt mx -1 neq and dist 0 gt and (
-      vx dx 0 gt (20) (-20) if plus 'vx let
-      vy dy 0 gt (20) (-20) if plus 'vy let
+      vx dx sign 20 mul plus 'vx let
+      vy dy sign 20 mul plus 'vy let
     ) () if
 
     -- Avoid other fish
@@ -75,8 +75,8 @@ list NR (-1 give) repeat 'rages let
         y ys j get sub 'fdy let
         fdx abs fdy abs plus 'fdist let
         fdist 30 lt fdist 0 gt and (
-          vx fdx 0 gt (6) (-6) if plus 'vx let
-          vy fdy 0 gt (6) (-6) if plus 'vy let
+          vx fdx sign 6 mul plus 'vx let
+          vy fdy sign 6 mul plus 'vy let
         ) () if
       ) () if
       j 1 plus 'j let
@@ -94,14 +94,12 @@ list NR (-1 give) repeat 'rages let
     vy 63 mul 64 div 'vy let
 
     -- Clamp
-    vx 24 gt (24 'vx let) () if
-    vx -24 lt (-24 'vx let) () if
-    vy 24 gt (24 'vy let) () if
-    vy -24 lt (-24 'vy let) () if
+    vx -24 24 clamp 'vx let
+    vy -24 24 clamp 'vy let
 
     -- Update position (velocity / 8)
-    x vx 8 div plus 640 plus 640 mod 'x let
-    y vy 8 div plus 480 plus 480 mod 'y let
+    x vx 8 div plus 640 wrap 'x let
+    y vy 8 div plus 480 wrap 'y let
 
     xs i x set 'xs let  ys i y set 'ys let
     vxs i vx set 'vxs let  vys i vy set 'vys let

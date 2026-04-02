@@ -24,8 +24,6 @@ list N (480 random give) repeat 'p3ys let
 0 'p-timer let
 -100 'ppx let  -100 'ppy let
 
-'sign (dup 0 gt (drop 1) (0 lt (-1) (0) if) if) def
-
 0
 
 'mousemove ('my let 'mx let) on
@@ -41,10 +39,8 @@ list N (480 random give) repeat 'p3ys let
 
     xs 0 (plus) fold N div px sub 6 div 'pvx let
     ys 0 (plus) fold N div py sub 6 div 'pvy let
-    pvx 8 gt (8 'pvx let) () if
-    pvx -8 lt (-8 'pvx let) () if
-    pvy 8 gt (8 'pvy let) () if
-    pvy -8 lt (-8 'pvy let) () if
+    pvx -8 8 clamp 'pvx let
+    pvy -8 8 clamp 'pvy let
     px pvx plus 'px let
     py pvy plus 'py let
   ) (
@@ -113,21 +109,19 @@ list N (480 random give) repeat 'p3ys let
       xi px sub 'pdx let  yi py sub 'pdy let
       pdx abs pdy abs plus 'pdist let
       pdist 140 lt pdist 0 gt and (
-        ax pdx 0 gt (50) (-50) if plus 'ax let
-        ay pdy 0 gt (50) (-50) if plus 'ay let
+        ax pdx sign 50 mul plus 'ax let
+        ay pdy sign 50 mul plus 'ay let
       ) () if
     ) () if
 
     vxi ax 3 div plus 15 mul 16 div 'vxi let
     vyi ay 3 div plus 15 mul 16 div 'vyi let
 
-    vxi 28 gt (28 'vxi let) () if
-    vxi -28 lt (-28 'vxi let) () if
-    vyi 28 gt (28 'vyi let) () if
-    vyi -28 lt (-28 'vyi let) () if
+    vxi -28 28 clamp 'vxi let
+    vyi -28 28 clamp 'vyi let
 
-    xi vxi 4 div plus 640 plus 640 mod 'xi let
-    yi vyi 4 div plus 480 plus 480 mod 'yi let
+    xi vxi 4 div plus 640 wrap 'xi let
+    yi vyi 4 div plus 480 wrap 'yi let
 
     xs i xi set 'xs let  ys i yi set 'ys let
     vxs i vxi set 'vxs let  vys i vyi set 'vys let

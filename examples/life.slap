@@ -36,8 +36,7 @@
   list
   0 'i let
   (i N lt) (
-    i W mod 'x let
-    i W div 'y let
+    i W divmod 'y let 'x let
     'g x y neighbors 'n let
     'g i nth 1 eq
       (n 2 eq n 3 eq or)
@@ -53,15 +52,7 @@
 'draw-cell (
   S mul 'py let
   S mul 'px let
-  0 'dy let
-  (dy S lt) (
-    0 'dx let
-    (dx S lt) (
-      px dx plus  py dy plus  3 pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  px py S S 3 fill-rect
 ) def
 
 -- Draw SxS block in a given color
@@ -69,15 +60,7 @@
   'cc let
   S mul 'py let
   S mul 'px let
-  0 'dy let
-  (dy S lt) (
-    0 'dx let
-    (dx S lt) (
-      px dx plus  py dy plus  cc pixel
-      dx 1 plus 'dx let
-    ) while
-    dy 1 plus 'dy let
-  ) while
+  px py S S cc fill-rect
 ) def
 
 -- Set cell alive at pixel coords; grid is on stack
@@ -122,7 +105,7 @@ list N (2 random give) repeat
   0 'i let
   (i N lt) (
     'g i nth 1 eq (
-      i W mod  i W div  draw-cell
+      i W divmod draw-cell
     ) () if
     i 1 plus 'i let
   ) while
