@@ -3,8 +3,8 @@
 -- Answer: 4179871
 
 -- All work inside one mutate: sieve divisor sums, then check pairs via nth.
-list 28124 (0 give) repeat box 'divs let
-divs (
+list 28124 (0 give) repeat box 'divs-raw let
+divs-raw (
   'dv let
   -- Sieve: dv[n] = sum of proper divisors of n
   1 'si let

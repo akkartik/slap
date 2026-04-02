@@ -31,17 +31,17 @@ list 'products let
 ) while
 
 -- Case 2: a is 2-digit, b is 3-digit
-12 'a let
-(a 98 le)
+12 'a2 let
+(a2 98 le)
 (
   123 'b let
-  (b 987 le a b mul 9999 le and)
+  (b 987 le a2 b mul 9999 le and)
   (
-    a b mul 'c let
-    a b c is-pan9 (products c give 'products let) () if
+    a2 b mul 'c let
+    a2 b c is-pan9 (products c give 'products let) () if
     b 1 plus 'b let
   ) while
-  a 1 plus 'a let
+  a2 1 plus 'a2 let
 ) while
 
 products sort dedup sum print

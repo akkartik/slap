@@ -1112,7 +1112,10 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                             if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
                             else {
                                 TCBinding *existing = tc_lookup(tc, name_sym);
-                                if (existing && existing->is_def) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
+                                if (existing) {
+                                    if (existing->is_def) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
+                                    else tc_error(tc, t->line, "'%s' is already bound", sym_name(name_sym));
+                                }
                             }
                         }
                         tc_bind(tc, name_sym, &val_t, 0);

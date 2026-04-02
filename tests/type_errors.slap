@@ -129,3 +129,8 @@
 'ddd (1) def
 1 'ddd let
 
+-- EXPECT: already bound
+-- TYPE ERROR: let shadows let
+1 'eee let
+2 'eee let
+

@@ -3,9 +3,9 @@
 -- Answer: 76576500
 
 -- Precompute divisor counts using sieve in a boxed array.
-list 12377 (1 give) repeat box 'divs let
+list 12377 (1 give) repeat box 'divs-raw let
 
-divs (
+divs-raw (
   'd let
   2 'i let
   (i 12377 lt)

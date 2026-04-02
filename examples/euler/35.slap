@@ -53,27 +53,27 @@
 d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
 
 -- 3-digit
-0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (
-  cds d0 get 100 mul cds d1 get 10 mul plus cds d2 get plus
+0 'e0 let (e0 4 lt) (0 'e1 let (e1 4 lt) (0 'e2 let (e2 4 lt) (
+  cds e0 get 100 mul cds e1 get 10 mul plus cds e2 get plus
   check-circular (cnt 1 plus 'cnt let) () if
-d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+e2 1 plus 'e2 let) while e1 1 plus 'e1 let) while e0 1 plus 'e0 let) while
 
 -- 4-digit
-0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (
-  cds d0 get 1000 mul cds d1 get 100 mul plus cds d2 get 10 mul plus cds d3 get plus
+0 'f0 let (f0 4 lt) (0 'f1 let (f1 4 lt) (0 'f2 let (f2 4 lt) (0 'f3 let (f3 4 lt) (
+  cds f0 get 1000 mul cds f1 get 100 mul plus cds f2 get 10 mul plus cds f3 get plus
   check-circular (cnt 1 plus 'cnt let) () if
-d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+f3 1 plus 'f3 let) while f2 1 plus 'f2 let) while f1 1 plus 'f1 let) while f0 1 plus 'f0 let) while
 
 -- 5-digit
-0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (0 'd4 let (d4 4 lt) (
-  cds d0 get 10000 mul cds d1 get 1000 mul plus cds d2 get 100 mul plus cds d3 get 10 mul plus cds d4 get plus
+0 'g0 let (g0 4 lt) (0 'g1 let (g1 4 lt) (0 'g2 let (g2 4 lt) (0 'g3 let (g3 4 lt) (0 'g4 let (g4 4 lt) (
+  cds g0 get 10000 mul cds g1 get 1000 mul plus cds g2 get 100 mul plus cds g3 get 10 mul plus cds g4 get plus
   check-circular (cnt 1 plus 'cnt let) () if
-d4 1 plus 'd4 let) while d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+g4 1 plus 'g4 let) while g3 1 plus 'g3 let) while g2 1 plus 'g2 let) while g1 1 plus 'g1 let) while g0 1 plus 'g0 let) while
 
 -- 6-digit
-0 'd0 let (d0 4 lt) (0 'd1 let (d1 4 lt) (0 'd2 let (d2 4 lt) (0 'd3 let (d3 4 lt) (0 'd4 let (d4 4 lt) (0 'd5 let (d5 4 lt) (
-  cds d0 get 100000 mul cds d1 get 10000 mul plus cds d2 get 1000 mul plus cds d3 get 100 mul plus cds d4 get 10 mul plus cds d5 get plus
+0 'h0 let (h0 4 lt) (0 'h1 let (h1 4 lt) (0 'h2 let (h2 4 lt) (0 'h3 let (h3 4 lt) (0 'h4 let (h4 4 lt) (0 'h5 let (h5 4 lt) (
+  cds h0 get 100000 mul cds h1 get 10000 mul plus cds h2 get 1000 mul plus cds h3 get 100 mul plus cds h4 get 10 mul plus cds h5 get plus
   check-circular (cnt 1 plus 'cnt let) () if
-d5 1 plus 'd5 let) while d4 1 plus 'd4 let) while d3 1 plus 'd3 let) while d2 1 plus 'd2 let) while d1 1 plus 'd1 let) while d0 1 plus 'd0 let) while
+h5 1 plus 'h5 let) while h4 1 plus 'h4 let) while h3 1 plus 'h3 let) while h2 1 plus 'h2 let) while h1 1 plus 'h1 let) while h0 1 plus 'h0 let) while
 
 cnt print

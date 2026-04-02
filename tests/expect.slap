@@ -280,12 +280,6 @@ rec rec eq assert
 ) def
 outer 15 eq assert
 
--- let binding rebinding
-10 'x let
-'use-x (x 1 plus) def
-20 'x let
-use-x 21 eq assert
-
 -- tuple pull/put
 (10 20 30) 0 pull 10 eq assert drop
 (10 20 30) 2 pull 30 eq assert drop
