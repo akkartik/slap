@@ -280,7 +280,7 @@ rec rec eq assert
 ) def
 outer 15 eq assert
 
--- let binding shadowing
+-- let binding rebinding
 10 'x let
 'use-x (x 1 plus) def
 20 'x let

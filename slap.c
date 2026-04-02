@@ -532,6 +532,7 @@ typedef struct {
     TCUnknown unknowns[TC_UNKNOWN_MAX]; int unknown_count;
     TVarEntry tvars[TVAR_MAX]; int tvar_count;
     TupleEffect effects[EFFECT_MAX]; int effect_count;
+    int user_start, prelude_sig_count;
 } TypeChecker;
 
 static int tvar_fresh(TypeChecker *tc) {
@@ -713,6 +714,10 @@ static int tc_check_body_against_sig(Token *toks, int start, int end, int total_
 }
 
 static int tc_is_copyable(AbstractType *t) { return !(t->flags & AT_LINEAR) && t->type != TC_BOX; }
+static int tc_is_builtin(uint32_t sym, int prelude_sig_count) {
+    for (int i = 0; i < prelude_sig_count; i++) if (type_sigs[i].sym == sym) return 1;
+    return ho_ops_find(sym) != NULL;
+}
 static void tc_bind(TypeChecker *tc, uint32_t sym, AbstractType *atype, int is_def) {
     for (int i = 0; i < tc->bind_count; i++) {
         if (tc->bindings[i].sym == sym) { tc->bindings[i].atype = *atype; tc->bindings[i].is_def = is_def; return; }
@@ -971,6 +976,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
     static uint32_t s_def = 0, s_let = 0, s_recur = 0, s_effect = 0, s_check = 0;
     if (!s_def) { s_def = sym_intern("def"); s_let = sym_intern("let"); s_recur = sym_intern("recur"); s_effect = sym_intern("effect"); s_check = sym_intern("check"); }
     for (int i = start; i < end; i++) {
+        if (i == tc->user_start && !tc->prelude_sig_count) tc->prelude_sig_count = type_sig_count;
         Token *t = &toks[i]; current_line = t->line;
         switch (t->tag) {
         case TOK_INT: tc_push(tc, TC_INT, t->line); break;
@@ -1075,12 +1081,26 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             uint32_t sym = t->as.sym;
             if (sym == s_def) {
                 if (tc->recur_pending) {
-                    if (tc->sp >= 1) { AbstractType vt = tc->data[tc->sp-1]; tc->sp--; tc_bind(tc, tc->recur_sym, &vt, 1); }
+                    if (tc->sp >= 1) {
+                        AbstractType vt = tc->data[tc->sp-1]; tc->sp--;
+                        if (i >= tc->user_start) {
+                            if (tc_is_builtin(tc->recur_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' is already defined", sym_name(tc->recur_sym));
+                            else { TCBinding *existing = tc_lookup(tc, tc->recur_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined", sym_name(tc->recur_sym)); }
+                        }
+                        tc_bind(tc, tc->recur_sym, &vt, 1);
+                    }
                     tc->recur_pending = 0;
                 } else {
                     if (tc->sp >= 2) {
                         AbstractType vt = tc->data[tc->sp-1]; uint32_t name_sym = tc->data[tc->sp-2].sym_id;
-                        tc->sp -= 2; if (name_sym) tc_bind(tc, name_sym, &vt, 1);
+                        tc->sp -= 2;
+                        if (name_sym) {
+                            if (i >= tc->user_start) {
+                                if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' is already defined", sym_name(name_sym));
+                                else { TCBinding *existing = tc_lookup(tc, name_sym); if (existing) tc_error(tc, t->line, "'%s' is already defined", sym_name(name_sym)); }
+                            }
+                            tc_bind(tc, name_sym, &vt, 1);
+                        }
                     } else tc->sp = 0;
                 }
             } else if (sym == s_let) {
@@ -1088,12 +1108,12 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     uint32_t name_sym = tc->data[tc->sp-1].sym_id; tc->sp--;
                     AbstractType val_t = tc->data[tc->sp-1]; tc->sp--;
                     if (name_sym) {
-                        TCBinding *existing = tc_lookup(tc, name_sym);
-                        if (existing && !existing->is_def) {
-                            TypeConstraint old_t = existing->atype.type, new_t = val_t.type;
-                            if (old_t != TC_NONE && new_t != TC_NONE && old_t != new_t)
-                                if (!tc_constraint_matches(old_t, new_t) && !tc_constraint_matches(new_t, old_t))
-                                    tc_error(tc, t->line, "rebinding '%s' changes type from %s to %s", sym_name(name_sym), constraint_name(old_t), constraint_name(new_t));
+                        if (i >= tc->user_start) {
+                            if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
+                            else {
+                                TCBinding *existing = tc_lookup(tc, name_sym);
+                                if (existing && existing->is_def) tc_error(tc, t->line, "'%s' shadows existing definition", sym_name(name_sym));
+                            }
                         }
                         tc_bind(tc, name_sym, &val_t, 0);
                     }
@@ -1134,8 +1154,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
     }
 }
 
-static int typecheck_tokens(Token *toks, int count) {
-    TypeChecker tc; memset(&tc, 0, sizeof(tc)); tc.tvar_count = 1;
+static int typecheck_tokens(Token *toks, int count, int user_start) {
+    TypeChecker tc; memset(&tc, 0, sizeof(tc)); tc.tvar_count = 1; tc.user_start = user_start;
     tc_process_range(&tc, toks, 0, count, count);
     for (int i = 0; i < tc.sp; i++)
         if ((tc.data[i].flags & AT_LINEAR) && !(tc.data[i].flags & AT_CONSUMED))
@@ -2129,7 +2149,7 @@ int main(int argc, char **argv) {
     memcpy(combined,types_tokens,types_tok_count*sizeof(Token));
     memcpy(&combined[types_tok_count],prelude_tokens,prelude_tok_count*sizeof(Token));
     memcpy(&combined[types_tok_count+prelude_tok_count],user_tokens,user_tok_count*sizeof(Token));
-    int errors=typecheck_tokens(combined,combined_count);
+    int errors=typecheck_tokens(combined,combined_count,types_tok_count+prelude_tok_count);
     if(errors>0){fprintf(stderr,"%d type error(s)\n",errors);free(src);frame_free(global);return 1;}
     if(check_only){fprintf(stderr,"type check passed\n");free(src);frame_free(global);return 0;}
     eval(user_tokens,user_tok_count,global);

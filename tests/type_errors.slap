@@ -113,3 +113,19 @@
 -- EXPECT: function body consumes
 -- TYPE ERROR: body declares 2 inputs but only consumes 1
 'foo (drop) [int lent in  int lent in  int move out] effect def
+
+-- EXPECT: already defined
+-- TYPE ERROR: duplicate def
+'aaa (1) def
+'aaa (2) def
+
+-- EXPECT: already defined
+-- TYPE ERROR: def shadows outer def
+'bbb 1 def
+'ccc ('bbb 2 def) def
+
+-- EXPECT: shadows existing definition
+-- TYPE ERROR: let shadows def
+'ddd (1) def
+1 'ddd let
+

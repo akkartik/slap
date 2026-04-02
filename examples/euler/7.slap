@@ -17,13 +17,13 @@
   ) if
 ) def
 
-0 'count let
+0 'cnt let
 1 'candidate let
 
-(count 10001 lt)
+(cnt 10001 lt)
 (
   candidate 1 plus 'candidate let
-  candidate is-prime (count 1 plus 'count let) () if
+  candidate is-prime (cnt 1 plus 'cnt let) () if
 )
 while
 

@@ -19,7 +19,7 @@
 
 -- Start: 1 Jan 1900 = Monday (dow=1)
 1 'dow let
-0 'count let
+0 'cnt let
 
 1900 'y let
 (y 2000 le)
@@ -28,7 +28,7 @@
   (m 12 lt)
   (
     -- count if Sunday on 1st, and year >= 1901
-    y 1901 ge dow 0 eq and (count 1 plus 'count let) () if
+    y 1901 ge dow 0 eq and (cnt 1 plus 'cnt let) () if
     -- advance dow by days in this month
     mdays m get 'days let
     m 1 eq y is-leap and (days 1 plus 'days let) () if
@@ -40,4 +40,4 @@
 )
 while
 
-count print
+cnt print
