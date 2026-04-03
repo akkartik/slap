@@ -95,3 +95,33 @@ stack pop
 
 -- EXPECT: expected rec
 [1 2 3] 'x at
+
+-- EXPECT: read: cannot open
+"_nonexistent_file_abc123.txt" read
+
+-- EXPECT: write: byte element
+"foo.txt" ['x] write
+
+-- EXPECT: write: byte 0 out of range
+"foo.txt" [256] write
+
+-- EXPECT: write: byte 0 out of range
+"foo.txt" [-1] write
+
+-- EXPECT: ls: cannot open directory
+"_nonexistent_dir_abc123" ls
+
+-- EXPECT: utf8-encode: codepoint
+[1114112] utf8-encode
+
+-- EXPECT: utf8-encode: codepoint
+[-1] utf8-encode
+
+-- EXPECT: utf8-decode: invalid lead byte
+[255] utf8-decode
+
+-- EXPECT: utf8-decode: truncated sequence
+[195] utf8-decode
+
+-- EXPECT: utf8-decode: invalid continuation byte
+[195 65] utf8-decode

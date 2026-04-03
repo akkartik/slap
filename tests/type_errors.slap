@@ -150,3 +150,15 @@
 -- TYPE ERROR: plus on list inside recursive non-simple tuple
 'bad6 recur (dup 0 eq (drop 1) (1 sub [2 3] plus) if) def
 
+-- EXPECT: type error
+-- TYPE ERROR: read expects list, not int
+42 read
+
+-- EXPECT: type error
+-- TYPE ERROR: write expects list for path, not int
+42 [1 2 3] write
+
+-- EXPECT: type error
+-- TYPE ERROR: ls expects list, not int
+42 ls
+

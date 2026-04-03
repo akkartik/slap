@@ -790,5 +790,62 @@ ufx-data ufx-decode ufx-encode ufx-data eq assert
 -- two rows (with newline = 10)
 [68 10 72] gly-decode gly-encode [68 10 72] eq assert
 
+-- ===== Filesystem: write & read round-trip =====
+"_test_fs.bin" [72 101 108 108 111] write
+"_test_fs.bin" read [72 101 108 108 111] eq assert
+
+-- write overwrites previous contents
+"_test_fs.bin" [1 2 3] write
+"_test_fs.bin" read [1 2 3] eq assert
+
+-- empty file round-trip
+"_test_fs.bin" [] write
+"_test_fs.bin" read [] eq assert
+
+-- binary bytes (0 and 255)
+"_test_fs.bin" [0 127 255] write
+"_test_fs.bin" read [0 127 255] eq assert
+
+-- single byte
+"_test_fs.bin" [42] write
+"_test_fs.bin" read [42] eq assert
+
+-- ===== Filesystem: ls =====
+"." ls len 0 lt not assert
+
+-- ===== UTF-8 encode/decode =====
+-- ASCII round-trip
+[72 101 108 108 111] utf8-encode utf8-decode [72 101 108 108 111] eq assert
+
+-- ASCII encodes as identity
+[65 66 67] utf8-encode [65 66 67] eq assert
+
+-- empty list round-trip
+[] utf8-encode [] eq assert
+[] utf8-decode [] eq assert
+
+-- 2-byte character: U+00E9 (é) = [0xC3, 0xA9]
+[233] utf8-encode [195 169] eq assert
+[195 169] utf8-decode [233] eq assert
+
+-- 3-byte character: U+4E16 (世) = [0xE4, 0xB8, 0x96]
+[19990] utf8-encode [228 184 150] eq assert
+[228 184 150] utf8-decode [19990] eq assert
+
+-- 4-byte character: U+1F600 (😀) = [0xF0, 0x9F, 0x98, 0x80]
+[128512] utf8-encode [240 159 152 128] eq assert
+[240 159 152 128] utf8-decode [128512] eq assert
+
+-- mixed ASCII and multibyte: "Ré" = [82 233]
+[82 233] utf8-encode [82 195 169] eq assert
+[82 195 169] utf8-decode [82 233] eq assert
+
+-- full round-trip with file I/O
+"_test_fs.bin" [82 233] utf8-encode write
+"_test_fs.bin" read utf8-decode [82 233] eq assert
+
+-- cleanup test file
+"_test_fs.bin" [] write
+
 -- ===== Done =====
 "All tests passed!" print

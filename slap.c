@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <stdarg.h>
+#include <dirent.h>
 
 #define STACK_MAX  65536
 #define SYM_MAX   4096
@@ -1801,7 +1802,12 @@ static const char *BUILTIN_TYPES =
 #define LDE " ['a list own in  int list own in  list move out] effect\n"
     "'group" LDE "'partition" LDE "'reshape" LDE
 #undef LDE
-    "'transpose [list own in  list move out] effect\n";
+    "'transpose [list own in  list move out] effect\n"
+    "'read [list own in  int list move out] effect\n"
+    "'write [list own in  int list own in] effect\n"
+    "'ls [list own in  list move out] effect\n"
+    "'utf8-encode [int list own in  int list move out] effect\n"
+    "'utf8-decode [int list own in  int list move out] effect\n";
 
 static const char *PRELUDE =
     "'over (swap dup (swap) dip) def\n'peek (over) def\n'nip (swap drop) def\n"
@@ -2097,6 +2103,168 @@ static void prim_show(Frame *env) {
 }
 #endif
 
+static char *pop_string_path(const char *who) {
+    Value top = spop();
+    if (top.tag != VAL_LIST) die("%s: expected list (string), got non-list", who);
+    int len = (int)top.as.compound.len;
+    int slots = (int)top.as.compound.slots - 1;
+    if (slots != len) die("%s: path list elements must all be single-slot (ints)", who);
+    char *buf = malloc(len + 1);
+    for (int i = 0; i < len; i++) {
+        Value v = stack[sp - len + i];
+        if (v.tag != VAL_INT) die("%s: path element %d is not an int", who, i);
+        buf[i] = (char)v.as.i;
+    }
+    buf[len] = '\0';
+    sp -= len;
+    return buf;
+}
+
+static void push_byte_list(const unsigned char *buf, size_t len) {
+    for (size_t i = 0; i < len; i++) spush(val_int(buf[i]));
+    spush(val_compound(VAL_LIST, (int)len, (int)len + 1));
+}
+
+static void prim_read(Frame *e) {
+    (void)e;
+    char *path = pop_string_path("read");
+    FILE *f = fopen(path, "rb");
+    if (!f) die("read: cannot open '%s'", path);
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    unsigned char *buf = malloc(sz);
+    size_t n = fread(buf, 1, sz, f);
+    fclose(f);
+    if ((long)n != sz) { free(buf); free(path); die("read: short read on '%s'", path); }
+    push_byte_list(buf, n);
+    free(buf);
+    free(path);
+}
+
+static void prim_write(Frame *e) {
+    (void)e;
+    Value top = spop();
+    if (top.tag != VAL_LIST) die("write: expected list (bytes), got non-list");
+    int len = (int)top.as.compound.len;
+    int slots = (int)top.as.compound.slots - 1;
+    if (slots != len) die("write: byte list elements must all be single-slot (ints)");
+    unsigned char *buf = malloc(len);
+    for (int i = 0; i < len; i++) {
+        Value v = stack[sp - len + i];
+        if (v.tag != VAL_INT) die("write: byte element %d is not an int", i);
+        if (v.as.i < 0 || v.as.i > 255) die("write: byte %d out of range (got %lld)", i, (long long)v.as.i);
+        buf[i] = (unsigned char)v.as.i;
+    }
+    sp -= len;
+    char *path = pop_string_path("write");
+    FILE *f = fopen(path, "wb");
+    if (!f) { free(buf); die("write: cannot open '%s'", path); }
+    size_t n = fwrite(buf, 1, len, f);
+    fclose(f);
+    if ((int)n != len) { free(buf); free(path); die("write: short write on '%s'", path); }
+    free(buf);
+    free(path);
+}
+
+static void prim_ls(Frame *e) {
+    (void)e;
+    char *path = pop_string_path("ls");
+    DIR *d = opendir(path);
+    if (!d) die("ls: cannot open directory '%s'", path);
+    struct dirent *ent;
+    int base = sp, count = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        int slen = (int)strlen(ent->d_name);
+        for (int i = 0; i < slen; i++) spush(val_int((unsigned char)ent->d_name[i]));
+        spush(val_compound(VAL_LIST, slen, slen + 1));
+        count++;
+    }
+    closedir(d);
+    spush(val_compound(VAL_LIST, count, sp - base + 1));
+    free(path);
+}
+
+static void prim_utf8_encode(Frame *e) {
+    (void)e;
+    Value top = spop();
+    if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints");
+    int len = (int)top.as.compound.len;
+    int slots = (int)top.as.compound.slots - 1;
+    if (slots != len) die("utf8-encode: elements must all be ints");
+    int64_t *cps = malloc(len * sizeof(int64_t));
+    for (int i = 0; i < len; i++) {
+        Value v = stack[sp - len + i];
+        if (v.tag != VAL_INT) die("utf8-encode: element %d is not an int", i);
+        cps[i] = v.as.i;
+    }
+    sp -= len;
+    int base = sp;
+    int byte_count = 0;
+    for (int i = 0; i < len; i++) {
+        int64_t cp = cps[i];
+        if (cp < 0 || cp > 0x10FFFF) { free(cps); die("utf8-encode: codepoint %lld out of range", (long long)cp); }
+        if (cp < 0x80) { spush(val_int(cp)); byte_count++; }
+        else if (cp < 0x800) {
+            spush(val_int(0xC0 | (cp >> 6)));
+            spush(val_int(0x80 | (cp & 0x3F)));
+            byte_count += 2;
+        } else if (cp < 0x10000) {
+            spush(val_int(0xE0 | (cp >> 12)));
+            spush(val_int(0x80 | ((cp >> 6) & 0x3F)));
+            spush(val_int(0x80 | (cp & 0x3F)));
+            byte_count += 3;
+        } else {
+            spush(val_int(0xF0 | (cp >> 18)));
+            spush(val_int(0x80 | ((cp >> 12) & 0x3F)));
+            spush(val_int(0x80 | ((cp >> 6) & 0x3F)));
+            spush(val_int(0x80 | (cp & 0x3F)));
+            byte_count += 4;
+        }
+    }
+    free(cps);
+    spush(val_compound(VAL_LIST, byte_count, sp - base + 1));
+}
+
+static void prim_utf8_decode(Frame *e) {
+    (void)e;
+    Value top = spop();
+    if (top.tag != VAL_LIST) die("utf8-decode: expected list of bytes");
+    int len = (int)top.as.compound.len;
+    int slots = (int)top.as.compound.slots - 1;
+    if (slots != len) die("utf8-decode: elements must all be ints");
+    unsigned char *bytes = malloc(len);
+    for (int i = 0; i < len; i++) {
+        Value v = stack[sp - len + i];
+        if (v.tag != VAL_INT) { free(bytes); die("utf8-decode: element %d is not an int", i); }
+        if (v.as.i < 0 || v.as.i > 255) { free(bytes); die("utf8-decode: byte %d out of range (got %lld)", i, (long long)v.as.i); }
+        bytes[i] = (unsigned char)v.as.i;
+    }
+    sp -= len;
+    int base = sp, cp_count = 0, i = 0;
+    while (i < len) {
+        int64_t cp; int expect;
+        unsigned char b = bytes[i];
+        if (b < 0x80) { cp = b; expect = 0; }
+        else if ((b & 0xE0) == 0xC0) { cp = b & 0x1F; expect = 1; }
+        else if ((b & 0xF0) == 0xE0) { cp = b & 0x0F; expect = 2; }
+        else if ((b & 0xF8) == 0xF0) { cp = b & 0x07; expect = 3; }
+        else { free(bytes); die("utf8-decode: invalid lead byte 0x%02X at position %d", b, i); }
+        i++;
+        for (int j = 0; j < expect; j++) {
+            if (i >= len) { free(bytes); die("utf8-decode: truncated sequence at position %d", i); }
+            if ((bytes[i] & 0xC0) != 0x80) { free(bytes); die("utf8-decode: invalid continuation byte 0x%02X at position %d", bytes[i], i); }
+            cp = (cp << 6) | (bytes[i] & 0x3F);
+            i++;
+        }
+        spush(val_int(cp));
+        cp_count++;
+    }
+    free(bytes);
+    spush(val_compound(VAL_LIST, cp_count, sp - base + 1));
+}
+
 #define PRIM(nm,body) static void prim_##nm(Frame *e){(void)e;body;}
 PRIM(list, spush(val_compound(VAL_LIST,0,1)))
 PRIM(rec, spush(val_compound(VAL_RECORD,0,1)))
@@ -2128,6 +2296,8 @@ static void register_prims(void) {
         {"where",prim_where},{"find",prim_find_elem},
         {"millis",prim_millis},{"box",prim_box},{"free",prim_free},
         {"lend",prim_lend},{"mutate",prim_mutate},{"clone",prim_clone},
+        {"read",prim_read},{"write",prim_write},{"ls",prim_ls},
+        {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},
 #ifdef SLAP_SDL
         {"clear",prim_clear},{"pixel",prim_pixel},{"fill-rect",prim_fill_rect},{"millis",prim_millis},{"on",prim_on},{"show",prim_show},
 #endif
