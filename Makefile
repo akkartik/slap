@@ -2,8 +2,13 @@ CC = cc
 CFLAGS = -std=c99 -Wall -Wextra -O3 -flto -D_POSIX_C_SOURCE=200809L
 slap: slap.c
 	$(CC) $(CFLAGS) -o slap slap.c -lm
+UNAME_S := $(shell uname -s)
+SDL_EXTRA :=
+ifeq ($(UNAME_S),Darwin)
+SDL_EXTRA := -lobjc
+endif
 slap-sdl: slap.c
-	$(CC) $(CFLAGS) -DSLAP_SDL -o slap-sdl slap.c -lm $(shell sdl2-config --cflags --libs 2>/dev/null || echo "-lSDL2")
+	$(CC) $(CFLAGS) -DSLAP_SDL -o slap-sdl slap.c -lm $(SDL_EXTRA) $(shell sdl2-config --cflags --libs 2>/dev/null || echo "-lSDL2")
 slap-wasm: slap.c shell.html
 	@if [ -z "$(FILE)" ]; then echo "usage: make slap-wasm FILE=program.slap"; exit 1; fi
 	@NAME=$$(basename $(FILE) .slap); \

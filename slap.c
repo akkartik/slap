@@ -2018,6 +2018,10 @@ static void prim_dedup(Frame *e) {
 
 #ifdef SLAP_SDL
 #include <SDL.h>
+#include <SDL_syswm.h>
+#ifdef __APPLE__
+#include <objc/message.h>
+#endif
 #define CANVAS_W 640
 #define CANVAS_H 480
 static uint8_t canvas[CANVAS_W*CANVAS_H];
@@ -2031,10 +2035,18 @@ static uint8_t gray_lut[4]={0,85,170,255};
 static void sdl_init(void) {
     if(sdl_window) return;
     if(SDL_Init(SDL_INIT_VIDEO)<0) die("SDL_Init: %s",SDL_GetError());
-    sdl_window=SDL_CreateWindow("slap",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,CANVAS_W,CANVAS_H,0);
+    sdl_window=SDL_CreateWindow("slap",SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,CANVAS_W,CANVAS_H,SDL_WINDOW_BORDERLESS|SDL_WINDOW_RESIZABLE);
     if(!sdl_window) die("SDL_CreateWindow: %s",SDL_GetError());
+#ifdef __APPLE__
+    SDL_SysWMinfo wminfo; SDL_VERSION(&wminfo.version);
+    if(SDL_GetWindowWMInfo(sdl_window,&wminfo)){
+        id nsw=(id)wminfo.info.cocoa.window;
+        ((void(*)(id,SEL,BOOL))objc_msgSend)(nsw,sel_getUid("setHasShadow:"),NO);
+    }
+#endif
     sdl_renderer=SDL_CreateRenderer(sdl_window,-1,SDL_RENDERER_ACCELERATED);
     if(!sdl_renderer) die("SDL_CreateRenderer: %s",SDL_GetError());
+    SDL_RenderSetLogicalSize(sdl_renderer,CANVAS_W,CANVAS_H);
     sdl_texture=SDL_CreateTexture(sdl_renderer,SDL_PIXELFORMAT_RGB24,SDL_TEXTUREACCESS_STREAMING,CANVAS_W,CANVAS_H);
     memset(canvas,0,sizeof(canvas));
 }
@@ -2061,9 +2073,9 @@ static void show_intern_syms(void) {
 }
 static void show_dispatch_event(SDL_Event *ev, Frame *env) {
     if(ev->type==SDL_KEYDOWN){for(int h=0;h<handler_count;h++)if(event_handlers[h].event_sym==sym_keydown){spush(val_int((int64_t)ev->key.keysym.sym));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}}
-    int64_t mx=0,my=0; int is_mouse=0;
-    if(ev->type==SDL_MOUSEBUTTONDOWN||ev->type==SDL_MOUSEBUTTONUP){mx=ev->button.x;my=ev->button.y;is_mouse=1;}
-    else if(ev->type==SDL_MOUSEMOTION){mx=ev->motion.x;my=ev->motion.y;is_mouse=1;}
+    int64_t mx=0,my=0; int is_mouse=0; float lx,ly;
+    if(ev->type==SDL_MOUSEBUTTONDOWN||ev->type==SDL_MOUSEBUTTONUP){SDL_RenderWindowToLogical(sdl_renderer,ev->button.x,ev->button.y,&lx,&ly);mx=(int64_t)lx;my=(int64_t)ly;is_mouse=1;}
+    else if(ev->type==SDL_MOUSEMOTION){SDL_RenderWindowToLogical(sdl_renderer,ev->motion.x,ev->motion.y,&lx,&ly);mx=(int64_t)lx;my=(int64_t)ly;is_mouse=1;}
     if(is_mouse){uint32_t sym=ev->type==SDL_MOUSEBUTTONDOWN?sym_mousedown:ev->type==SDL_MOUSEBUTTONUP?sym_mouseup:sym_mousemove;
         for(int h=0;h<handler_count;h++)if(event_handlers[h].event_sym==sym){spush(val_int(mx));spush(val_int(my));eval_body(event_handlers[h].handler_body,event_handlers[h].handler_slots,env);}}
 }
