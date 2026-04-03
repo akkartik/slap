@@ -182,7 +182,7 @@ static void lex(const char *src) {
 }
 
 typedef enum { BIND_DEF, BIND_LET } BindKind;
-typedef struct Binding { uint32_t sym; int offset; int slots; BindKind kind; int recur; } Binding;
+typedef struct Binding { uint32_t sym; int offset; int slots; int allocated; BindKind kind; int recur; } Binding;
 struct Frame {
     struct Frame *parent; int bind_count; int vals_used; int refcount;
     Binding bindings[FRAME_MAX]; Value vals[FRAME_VALS_MAX];
@@ -197,12 +197,15 @@ static void frame_free(Frame *f) { free(f); }
 static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind kind, int recur) {
     for (int i = 0; i < f->bind_count; i++) {
         if (f->bindings[i].sym == sym) {
-            if (f->bindings[i].slots == slots) { memcpy(&f->vals[f->bindings[i].offset], vals, slots * sizeof(Value)); }
-            else {
+            if (slots <= f->bindings[i].allocated) {
+                memcpy(&f->vals[f->bindings[i].offset], vals, slots * sizeof(Value));
+                f->bindings[i].slots = slots;
+            } else {
                 int off = f->vals_used;
                 if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
                 memcpy(&f->vals[off], vals, slots * sizeof(Value));
-                f->vals_used += slots; f->bindings[i].offset = off; f->bindings[i].slots = slots;
+                f->vals_used += slots; f->bindings[i].offset = off;
+                f->bindings[i].slots = slots; f->bindings[i].allocated = slots;
             }
             f->bindings[i].kind = kind; f->bindings[i].recur = recur; return;
         }
@@ -213,7 +216,8 @@ static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind 
     memcpy(&f->vals[off], vals, slots * sizeof(Value));
     f->vals_used += slots;
     Binding *b = &f->bindings[f->bind_count++];
-    b->sym = sym; b->offset = off; b->slots = slots; b->kind = kind; b->recur = recur;
+    b->sym = sym; b->offset = off; b->slots = slots; b->allocated = slots;
+    b->kind = kind; b->recur = recur;
 }
 
 typedef struct { Binding *bind; Frame *frame; } Lookup;
