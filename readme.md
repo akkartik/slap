@@ -60,7 +60,7 @@ Stack manipulation:
 3 dup                -- 3 3
 4 1 drop             -- 4
 6 5 swap             -- 5 6
-7 8 (1 plus) dip     -- 7 9   (apply under top)
+7 8 (1 plus) dip     -- 8 8   (apply under top)
 (2 3 plus) apply     -- 5     (execute a tuple)
 ```
 
