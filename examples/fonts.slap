@@ -1,0 +1,192 @@
+-- Font Book — two-pane viewer with editable preview
+-- Run with: ./slap-sdl < examples/fonts.slap
+
+-- Draw one byte as 8 horizontal pixels (MSB = leftmost)
+'draw-byte (
+  'dc let 'py let 'px let 'b let
+  b 128 band 0 neq (px     py dc pixel) () if
+  b  64 band 0 neq (px 1 plus py dc pixel) () if
+  b  32 band 0 neq (px 2 plus py dc pixel) () if
+  b  16 band 0 neq (px 3 plus py dc pixel) () if
+  b   8 band 0 neq (px 4 plus py dc pixel) () if
+  b   4 band 0 neq (px 5 plus py dc pixel) () if
+  b   2 band 0 neq (px 6 plus py dc pixel) () if
+  b   1 band 0 neq (px 7 plus py dc pixel) () if
+) def
+
+-- Draw one character from raw font bytes
+'draw-char (
+  'dc let 'gy let 'gx let 'ch let 'n let 'raw let
+  ch n n mul 8 mul mul 256 plus 'base let
+  0 'ti let
+  (ti n n mul lt) (
+    ti n div 8 mul gx plus 'tx let
+    ti n mod 8 mul gy plus 'ty let
+    0 'row let
+    (row 8 lt) (
+      raw base ti 8 mul plus row plus get
+      tx ty row plus dc draw-byte
+      row 1 plus 'row let
+    ) while
+    ti 1 plus 'ti let
+  ) while
+) def
+
+-- Draw a string, no wrapping
+'draw-text (
+  'dc let 'sy let 'sx let 'str let 'n let 'raw let
+  sx 'cx let
+  0 'si let
+  (si str len lt) (
+    str si get 'ch let
+    raw ch get 'w let
+    w 0 gt (
+      raw n ch cx sy dc draw-char
+      cx w plus 1 plus 'cx let
+    ) () if
+    si 1 plus 'si let
+  ) while
+) def
+
+-- Draw text with wrapping; sets cur-x/cur-y to final position
+'draw-text-wrap (
+  'dc let 'maxw let 'sy let 'sx let 'str let 'n let 'raw let
+  sx 'cx let  sy 'cy let
+  n 8 mul 'rh let
+  0 'si let
+  (si str len lt) (
+    str si get 'ch let
+    raw ch get 'w let
+    w 0 gt (
+      cx w plus sx maxw plus gt (
+        sx 'cx let  cy rh 2 plus plus 'cy let
+      ) () if
+      cy 480 lt (
+        raw n ch cx cy dc draw-char
+      ) () if
+      cx w plus 1 plus 'cx let
+    ) () if
+    si 1 plus 'si let
+  ) while
+  cx 'cur-x let  cy 'cur-y let
+) def
+
+-- N from filename last char
+'font-n (last 49 sub 1 plus) def
+
+-- Font catalog
+[
+  "chicago12.uf2"
+  "geneva12.uf2"        "geneva14.uf2"        "geneva24.uf3"
+  "helvetica12.uf2"     "helvetica14.uf2"     "helvetica24.uf3"
+  "times12.uf2"         "times15.uf2"         "times24.uf3"
+  "newyork12.uf2"       "newyork14.uf2"       "newyork24.uf3"
+  "palatino12.uf2"      "palatino14.uf2"      "palatino24.uf3"
+  "monaco12.uf2"        "courier12.uf2"       "terminal12.uf2"
+  "venice14.uf2"        "losangeles12.uf2"
+  "sapphire14.uf2"      "sapphire19.uf3"
+  "diamond12.uf2"       "diamond20.uf3"
+  "cream.uf2"           "fool.uf2"            "jgs7.uf2"
+  "sans10-regular.uf2"  "sans10-bold.uf2"
+  "sans12-regular.uf2"  "sans12-bold.uf2"
+  "sans14-regular.uf2"  "sans14-bold.uf2"
+  "msx816.uf2"          "irisdot.uf3"
+  "atari8.uf1"          "acorn8-regular.uf1"  "acorn8-italic.uf1"
+  "bbcmicro8.uf1"       "orca8.uf1"           "specter8.uf1"
+  "left8.uf1"           "816.uf1"
+] 'fnames let
+fnames len 'nf let
+
+-- Layout
+180 'PW let
+
+-- State
+0 'sel let
+"The quick brown fox jumps over the lazy dog" 'txt let
+0 'cur-x let  0 'cur-y let
+
+'keydown (
+  'key let
+  key 1073741906 eq (sel 1 sub 0 max 'sel let) (
+  key 1073741905 eq (sel 1 plus nf 1 sub min 'sel let) (
+  key 8 eq key 127 eq or (
+    txt len 0 gt (txt txt len 1 sub take-n 'txt let) () if
+  ) (
+    key 32 ge key 126 le and (txt key give 'txt let) () if
+  ) if) if) if
+) on
+
+0
+
+(
+  drop
+  3 clear
+
+  -- Label font
+  "fonts/chicago12.uf2" read 'lf let
+
+  -- Auto-scroll left pane so selection is visible
+  sel 16 mul 'sely let
+  sely 230 sub 0 max 'lscr let
+
+  -- Left pane header
+  0 0 PW 14 1 fill-rect
+  lf 2 "Fonts" 4 0 3 draw-text
+
+  -- Font list
+  0 'li let
+  (li nf lt) (
+    li 16 mul 16 plus lscr sub 'ly let
+    ly 14 ge ly 16 plus 480 le and (
+      fnames li get dup len 4 sub take-n 'dn let
+      li sel eq (
+        0 ly PW 16 0 fill-rect
+        lf 2 dn 4 ly 1 plus 3 draw-text
+      ) (
+        lf 2 dn 4 ly 1 plus 0 draw-text
+      ) if
+    ) () if
+    li 1 plus 'li let
+  ) while
+
+  -- Right pane header
+  PW 1 plus 0 640 PW sub 1 sub 14 1 fill-rect
+
+  -- Divider (full height, over headers)
+  PW 0 1 480 1 fill-rect
+  fnames sel get dup len 4 sub take-n 'sdn let
+  lf 2 sdn PW 8 plus 0 3 draw-text
+
+  -- Load selected font
+  "fonts/" fnames sel get cat read 'raw let
+  fnames sel get font-n 'pn let
+  pn 8 mul 'ph let
+  640 PW sub 16 sub 'pw let
+
+  -- Editable text preview
+  raw pn txt PW 8 plus 22 pw 0 draw-text-wrap
+
+  -- Cursor
+  millis 500 div 2 mod 1 eq (
+    cur-x cur-y ph plus cur-x cur-y sub 1 min 1 0 fill-rect
+    cur-x cur-y 1 ph 0 fill-rect
+  ) () if
+
+  -- Separator
+  PW 2 plus cur-y ph plus 8 plus pw 1 1 fill-rect
+
+  -- Glyph grid: fixed cell size, 16 columns
+  pn 8 mul 2 plus 'cw let
+  16 'cols let
+  cur-y ph plus 16 plus 'gy0 let
+  32 'gc let
+  (gc 128 lt) (
+    gc 32 sub 'gi let
+    gi cols mod cw mul PW 8 plus plus 'gcx let
+    gi cols div ph 2 plus mul gy0 plus 'gcy let
+    gcy ph plus 480 le (
+      raw pn gc gcx gcy 0 draw-char
+    ) () if
+    gc 1 plus 'gc let
+  ) while
+) show
