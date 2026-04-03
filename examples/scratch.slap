@@ -1,5 +1,5 @@
 -- System 7 Note Pad
--- Run with: ./slap-sdl examples/scratch.slap
+-- Run with: ./slap-sdl < examples/scratch.slap
 
 -- 5x7 bitmap font, packed: val = sum(row[i] * 32^i)
 -- Row bits: bit4=leftmost pixel, bit0=rightmost
