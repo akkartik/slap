@@ -494,7 +494,7 @@ static const char *constraint_name(TypeConstraint c) {
     return "?";
 }
 
-#define TVAR_MAX 8192
+#define TVAR_MAX 32768
 typedef struct { int parent; TypeConstraint bound; int elem; int box_c; } TVarEntry;
 
 #define EFFECT_MAX 256
@@ -744,7 +744,9 @@ static void tc_apply_scheme(TypeChecker *tc, TupleEffect *eff, int consumed, int
         int stv = eff->in_tvars[j] - eff->scheme_base;
         if (stv >= 0 && stv < sc) {
             int ftv = map[stv];
-            AbstractType *input = &tc->data[tc->sp - eff->in_count + j];
+            int idx = tc->sp - eff->in_count + j;
+            if (idx < 0 || idx >= 256) continue;
+            AbstractType *input = &tc->data[idx];
             if (tvar_unify_at(tc, ftv, input, line))
                 tc_error(tc, line, input->source_line, "'%s' input type mismatch: expected %s, got %s (value from line %d)", name, constraint_name(tvar_resolve(tc, ftv)), constraint_name(input->type != TC_NONE ? input->type : tvar_resolve(tc, input->tvar_id)), input->source_line);
             if (full_unify && input->tvar_id > 0) {
@@ -1254,6 +1256,12 @@ static void prim_div(Frame *e) { (void)e; Value b=spop(),a=spop();
 static void prim_mod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("mod: division by zero");spush(val_int(a%b));}
 static void prim_divmod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("divmod: division by zero");spush(val_int(a%b));spush(val_int(a/b));}
 static void prim_wrap(Frame *e){(void)e;int64_t m=pop_int(),v=pop_int();if(m==0)die("wrap: modulus must be non-zero");spush(val_int(((v%m)+m)%m));}
+static void prim_band(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();spush(val_int(a&b));}
+static void prim_bor(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();spush(val_int(a|b));}
+static void prim_bxor(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();spush(val_int(a^b));}
+static void prim_bnot(Frame *e){(void)e;int64_t a=pop_int();spush(val_int(~a));}
+static void prim_shl(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();spush(val_int((int64_t)((uint64_t)a<<b)));}
+static void prim_shr(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();spush(val_int((int64_t)((uint64_t)a>>b)));}
 
 #define CMP2(nm,expr) static void prim_##nm(Frame *e){(void)e;Value bt=stack[sp-1];int bs=val_slots(bt);int as=val_slots(stack[sp-1-bs]);int r=(expr);sp-=as+bs;spush(val_int(r?1:0));}
 CMP2(eq, val_equal(&stack[sp-bs-as],as,&stack[sp-bs],bs))
@@ -1727,7 +1735,9 @@ static const char *BUILTIN_TYPES =
 #undef A2E
 #define I2E " [int lent in  int lent in  int move out] effect\n"
     "'mod" I2E "'wrap" I2E
+    "'band" I2E "'bor" I2E "'bxor" I2E "'shl" I2E "'shr" I2E
 #undef I2E
+    "'bnot [int lent in  int move out] effect\n"
     "'divmod [int lent in  int lent in  int move out  int move out] effect\n"
 #define C2E " [lent in  lent in  int move out] effect\n"
     "'eq" C2E "'lt" C2E
@@ -1842,7 +1852,132 @@ static const char *PRELUDE =
     "'keep-mask ('mask swap def 0 mask len range (mask swap get 0 neq) where select) def\n"
     "'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get g eq) where data swap select) map) def\n"
     "'partition (group) def\n"
-    "'classify (dup 'l swap def (l swap index-of) map dup dedup 'u swap def (u swap index-of) map) def\n";
+    "'classify (dup 'l swap def (l swap index-of) map dup dedup 'u swap def (u swap index-of) map) def\n"
+    /* -- bitwise helpers -- */
+    "'byte-mask (255 band) def\n"
+    "'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) map) def\n"
+    "'bits-byte (0 (swap 1 shl bor) fold) def\n"
+    "'chunks ('n let list swap (dup len 0 eq not) (dup n take-n swap (give) dip n drop-n) while drop) def\n"
+    /* -- ICN: 1-bit 8x8 tiles -- */
+    "'icn-decode ((byte-bits) map flatten) def\n"
+    "'icn-encode (8 chunks (bits-byte) map) def\n"
+    /* -- CHR: 2-bit 8x8 tiles (two planes) -- */
+    "'chr-decode (\n"
+    "  'data let\n"
+    "  data 8 take-n (byte-bits) map 'p0 let\n"
+    "  data 8 drop-n 8 take-n (byte-bits) map 'p1 let\n"
+    "  0 8 range ('r let\n"
+    "    0 8 range ('c let\n"
+    "      p0 r get c get  p1 r get c get 1 shl  bor\n"
+    "    ) map\n"
+    "  ) map flatten\n"
+    ") def\n"
+    "'chr-encode (\n"
+    "  8 chunks 'rows let\n"
+    "  rows ((1 band) map bits-byte) map\n"
+    "  rows ((1 shr 1 band) map bits-byte) map\n"
+    "  cat\n"
+    ") def\n"
+    /* -- NMT: nametable 3-byte cells -- */
+    "'nmt-decode (\n"
+    "  3 chunks\n"
+    "  ('c let c 0 get  c 1 get 8 shl  bor 'addr let c 2 get 'color let\n"
+    "   rec addr 'addr into color 'color into) map\n"
+    ") def\n"
+    "'nmt-encode (\n"
+    "  (dup 'addr at dup byte-mask swap 8 shr byte-mask couple swap 'color at give) map flatten\n"
+    ") def\n"
+    /* -- TGA: uncompressed true-color (type 2) -- */
+    "'tga-decode (\n"
+    "  'data let\n"
+    "  data 12 get  data 13 get 8 shl  bor 'w let\n"
+    "  data 14 get  data 15 get 8 shl  bor 'h let\n"
+    "  data 16 get 'd let\n"
+    "  data 18 drop-n 'pixels let\n"
+    "  rec w 'width into h 'height into d 'depth into pixels 'pixels into\n"
+    ") def\n"
+    "'tga-header (\n"
+    "  'px let 'd let 'h let 'w let\n"
+    "  list 0 give 0 give 2 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give\n"
+    "  w byte-mask give w 8 shr byte-mask give\n"
+    "  h byte-mask give h 8 shr byte-mask give\n"
+    "  d give 0 give px cat\n"
+    ") def\n"
+    "'tga-encode (\n"
+    "  dup 'width at swap dup 'height at swap dup 'depth at swap 'pixels at tga-header\n"
+    ") def\n"
+    /* -- GLY: 1-bit inline graphics (ASCII-encoded) -- */
+    "'gly-decode (\n"
+    "  list 'rows let  list 'cur let  0 'maxw let\n"
+    "  (dup len 0 eq not) (\n"
+    "    dup first 'ch let  1 drop-n\n"
+    "    ch 10 eq (\n"
+    "      cur len maxw max 'maxw let\n"
+    "      rows cur give 'rows let  list 'cur let\n"
+    "    ) (\n"
+    "      ch 32 eq (cur 0 give 'cur let) (cur ch 63 sub give 'cur let) if\n"
+    "    ) if\n"
+    "  ) while drop\n"
+    "  cur len 0 eq not (rows cur give 'rows let  cur len maxw max 'maxw let) () if\n"
+    "  rows len 'nrows let  maxw 'w let  nrows 4 mul 'h let\n"
+    "  list 'pixels let\n"
+    "  0 h range ('y let\n"
+    "    0 w range ('c let\n"
+    "      y 4 div 'r let  y 4 mod 'bit let\n"
+    "      rows len r gt (rows r get dup len c gt (c get bit shr 1 band) (drop 0) if) (0) if\n"
+    "      pixels swap give 'pixels let\n"
+    "    ) each\n"
+    "  ) each\n"
+    "  rec w 'width into h 'height into pixels 'pixels into\n"
+    ") def\n"
+    "'gly-encode (\n"
+    "  dup 'width at 'w let dup 'height at 'h let 'pixels at 'px let\n"
+    "  h 4 div 'nrows let\n"
+    "  list 'out let\n"
+    "  0 nrows range ('r let\n"
+    "    0 w range ('c let\n"
+    "      0  0 4 range ('bit let\n"
+    "        px r 4 mul bit plus w mul c plus get\n"
+    "        bit shl bor\n"
+    "      ) each\n"
+    "      63 plus out swap give 'out let\n"
+    "    ) each\n"
+    "    r nrows 1 sub lt (out 10 give 'out let) () if\n"
+    "  ) each\n"
+    "  out\n"
+    ") def\n"
+    /* -- UFX: proportional font (widths + ICN tiles) -- */
+    "'ufx-decode (\n"
+    "  dup 256 take-n 'widths let  256 drop-n\n"
+    "  8 chunks (icn-decode) map 'glyphs let\n"
+    "  rec widths 'widths into glyphs 'glyphs into\n"
+    ") def\n"
+    "'ufx-encode (\n"
+    "  dup 'widths at swap 'glyphs at (icn-encode) map flatten cat\n"
+    ") def\n"
+    /* -- ULZ: LZ compression -- */
+    "'ulz-decode (\n"
+    "  'src let  list 'out let  0 'i let\n"
+    "  (i src len lt) (\n"
+    "    src i get 'op let  i 1 plus 'i let\n"
+    "    op 128 band 0 eq (\n"
+    "      op 127 band 1 plus 'cnt let\n"
+    "      cnt (src i get out swap give 'out let  i 1 plus 'i let) repeat\n"
+    "    ) (\n"
+    "      op 64 band 0 eq (\n"
+    "        op 63 band 4 plus 'lng let\n"
+    "        src i get 1 plus 'off let  i 1 plus 'i let\n"
+    "        lng (out len off sub 'pos let  out pos get out swap give 'out let) repeat\n"
+    "      ) (\n"
+    "        op 63 band 8 shl src i get bor 4 plus 'lng let  i 1 plus 'i let\n"
+    "        src i get 1 plus 'off let  i 1 plus 'i let\n"
+    "        lng (out len off sub 'pos let  out pos get out swap give 'out let) repeat\n"
+    "      ) if\n"
+    "    ) if\n"
+    "  ) while\n"
+    "  out\n"
+    ") def\n"
+;
 
 static void prim_reverse(Frame *e) {
     (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("reverse: expected list");
@@ -1973,6 +2108,7 @@ static void register_prims(void) {
     static struct{const char*n;PrimFn f;} t[]={
         {"dup",prim_dup},{"drop",prim_drop},{"swap",prim_swap},{"dip",prim_dip},{"apply",prim_apply},
         {"plus",prim_plus},{"sub",prim_sub},{"mul",prim_mul},{"div",prim_div},{"mod",prim_mod},{"divmod",prim_divmod},{"wrap",prim_wrap},
+        {"band",prim_band},{"bor",prim_bor},{"bxor",prim_bxor},{"bnot",prim_bnot},{"shl",prim_shl},{"shr",prim_shr},
         {"eq",prim_eq},{"lt",prim_lt},{"and",prim_and},{"or",prim_or},
         {"print",prim_print},{"assert",prim_assert},{"halt",prim_halt},{"random",prim_random},
         {"if",prim_if},{"cond",prim_cond},{"match",prim_match},{"loop",prim_loop},{"while",prim_while},

@@ -673,5 +673,122 @@ add-lists [1 2 3 4 5 6] eq assert
 0 nested-if 42 eq assert
 5 nested-if 4 eq assert
 
+-- ===== Bitwise Operations =====
+255 15 band 15 eq assert
+240 15 bor 255 eq assert
+255 15 bxor 240 eq assert
+0 bnot -1 eq assert
+1 bnot -2 eq assert
+1 8 shl 256 eq assert
+256 8 shr 1 eq assert
+170 85 band 0 eq assert
+170 85 bor 255 eq assert
+170 85 bxor 255 eq assert
+1 0 shl 1 eq assert
+1 63 shl -9223372036854775808 eq assert
+
+-- ===== Bitwise helpers =====
+255 byte-mask 255 eq assert
+256 byte-mask 0 eq assert
+0 byte-bits [0 0 0 0 0 0 0 0] eq assert
+255 byte-bits [1 1 1 1 1 1 1 1] eq assert
+170 byte-bits [1 0 1 0 1 0 1 0] eq assert
+60 byte-bits [0 0 1 1 1 1 0 0] eq assert
+[0 0 0 0 0 0 0 0] bits-byte 0 eq assert
+[1 1 1 1 1 1 1 1] bits-byte 255 eq assert
+[1 0 1 0 1 0 1 0] bits-byte 170 eq assert
+[0 0 1 1 1 1 0 0] bits-byte 60 eq assert
+
+-- ===== chunks =====
+[1 2 3 4 5 6] 3 chunks [[1 2 3] [4 5 6]] eq assert
+[1 2 3 4] 2 chunks [[1 2] [3 4]] eq assert
+
+-- ===== ICN codec =====
+-- circle sprite: 00111100 01000010 10000001 ... (8 bytes)
+[60 66 129 129 129 129 66 60] icn-decode
+  dup len 64 eq assert
+  dup 0 get 0 eq assert    -- top-left is 0
+  dup 2 get 1 eq assert    -- third pixel of first row is 1
+  icn-encode [60 66 129 129 129 129 66 60] eq assert
+-- all zeros
+[0 0 0 0 0 0 0 0] icn-decode icn-encode [0 0 0 0 0 0 0 0] eq assert
+-- all ones
+[255 255 255 255 255 255 255 255] icn-decode icn-encode [255 255 255 255 255 255 255 255] eq assert
+
+-- ===== CHR codec =====
+-- simple 2-bit test: plane0 = [255 0 0 0 0 0 0 0], plane1 = [255 0 0 0 0 0 0 0]
+-- first row: both planes set = color 3, rest = color 0
+[255 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] chr-decode
+  dup len 64 eq assert
+  dup 0 get 3 eq assert    -- first pixel = both planes = 3
+  dup 8 get 0 eq assert    -- second row first pixel = 0
+  chr-encode [255 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] eq assert
+-- plane0 only (color 1)
+[255 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0] chr-decode
+  dup 0 get 1 eq assert
+  chr-encode [255 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0] eq assert
+-- plane1 only (color 2)
+[0 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] chr-decode
+  dup 0 get 2 eq assert
+  chr-encode [0 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] eq assert
+
+-- ===== NMT codec =====
+[0 1 2  3 4 5] nmt-decode
+  dup len 2 eq assert
+  dup 0 get dup 'addr at 256 eq assert 'color at 2 eq assert
+  1 get dup 'addr at 1027 eq assert 'color at 5 eq assert
+-- round-trip
+[0 1 2  3 4 5] nmt-decode nmt-encode [0 1 2  3 4 5] eq assert
+[0 0 0] nmt-decode nmt-encode [0 0 0] eq assert
+
+-- ===== TGA codec =====
+-- minimal 2x2 24-bit TGA: 18-byte header + 12 pixel bytes
+list 0 give 0 give 2 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give
+2 give 0 give 2 give 0 give 24 give 0 give
+255 give 0 give 0 give  0 give 255 give 0 give  0 give 0 give 255 give  128 give 128 give 128 give
+'tga-data let
+tga-data tga-decode
+  dup 'width at 2 eq assert
+  dup 'height at 2 eq assert
+  dup 'depth at 24 eq assert
+  'pixels at len 12 eq assert
+-- round-trip
+tga-data tga-decode tga-encode tga-data eq assert
+
+-- ===== UFX codec =====
+-- minimal UFX: 256 width bytes + 8 bytes of ICN for 1 glyph
+list
+0 256 range (drop 4 give) each   -- all widths = 4
+60 give 66 give 129 give 129 give 129 give 129 give 66 give 60 give  -- one circle glyph
+'ufx-data let
+ufx-data ufx-decode
+  dup 'widths at len 256 eq assert
+  dup 'widths at 0 get 4 eq assert
+  'glyphs at len 1 eq assert
+-- round-trip
+ufx-data ufx-decode ufx-encode ufx-data eq assert
+
+-- ===== ULZ codec =====
+-- LIT-only: opcode 0x02 means 3 literal bytes
+[2 65 66 67] ulz-decode [65 66 67] eq assert
+-- CPY1: opcode 0x80 = copy 4 bytes from offset, then offset byte
+-- first: 3 literal bytes (opcode 0x02, A B C), then copy 4 from offset 3 (0x80, 0x02)
+[2 65 66 67  128 2] ulz-decode [65 66 67  65 66 67 65] eq assert
+
+-- ===== GLY codec =====
+-- 2-wide, 4-tall: char values encode 4 vertical pixels each
+-- char 68 (0x44) = value 5 = 0b0101 → pixels: bit0=1 bit1=0 bit2=1 bit3=0
+-- char 63 (0x3F) = value 0 = 0b0000 → all off
+[68 63] gly-decode
+  dup 'width at 2 eq assert
+  dup 'height at 4 eq assert
+  drop
+-- round-trip
+[68 63] gly-decode gly-encode [68 63] eq assert
+-- single char
+[72] gly-decode gly-encode [72] eq assert
+-- two rows (with newline = 10)
+[68 10 72] gly-decode gly-encode [68 10 72] eq assert
+
 -- ===== Done =====
 "All tests passed!" print
