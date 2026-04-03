@@ -1,3 +1,5 @@
+![FontBook](assets/fonts.png)
+
 <p align="center">
   <img src="assets/life.gif" width="240" alt="Game of Life">
   <img src="assets/flock.gif" width="240" alt="Boids flocking">
