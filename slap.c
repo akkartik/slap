@@ -417,6 +417,8 @@ static int val_less(Value *a, int aslots, Value *b, int bslots) {
 
 static uint32_t recur_sym = 0;
 static int recur_pending = 0;
+static int eval_depth = 0;
+#define EVAL_DEPTH_MAX 10000
 static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK;
 static void syms_init(void);
 
@@ -1241,7 +1243,7 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     Value name##_top = stack[sp-1]; int name##_s = val_slots(name##_top); \
     if (name##_s > LOCAL_MAX) die("value too large (%d slots, max %d)", name##_s, LOCAL_MAX); \
     if (name##_s > sp) die("stack underflow: need %d slots, have %d", name##_s, sp); \
-    Value name##_buf[LOCAL_MAX]; memcpy(name##_buf, &stack[sp-name##_s], name##_s*sizeof(Value)); sp -= name##_s
+    Value name##_buf[name##_s]; memcpy(name##_buf, &stack[sp-name##_s], name##_s*sizeof(Value)); sp -= name##_s
 #define POP_BODY(name, label) if (stack[sp-1].tag != VAL_TUPLE) die(label ": expected tuple"); POP_VAL(name)
 #define POP_LIST_BUF(name, label) \
     if (stack[sp-1].tag != VAL_LIST) die(label ": expected list"); \
@@ -1250,7 +1252,7 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     if (name##_s > sp) die(label ": stack underflow: need %d slots, have %d", name##_s, sp); \
     int name##_len = (int)name##_top.as.compound.len; \
     int name##_base __attribute__((unused)) = sp - name##_s; \
-    Value name##_buf[LOCAL_MAX]; memcpy(name##_buf, &stack[name##_base], name##_s*sizeof(Value)); sp = name##_base
+    Value name##_buf[name##_s]; memcpy(name##_buf, &stack[name##_base], name##_s*sizeof(Value)); sp = name##_base
 
 static void prim_dup(Frame *e) { (void)e; if (sp<=0) die("dup: stack underflow"); Value top=stack[sp-1]; int s=val_slots(top); if(sp+s>STACK_MAX) die("dup: stack overflow"); memcpy(&stack[sp],&stack[sp-s],s*sizeof(Value)); sp+=s; }
 static void prim_drop(Frame *e) { (void)e; if (sp<=0) die("drop: stack underflow"); sp-=val_slots(stack[sp-1]); }
@@ -1259,7 +1261,7 @@ static void prim_swap(Frame *e) {
     Value top=stack[sp-1]; int top_s=val_slots(top); if(sp<top_s) die("swap: stack underflow");
     int bp=sp-top_s-1; if(bp<0) die("swap: stack underflow");
     int below_s=val_slots(stack[bp]); int total=top_s+below_s; if(sp<total) die("swap: stack underflow");
-    Value tmp[LOCAL_MAX]; int base=sp-total;
+    Value tmp[total]; int base=sp-total;
     memcpy(tmp,&stack[base],below_s*sizeof(Value));
     memmove(&stack[base],&stack[base+below_s],top_s*sizeof(Value));
     memcpy(&stack[base+top_s],tmp,below_s*sizeof(Value));
@@ -1317,7 +1319,7 @@ static void prim_cond(Frame *env) {
     Value clauses_top=stack[sp-1];
     if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("cond: expected tuple or record of clauses");
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len;
-    Value clauses_buf[LOCAL_MAX]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
+    Value clauses_buf[clauses_s]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
     POP_VAL(scrut);
     if(clauses_len%2!=0) die("cond: need even number of clauses (pred/body pairs)");
     for(int i=0;i<clauses_len;i+=2){
@@ -1335,7 +1337,7 @@ static void prim_match(Frame *env) {
     Value clauses_top=stack[sp-1];
     if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("match: expected tuple of clauses");
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len;
-    Value clauses_buf[LOCAL_MAX]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
+    Value clauses_buf[clauses_s]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
     Value scrut=spop(); if(scrut.tag!=VAL_SYM) die("match: scrutinee must be a symbol");
     if(clauses_top.tag==VAL_RECORD){
         int found; ElemRef body_ref=record_field(clauses_buf,clauses_s,clauses_len,scrut.as.sym,&found);
@@ -1440,7 +1442,7 @@ static void prim_concat(Frame *e) {
     Value below=stack[base2-1];
     if(!is_compound(below.tag)) die("concat: expected compound");
     int s1=val_slots(below),len1=(int)below.as.compound.len,base1=base2-s1;
-    int new_elem_slots=(s1-1)+(s2-1); Value tmp[LOCAL_MAX];
+    int new_elem_slots=(s1-1)+(s2-1); Value tmp[new_elem_slots];
     memcpy(tmp,&stack[base1],(s1-1)*sizeof(Value));
     memcpy(&tmp[s1-1],&stack[base2],(s2-1)*sizeof(Value));
     sp=base1; memcpy(&stack[sp],tmp,new_elem_slots*sizeof(Value)); sp+=new_elem_slots;
@@ -1579,7 +1581,7 @@ static void prim_lend(Frame *env) {
     memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots;
     int sp_before=sp-bd->slots; eval_body(fn_buf,fn_s,env);
     int results_slots=sp-sp_before; if(results_slots>LOCAL_MAX) die("lend: result too large");
-    Value results[LOCAL_MAX]; memcpy(results,&stack[sp_before],results_slots*sizeof(Value)); sp=sp_before;
+    Value results[results_slots]; memcpy(results,&stack[sp_before],results_slots*sizeof(Value)); sp=sp_before;
     spush(box_val); memcpy(&stack[sp],results,results_slots*sizeof(Value)); sp+=results_slots;
 }
 
@@ -1638,6 +1640,7 @@ static void dispatch_word(uint32_t sym, Frame *env) {
 }
 
 static void eval_body(Value *body, int slots, Frame *env) {
+    if(++eval_depth > EVAL_DEPTH_MAX) die("recursion depth exceeded (%d levels)", EVAL_DEPTH_MAX);
     Value hdr=body[slots-1]; if(hdr.tag!=VAL_TUPLE) die("eval_body: expected tuple");
     int len=(int)hdr.as.compound.len;
     Frame *exec_env=hdr.as.compound.env?hdr.as.compound.env:env;
@@ -1673,6 +1676,7 @@ static void eval_body(Value *body, int slots, Frame *env) {
     }
     free(offsets_buf);
     if(exec_env->refcount==0){exec_env->bind_count=saved_bc;exec_env->vals_used=saved_vu;}
+    eval_depth--;
 }
 
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close) {

@@ -382,7 +382,7 @@ outer 15 eq assert
 ) def
 0 fib 0 eq assert
 1 fib 1 eq assert
--- 10 fib 55 eq assert  -- disabled: deep recursion segfaults (pre-existing)
+10 fib 55 eq assert
 
 -- ===== Complex: map + filter chain =====
 1 10 range (sqr) map (50 lt) filter [1 4 9 16 25 36 49] eq assert
@@ -621,10 +621,9 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 5 swap apply 81 eq assert
 
 -- ===== Complex: mutual recursion depth =====
--- disabled: deep recursion segfaults (pre-existing stack overflow)
--- 10 even? assert
--- 11 odd? assert
--- 7 even? not assert
+10 even? assert
+11 odd? assert
+7 even? not assert
 
 -- ===== Complex: where + map + fold pipeline =====
 [10 25 30 5 40 15]
