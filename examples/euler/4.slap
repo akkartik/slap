@@ -4,32 +4,34 @@
 
 'is-palindrome (
   'num let
-  0 'rev let
-  num 'tmp let
-  (tmp 0 gt)
+  -- stack: rev tmp
+  0 num
+  (dup 0 gt)
   (
-    rev 10 mul tmp 10 mod plus 'rev let
-    tmp 10 div 'tmp let
+    swap 10 mul over 10 mod plus
+    swap 10 div
   )
   while
-  rev num eq
+  drop num eq
 ) def
 
-0 'best let
-999 'i let
-
-(i 100 ge)
+-- stack: best i
+0 999
+(dup 100 ge)
 (
-  999 'j let
-  (j i ge)
+  'i let 'best let
+  -- inner loop stack: best j
+  best 999
+  (dup i ge)
   (
-    i j mul 'p let
-    p best gt (p is-palindrome (p 'best let) () if) () if
-    j 1 sub 'j let
+    'j let 'b let
+    j i mul 'p let
+    p b gt p is-palindrome and (p) (b) if
+    j 1 sub
   )
   while
-  i 1 sub 'i let
+  drop
+  i 1 sub
 )
 while
-
-best print
+drop print

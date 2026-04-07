@@ -2,19 +2,24 @@
 -- Sum of all numbers equal to the sum of fifth powers of their digits
 -- Answer: 443839
 
-0 'total let
-2 'n let
-(n 354295 lt)
+[0 1 32 243 1024 3125 7776 16807 32768 59049] 'p5 let
+
+'digit-fifth-sum (
+  'dfs-n let
+  'p5 dfs-n 10 mod nth
+  'p5 dfs-n 10 div 10 mod nth plus
+  'p5 dfs-n 100 div 10 mod nth plus
+  'p5 dfs-n 1000 div 10 mod nth plus
+  'p5 dfs-n 10000 div 10 mod nth plus
+  'p5 dfs-n 100000 div 10 mod nth plus
+) def
+
+-- stack: total n
+0 2
+(dup 354295 lt)
 (
-  n 's let
-  0 'dsum let
-  (s 0 gt)
-  (
-    s 10 mod 'd let
-    d d mul d mul d mul d mul dsum plus 'dsum let
-    s 10 div 's let
-  ) while
-  dsum n eq (total n plus 'total let) () if
-  n 1 plus 'n let
+  dup digit-fifth-sum over eq
+  (dup (plus) dip) () if
+  1 plus
 ) while
-total print
+drop print

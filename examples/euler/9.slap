@@ -2,19 +2,34 @@
 -- Find a*b*c where a+b+c=1000 and a^2+b^2=c^2.
 -- Answer: 31875000
 
-1 'a let
-(a 998 lt)
+'pyth? (
+  -- a b -> a b bool
+  over over
+  over over plus 1000 swap sub
+  dup sqr (swap sqr (swap sqr) dip plus) dip eq
+  nip
+) def
+
+-- stack: a
+1
+(dup 998 lt)
 (
-  a 1 plus 'b let
-  (b 1000 a sub lt)
+  dup 1 plus
+  -- stack: a b
+  (over over plus 1000 swap sub 0 gt)
   (
-    1000 a sub b sub 'c let
-    a sqr b sqr plus c sqr eq
-      (a b mul c mul print halt)
-    () if
-    b 1 plus 'b let
+    pyth?
+    (
+      -- stack: a b
+      over over plus 1000 swap sub
+      -- stack: a b c
+      (mul) dip mul print halt
+    ) () if
+    1 plus
   )
   while
-  a 1 plus 'a let
+  drop
+  1 plus
 )
 while
+drop

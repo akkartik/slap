@@ -11,13 +11,9 @@
   ) (0) if
 ) def
 
-0 'h let
-0 'found let
-144 'n let
-(found not)
-(
-  n 2 n mul 1 sub mul 'h let
-  h is-pentagonal (1 'found let) () if
-  found not (n 1 plus 'n let) () if
-) while
-h print
+-- stack: n
+144
+(dup 2 over mul 1 sub mul is-pentagonal not)
+(1 plus)
+while
+dup 2 swap mul 1 sub mul print

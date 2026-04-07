@@ -2,220 +2,229 @@
 -- Run with: ./slap-sdl < examples/flock.slap
 
 60 'N let
-320 'mx let  240 'my let
 
-list N (640 random give) repeat 'xs let
-list N (480 random give) repeat 'ys let
-list N (25 random 12 sub give) repeat 'vxs let
-list N (25 random 12 sub give) repeat 'vys let
 list N (3 random 1 plus give) repeat 'szs let
 
--- 3-deep trail
-list N (640 random give) repeat 'p1xs let
-list N (480 random give) repeat 'p1ys let
-list N (640 random give) repeat 'p2xs let
-list N (480 random give) repeat 'p2ys let
-list N (640 random give) repeat 'p3xs let
-list N (480 random give) repeat 'p3ys let
+-- State record
+rec
+  list N (640 random give) repeat 'xs into
+  list N (480 random give) repeat 'ys into
+  list N (25 random 12 sub give) repeat 'vxs into
+  list N (25 random 12 sub give) repeat 'vys into
+  list N (640 random give) repeat 'p1xs into
+  list N (480 random give) repeat 'p1ys into
+  list N (640 random give) repeat 'p2xs into
+  list N (480 random give) repeat 'p2ys into
+  list N (640 random give) repeat 'p3xs into
+  list N (480 random give) repeat 'p3ys into
+  -100 'px into  -100 'py into
+  0 'pvx into  0 'pvy into
+  0 'ptimer into
+  -100 'ppx into  -100 'ppy into
+  320 'mx into  240 'my into  0 'frame into
 
--- Predator
--100 'px let  -100 'py let
-0 'pvx let  0 'pvy let
-0 'p-timer let
--100 'ppx let  -100 'ppy let
+'mousemove (
+  'mmy let 'mmx let
+  'mx (drop mmx) edit 'my (drop mmy) edit
+) on
 
-0
+-- Separation inner loop
+'sep-loop recur (
+  'ay let 'ax let 'yi let 'xi let 'xsv let 'ysv let 'i let 'j let
+  j N lt (
+    j i neq (
+      xi xsv j get sub 'dx let
+      yi ysv j get sub 'dy let
+      dx abs dy abs plus 'dist let
+      dist 25 lt dist 0 gt and (
+        ax dx plus ay dy plus
+      ) (ax ay) if
+      'ay2 let 'ax2 let
+      j 1 plus i ysv xsv xi yi ax2 ay2 sep-loop
+    ) (
+      j 1 plus i ysv xsv xi yi ax ay sep-loop
+    ) if
+  ) (ax ay) if
+) def
 
-'mousemove ('my let 'mx let) on
+-- Update one boid
+'update-one-boid (
+  'frame let 'i let 'st let
+  st 'xs at 'xsv let  st 'ys at 'ysv let
+  st 'vxs at 'vxsv let  st 'vys at 'vysv let
+  xsv i get 'xi let  ysv i get 'yi let
+  vxsv i get 'vxi let  vysv i get 'vyi let
 
-'tick (
-  drop 1 plus
-  dup 'frame let
+  -- Shift trail history
+  st
+  'p3xs (i st 'p2xs at i get set) edit
+  'p3ys (i st 'p2ys at i get set) edit
+  'p2xs (i st 'p1xs at i get set) edit
+  'p2ys (i st 'p1ys at i get set) edit
+  'p1xs (i xi set) edit
+  'p1ys (i yi set) edit
+  'st2 let
 
-  -- Predator lifecycle
-  p-timer 0 gt (
-    p-timer 1 sub 'p-timer let
-    px 'ppx let  py 'ppy let
+  -- Separation
+  0 i ysv xsv xi yi 0 0 sep-loop 'ay0 let 'ax0 let
 
-    xs 0 (plus) fold N div px sub 6 div 'pvx let
-    ys 0 (plus) fold N div py sub 6 div 'pvy let
-    pvx -8 8 clamp 'pvx let
-    pvy -8 8 clamp 'pvy let
-    px pvx plus 'px let
-    py pvy plus 'py let
+  -- Cohesion
+  xsv 0 (plus) fold N div 'cx let
+  ysv 0 (plus) fold N div 'cy let
+  ax0 cx xi sub 6 div plus 'ax1 let
+  ay0 cy yi sub 6 div plus 'ay1 let
+
+  -- Alignment
+  vxsv 0 (plus) fold N div 'avx let
+  vysv 0 (plus) fold N div 'avy let
+  ax1 avx vxi sub 3 div plus 'ax2 let
+  ay1 avy vyi sub 3 div plus 'ay2 let
+
+  -- Mouse attraction with swirl
+  st2 'mx at 'mxv let  st2 'my at 'myv let
+  mxv xi sub 'mdx let  myv yi sub 'mdy let
+  ax2 mdx 16 div plus mdy neg 12 div plus 'ax3 let
+  ay2 mdy 16 div plus mdx 12 div plus 'ay3 let
+
+  -- Flee predator
+  st2 'ptimer at 0 gt (
+    xi st2 'px at sub 'pdx let  yi st2 'py at sub 'pdy let
+    pdx abs pdy abs plus 'pdist let
+    pdist 140 lt pdist 0 gt and (
+      ax3 pdx sign 50 mul plus
+      ay3 pdy sign 50 mul plus
+    ) (ax3 ay3) if
+  ) (ax3 ay3) if
+  'ay4 let 'ax4 let
+
+  vxi ax4 3 div plus 15 mul 16 div 'vxi2 let
+  vyi ay4 3 div plus 15 mul 16 div 'vyi2 let
+  vxi2 -28 28 clamp 'vxi3 let
+  vyi2 -28 28 clamp 'vyi3 let
+  xi vxi3 4 div plus 640 wrap 'xi2 let
+  yi vyi3 4 div plus 480 wrap 'yi2 let
+
+  st2
+  'xs (i xi2 set) edit 'ys (i yi2 set) edit
+  'vxs (i vxi3 set) edit 'vys (i vyi3 set) edit
+) def
+
+'update-boids-loop recur (
+  'frame let 'i let 'st let
+  i N lt (
+    st i frame update-one-boid
+    i 1 plus frame update-boids-loop
+  ) (st) if
+) def
+
+'update-predator (
+  'frame let 'st let
+  st 'ptimer at 0 gt (
+    st 'px at 'cpx let  st 'py at 'cpy let
+
+    -- Compute velocity toward flock center
+    st 'xs at 0 (plus) fold N div cpx sub 6 div -8 8 clamp 'npvx let
+    st 'ys at 0 (plus) fold N div cpy sub 6 div -8 8 clamp 'npvy let
+
+    st
+    'ppx (drop cpx) edit 'ppy (drop cpy) edit
+    'ptimer (1 sub) edit
+    'pvx (drop npvx) edit 'pvy (drop npvy) edit
+    'px (drop cpx npvx plus) edit 'py (drop cpy npvy plus) edit
   ) (
     frame 500 mod 0 eq frame 0 gt and (
-      540 'p-timer let
       4 random
       dup 0 eq (drop -30 480 random) (
       dup 1 eq (drop 670 480 random) (
       dup 2 eq (drop 640 random -30) (
       drop 640 random 510
       ) if) if) if
-      'py let 'px let
-      px 'ppx let  py 'ppy let
-    ) () if
+      'spy let 'spx let
+      st
+      'ptimer (drop 540) edit
+      'px (drop spx) edit 'py (drop spy) edit
+      'ppx (drop spx) edit 'ppy (drop spy) edit
+    ) (st) if
   ) if
+) def
 
-  xs 0 (plus) fold N div 'cx let
-  ys 0 (plus) fold N div 'cy let
-  vxs 0 (plus) fold N div 'avx let
-  vys 0 (plus) fold N div 'avy let
+'tick (
+  drop
+  'frame (1 plus) edit
+  dup 'frame at 'fr let
 
-  0 'i let
-  (i N lt) (
-    xs i get 'xi let  ys i get 'yi let
-    vxs i get 'vxi let  vys i get 'vyi let
-    0 'ax let  0 'ay let
-
-    -- Shift trail history
-    p3xs i p2xs i get set 'p3xs let
-    p3ys i p2ys i get set 'p3ys let
-    p2xs i p1xs i get set 'p2xs let
-    p2ys i p1ys i get set 'p2ys let
-    p1xs i xi set 'p1xs let
-    p1ys i yi set 'p1ys let
-
-    -- Separation
-    0 'j let
-    (j N lt) (
-      j i neq (
-        xi xs j get sub 'dx let
-        yi ys j get sub 'dy let
-        dx abs dy abs plus 'dist let
-        dist 25 lt dist 0 gt and (
-          ax dx plus 'ax let
-          ay dy plus 'ay let
-        ) () if
-      ) () if
-      j 1 plus 'j let
-    ) while
-
-    -- Cohesion
-    ax cx xi sub 6 div plus 'ax let
-    ay cy yi sub 6 div plus 'ay let
-
-    -- Alignment
-    ax avx vxi sub 3 div plus 'ax let
-    ay avy vyi sub 3 div plus 'ay let
-
-    -- Mouse attraction with swirl
-    mx xi sub 'mdx let  my yi sub 'mdy let
-    ax mdx 16 div plus mdy neg 12 div plus 'ax let
-    ay mdy 16 div plus mdx 12 div plus 'ay let
-
-    -- Flee predator
-    p-timer 0 gt (
-      xi px sub 'pdx let  yi py sub 'pdy let
-      pdx abs pdy abs plus 'pdist let
-      pdist 140 lt pdist 0 gt and (
-        ax pdx sign 50 mul plus 'ax let
-        ay pdy sign 50 mul plus 'ay let
-      ) () if
-    ) () if
-
-    vxi ax 3 div plus 15 mul 16 div 'vxi let
-    vyi ay 3 div plus 15 mul 16 div 'vyi let
-
-    vxi -28 28 clamp 'vxi let
-    vyi -28 28 clamp 'vyi let
-
-    xi vxi 4 div plus 640 wrap 'xi let
-    yi vyi 4 div plus 480 wrap 'yi let
-
-    xs i xi set 'xs let  ys i yi set 'ys let
-    vxs i vxi set 'vxs let  vys i vyi set 'vys let
-    i 1 plus 'i let
-  ) while
+  fr update-predator
+  0 fr update-boids-loop
 ) on
 
 -- Draw diamond outline
-'draw-diamond (
-  'dc let 'dr let 'dy let 'dx let
-  dr neg 'dd let
-  (dd dr 1 plus lt) (
+'draw-diamond-cd recur (
+  'dc let 'dy let 'dx let 'dr let 'dd let
+  dd dr 1 plus lt (
     dr dd abs sub 'ddy let
     dx dd plus dy ddy plus dc pixel
     ddy 0 neq (dx dd plus dy ddy sub dc pixel) () if
-    dd 1 plus 'dd let
-  ) while
+    dd 1 plus dr dx dy dc draw-diamond-cd
+  ) () if
 ) def
 
-(
-  'frame let
-  0 clear
+'draw-diamond (
+  'dc let 'dr let 'dy let 'dx let
+  dr neg dr dx dy dc draw-diamond-cd
+) def
 
-  -- Mouse attractor: double pulsing diamond
-  mx -1 neq (
-    frame 3 div 6 mod 3 plus 'r1 let
-    frame 2 div 8 mod 5 plus 'r2 let
-    mx my r1 1 draw-diamond
-    mx my r2 1 draw-diamond
+-- Draw trail layers
+'draw-trail3 recur (
+  'st let 'i let
+  i N lt (
+    st 'p3xs at i get st 'p3ys at i get 1 pixel
+    i 1 plus st draw-trail3
   ) () if
+) def
 
-  -- Predator: thick cross + pulsing danger ring
-  p-timer 0 gt (
-    frame 2 div 2 mod 1 plus 'pc let
-    -- Thick cross
-    -3 'pd let
-    (pd 4 lt) (
-      px pd plus py pc pixel
-      px py pd plus pc pixel
-      px pd plus py 1 plus pc pixel
-      px 1 plus py pd plus pc pixel
-      pd 1 plus 'pd let
-    ) while
-    -- Pulsing danger ring
-    frame 4 div 10 mod 6 plus 'dr let
-    px py dr 1 draw-diamond
-    -- Predator trail
-    ppx -100 neq (ppx ppy 1 pixel) () if
-  ) () if
-
-  -- Trail layer 3 (dimmest)
-  0 'i let
-  (i N lt) (
-    p3xs i get p3ys i get 1 pixel
-    i 1 plus 'i let
-  ) while
-
-  -- Trail layer 2
-  0 'i let
-  (i N lt) (
-    p2xs i get 'tx let  p2ys i get 'ty let
+'draw-trail2 recur (
+  'st let 'i let
+  i N lt (
+    st 'p2xs at i get 'tx let  st 'p2ys at i get 'ty let
     tx ty 1 pixel
     szs i get 2 gt (tx 1 plus ty 1 pixel) () if
-    i 1 plus 'i let
-  ) while
+    i 1 plus st draw-trail2
+  ) () if
+) def
 
-  -- Trail layer 1 (brighter)
-  0 'i let
-  (i N lt) (
-    p1xs i get 'tx let  p1ys i get 'ty let
+'draw-trail1 recur (
+  'st let 'i let
+  i N lt (
+    st 'p1xs at i get 'tx let  st 'p1ys at i get 'ty let
     tx ty 2 pixel
     szs i get 1 gt (tx 1 plus ty 2 pixel) () if
-    i 1 plus 'i let
-  ) while
+    i 1 plus st draw-trail1
+  ) () if
+) def
 
-  -- Boids: directional line in travel direction
-  0 'i let
-  (i N lt) (
-    vxs i get abs vys i get abs plus 'spd let
+-- Draw boids
+'draw-boid-body recur (
+  'bc let 'sdy let 'sdx let 'by let 'bx let 'sz let 'k let
+  k sz 2 plus lt (
+    bx sdx k mul sub by sdy k mul sub bc pixel
+    k 1 plus sz bx by sdx sdy bc draw-boid-body
+  ) () if
+) def
+
+'draw-boids recur (
+  'st let 'i let
+  i N lt (
+    st 'vxs at i get abs st 'vys at i get abs plus 'spd let
     spd 8 gt (3) (spd 3 gt (2) (1) if) if 'bc let
-    vxs i get sign 'sdx let  vys i get sign 'sdy let
+    st 'vxs at i get sign 'sdx let  st 'vys at i get sign 'sdy let
     szs i get 'sz let
-
-    xs i get 'bx let  ys i get 'by let
+    st 'xs at i get 'bx let  st 'ys at i get 'by let
 
     -- Head pixel
     bx by bc pixel
 
-    -- Body: line trailing behind, length = size + 1
-    1 'k let
-    (k sz 2 plus lt) (
-      bx sdx k mul sub by sdy k mul sub bc pixel
-      k 1 plus 'k let
-    ) while
+    -- Body line
+    1 sz bx by sdx sdy bc draw-boid-body
 
     -- Wing pixels for larger boids
     sz 2 gt (
@@ -223,6 +232,54 @@ list N (480 random give) repeat 'p3ys let
       bx sdy plus by sdx sub bc pixel
     ) () if
 
-    i 1 plus 'i let
-  ) while
+    i 1 plus st draw-boids
+  ) () if
+) def
+
+(
+  drop
+  dup 'st let
+  st 'frame at 'frame let
+  0 clear
+
+  -- Mouse attractor
+  st 'mx at 'mxv let
+  mxv -1 neq (
+    st 'my at 'myv let
+    frame 3 div 6 mod 3 plus 'r1 let
+    frame 2 div 8 mod 5 plus 'r2 let
+    mxv myv r1 1 draw-diamond
+    mxv myv r2 1 draw-diamond
+  ) () if
+
+  -- Predator
+  st 'ptimer at 0 gt (
+    frame 2 div 2 mod 1 plus 'pc let
+    st 'px at 'ppx let  st 'py at 'ppy let
+    -- Thick cross
+    'draw-cross recur (
+      'pd let
+      pd 4 lt (
+        ppx pd plus ppy pc pixel
+        ppx ppy pd plus pc pixel
+        ppx pd plus ppy 1 plus pc pixel
+        ppx 1 plus ppy pd plus pc pixel
+        pd 1 plus draw-cross
+      ) () if
+    ) def
+    -3 draw-cross
+    -- Pulsing danger ring
+    frame 4 div 10 mod 6 plus 'dring let
+    ppx ppy dring 1 draw-diamond
+    -- Predator trail
+    st 'ppx at -100 neq (st 'ppx at st 'ppy at 1 pixel) () if
+  ) () if
+
+  -- Trails
+  0 st draw-trail3
+  0 st draw-trail2
+  0 st draw-trail1
+
+  -- Boids
+  0 st draw-boids
 ) show

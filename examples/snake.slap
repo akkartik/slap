@@ -17,18 +17,6 @@
 'pos-x (32 mod) def
 'pos-y (32 div) def
 
--- State: 0=waiting 1=playing 2=dead
-0 'state let
-0 'death-at let
-
-'reset (
-  [398 399 400] 'snake let
-  1 'dir let
-  768 random 'food let
-) def
-
-reset
-
 -- Map SDL arrow key to direction, -1 if unknown
 'key-dir (
   dup 1073741906 eq (drop 0) (
@@ -39,89 +27,104 @@ reset
   ) if) if) if) if
 ) def
 
--- Model = frame counter
-0
+-- State record on stack
+rec
+  0 'state into
+  0 'death-at into
+  [398 399 400] 'snake into
+  1 'dir into
+  768 random 'food into
+  0 'frame into
 
 'keydown (
-  key-dir
-  dup -1 neq (
-    state 0 eq (
-      'dir let 1 'state let
+  key-dir 'kd let
+  kd -1 neq (
+    dup 'state at 0 eq (
+      kd 'dir into 'state (drop 1) edit
     ) (
-      state 1 eq (
-        dup dir sub abs 2 neq ('dir let) (drop) if
-      ) (drop) if
+      dup 'state at 1 eq (
+        kd over 'dir at sub abs 2 neq (
+          kd 'dir into
+        ) () if
+      ) () if
     ) if
-  ) (drop) if
+  ) () if
 ) on
 
 'tick (
-  drop 1 plus
+  drop
+  'frame (1 plus) edit
+  dup 'frame at 'frm let
 
-  -- playing: update every 6 frames
-  state 1 eq (
-    dup 6 mod 0 eq (
-      snake last 'head let
+  dup 'state at 1 eq (
+    frm 6 mod 0 eq (
+      dup 'snake at last 'head let
       head pos-x 'hx let
       head pos-y 'hy let
-
-      dir 0 eq (hx hy 1 sub) (
-      dir 1 eq (hx 1 plus hy) (
-      dir 2 eq (hx hy 1 plus) (
+      dup 'dir at 'dr let
+      dr 0 eq (hx hy 1 sub) (
+      dr 1 eq (hx 1 plus hy) (
+      dr 2 eq (hx hy 1 plus) (
                 hx 1 sub hy
       ) if) if) if
       'ny let 'nx let
 
       nx 0 lt nx 32 ge or ny 0 lt or ny 24 ge or (
-        2 'state let dup 'death-at let
+        frm 'death-at into 'state (drop 2) edit
       ) (
         ny 32 mul nx plus 'nh let
-        snake nh member (
-          2 'state let dup 'death-at let
+        dup 'snake at nh member (
+          frm 'death-at into 'state (drop 2) edit
         ) (
-          snake nh give 'snake let
-          nh food eq (768 random 'food let) (snake 1 drop-n 'snake let) if
+          dup 'snake at nh give 'snk2 let
+          nh over 'food at eq (
+            snk2 'snake into 768 random 'food into
+          ) (
+            snk2 1 drop-n 'snake into
+          ) if
         ) if
       ) if
     ) () if
-  ) () if
-
-  -- dead: auto-reset after 90 frames
-  state 2 eq (
-    dup death-at sub 90 gt (
-      reset 0 'state let
+  ) (
+    dup 'state at 2 eq (
+      frm over 'death-at at sub 90 gt (
+        'state (drop 0) edit
+        [398 399 400] 'snake into
+        1 'dir into
+        768 random 'food into
+      ) () if
     ) () if
-  ) () if
+  ) if
 ) on
 
 (
-  'f let
+  drop
+  dup 'frame at 'frm let
+  dup 'state at 'stv let
+  dup 'food at 'fd let
+  dup 'snake at 'snk let
   0 clear
 
-  state 2 eq (
-    -- death: flash snake between white and dark
-    f death-at sub 4 div 2 mod 'flash let
-    snake (dup pos-x swap pos-y flash 1 eq (3) (1) if draw-cell) each
+  stv 2 eq (
+    dup 'death-at at 'da let
+    frm da sub 4 div 2 mod 'flash let
+    snk (dup pos-x swap pos-y flash 1 eq (3) (1) if draw-cell) each
   ) (
-    -- draw snake body, head brighter
-    snake (dup pos-x swap pos-y 2 draw-inset) each
-    snake last dup pos-x swap pos-y 3 draw-inset
+    snk (dup pos-x swap pos-y 2 draw-inset) each
+    snk last dup pos-x swap pos-y 3 draw-inset
 
-    -- food: pulse in wait state
-    state 0 eq f 20 div 2 mod 0 eq and (
-      food pos-x food pos-y 3 draw-cell
+    stv 0 eq frm 20 div 2 mod 0 eq and (
+      fd pos-x fd pos-y 3 draw-cell
     ) (
-      food pos-x food pos-y 1 draw-inset
+      fd pos-x fd pos-y 1 draw-inset
     ) if
   ) if
 
-  -- score bar (2px tall along top)
-  snake len 3 sub 'score let
+  snk len 3 sub 'score let
   score 0 gt (
-    0 'si let
-    (si score lt si 32 lt and) (
-      si 20 mul 0 20 2 3 fill-rect
-      si 1 plus 'si let
-    ) while
+    0 (dup score lt over 32 lt and) (
+      dup 20 mul 0 20 2 3 fill-rect
+      1 plus
+    ) while drop
   ) () if
 ) show

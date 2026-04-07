@@ -7,12 +7,11 @@
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (
-        1 'ip-ok let
-        3 'ip-i let
-        (ip-i ip-i mul ip-n le ip-ok and)
-        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        3 1
+        (over dup mul ip-n le over and)
+        (swap ip-n over mod 0 eq (nip 0 swap) () if 2 plus swap)
         while
-        ip-ok
+        nip
       ) if
     ) if
   ) if
@@ -20,23 +19,17 @@
 
 'goldbach-check (
   'gc-n let
-  0 'gc-found let
-  1 'gc-k let
-  (gc-k gc-k mul 2 mul gc-n lt gc-found not and)
-  (
-    gc-n gc-k gc-k mul 2 mul sub is-prime (1 'gc-found let) () if
-    gc-k 1 plus 'gc-k let
-  ) while
-  gc-found
+  -- stack: k found
+  1 0
+  (over dup mul 2 mul gc-n lt over not and)
+  (swap dup dup mul 2 mul gc-n swap sub is-prime (nip 1 swap) () if 1 plus swap)
+  while
+  nip
 ) def
 
-0 'found let
-9 'n let
-(found not)
-(
-  n is-prime not (
-    n goldbach-check not (1 'found let) () if
-  ) () if
-  found not (n 2 plus 'n let) () if
-) while
-n print
+-- stack: n
+9
+(dup is-prime (1) (dup goldbach-check) if)
+(2 plus)
+while
+print

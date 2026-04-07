@@ -5,26 +5,25 @@
 'is-prime (
   'n let
   n 2 lt (0) (
-    2 'i let
-    1 'result let
-    (i i mul n le result and)
+    -- stack: result i
+    1 2
+    (dup dup mul n le (over) dip and)
     (
-      n i mod 0 eq (0 'result let) () if
-      i 1 plus 'i let
+      'ii let
+      n ii mod 0 eq (drop 0) () if
+      ii 1 plus
     )
     while
-    result
+    drop
   ) if
 ) def
 
-0 'cnt let
-1 'candidate let
-
-(cnt 10001 lt)
+-- stack: cnt candidate
+0 1
+(over 10001 lt)
 (
-  candidate 1 plus 'candidate let
-  candidate is-prime (cnt 1 plus 'cnt let) () if
+  1 plus
+  dup is-prime (swap 1 plus swap) () if
 )
 while
-
-candidate print
+nip print

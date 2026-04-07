@@ -18,57 +18,66 @@
 'draw-char (
   'dc let 'gy let 'gx let 'ch let 'n let 'raw let
   ch n n mul 8 mul mul 256 plus 'base let
-  0 'ti let
-  (ti n n mul lt) (
+  0
+  (dup n n mul lt) (
+    dup 'ti let
     ti n div 8 mul gx plus 'tx let
     ti n mod 8 mul gy plus 'ty let
-    0 'row let
-    (row 8 lt) (
+    0
+    (dup 8 lt) (
+      dup 'row let
       raw base ti 8 mul plus row plus get
       tx ty row plus dc draw-byte
-      row 1 plus 'row let
+      1 plus
     ) while
-    ti 1 plus 'ti let
+    drop
+    1 plus
   ) while
+  drop
 ) def
 
 -- Draw a string, no wrapping
 'draw-text (
   'dc let 'sy let 'sx let 'str let 'n let 'raw let
-  sx 'cx let
-  0 'si let
-  (si str len lt) (
+  sx 0
+  (dup str len lt) (
+    dup 'si let
+    swap 'cx-cur let
     str si get 'ch let
     raw ch get 'w let
     w 0 gt (
-      raw n ch cx sy dc draw-char
-      cx w plus 1 plus 'cx let
-    ) () if
-    si 1 plus 'si let
+      raw n ch cx-cur sy dc draw-char
+      cx-cur w plus 1 plus
+    ) (cx-cur) if
+    swap
+    1 plus
   ) while
+  drop drop
 ) def
 
--- Draw text with wrapping; sets cur-x/cur-y to final position
+-- Draw text with wrapping; returns cur-x cur-y on stack
 'draw-text-wrap (
   'dc let 'maxw let 'sy let 'sx let 'str let 'n let 'raw let
-  sx 'cx let  sy 'cy let
   n 8 mul 'rh let
-  0 'si let
-  (si str len lt) (
+  sx sy 0
+  (dup str len lt) (
+    dup 'si let
+    rot 'cx-cur let swap 'cy-cur let
     str si get 'ch let
     raw ch get 'w let
     w 0 gt (
-      cx w plus sx maxw plus gt (
-        sx 'cx let  cy rh 2 plus plus 'cy let
+      cx-cur w plus sx maxw plus gt
+        (sx cy-cur rh 2 plus plus) (cx-cur cy-cur) if
+      'cy2 let 'cx2 let
+      cy2 480 lt (
+        raw n ch cx2 cy2 dc draw-char
       ) () if
-      cy 480 lt (
-        raw n ch cx cy dc draw-char
-      ) () if
-      cx w plus 1 plus 'cx let
-    ) () if
-    si 1 plus 'si let
+      cx2 w plus 1 plus cy2
+    ) (cx-cur cy-cur) if
+    rot
+    1 plus
   ) while
-  cx 'cur-x let  cy 'cur-y let
+  drop
 ) def
 
 -- N from filename last char
@@ -100,33 +109,31 @@ fnames len 'nf let
 -- Layout
 180 'PW let
 
--- State
-0 'sel let
-"The quick brown fox jumps over the lazy dog" 'txt let
-0 'cur-x let  0 'cur-y let
+-- State: record on stack, modified by keydown, read by show
+rec 0 'sel into "The quick brown fox jumps over the lazy dog" 'txt into
 
 'keydown (
   'key let
-  key 1073741906 eq (sel 1 sub 0 max 'sel let) (
-  key 1073741905 eq (sel 1 plus nf 1 sub min 'sel let) (
+  key 1073741906 eq ('sel (1 sub 0 max) edit) (
+  key 1073741905 eq ('sel (1 plus nf 1 sub min) edit) (
   key 8 eq key 127 eq or (
-    txt len 0 gt (txt txt len 1 sub take-n 'txt let) () if
+    dup 'txt at len 0 gt ('txt (dup len 1 sub take-n) edit) () if
   ) (
-    key 32 ge key 126 le and (txt key give 'txt let) () if
+    key 32 ge key 126 le and ('txt (key give) edit) () if
   ) if) if) if
 ) on
 
-0
-
 (
   drop
+  dup 'sel at 'sel-v let
+  dup 'txt at 'txt-v let
   3 clear
 
   -- Label font
   "fonts/chicago12.uf2" read 'lf let
 
   -- Auto-scroll left pane so selection is visible
-  sel 16 mul 'sely let
+  sel-v 16 mul 'sely let
   sely 230 sub 0 max 'lscr let
 
   -- Left pane header
@@ -134,37 +141,40 @@ fnames len 'nf let
   lf 2 "Fonts" 4 0 3 draw-text
 
   -- Font list
-  0 'li let
-  (li nf lt) (
+  0
+  (dup nf lt) (
+    dup 'li let
     li 16 mul 16 plus lscr sub 'ly let
     ly 14 ge ly 16 plus 480 le and (
-      fnames li get dup len 4 sub take-n 'dn let
-      li sel eq (
+      'fnames li nth dup len 4 sub take-n 'dn let
+      li sel-v eq (
         0 ly PW 16 0 fill-rect
         lf 2 dn 4 ly 1 plus 3 draw-text
       ) (
         lf 2 dn 4 ly 1 plus 0 draw-text
       ) if
     ) () if
-    li 1 plus 'li let
+    1 plus
   ) while
+  drop
 
   -- Right pane header
   PW 1 plus 0 640 PW sub 1 sub 14 1 fill-rect
 
   -- Divider (full height, over headers)
   PW 0 1 480 1 fill-rect
-  fnames sel get dup len 4 sub take-n 'sdn let
+  'fnames sel-v nth dup len 4 sub take-n 'sdn let
   lf 2 sdn PW 8 plus 0 3 draw-text
 
   -- Load selected font
-  "fonts/" fnames sel get cat read 'raw let
-  fnames sel get font-n 'pn let
+  "fonts/" 'fnames sel-v nth cat read 'raw let
+  'fnames sel-v nth font-n 'pn let
   pn 8 mul 'ph let
   640 PW sub 16 sub 'pw let
 
   -- Editable text preview
-  raw pn txt PW 8 plus 22 pw 0 draw-text-wrap
+  raw pn txt-v PW 8 plus 22 pw 0 draw-text-wrap
+  'cur-y let 'cur-x let
 
   -- Cursor
   millis 500 div 2 mod 1 eq (
@@ -179,14 +189,16 @@ fnames len 'nf let
   pn 8 mul 2 plus 'cw let
   16 'cols let
   cur-y ph plus 16 plus 'gy0 let
-  32 'gc let
-  (gc 128 lt) (
+  32
+  (dup 128 lt) (
+    dup 'gc let
     gc 32 sub 'gi let
     gi cols mod cw mul PW 8 plus plus 'gcx let
     gi cols div ph 2 plus mul gy0 plus 'gcy let
     gcy ph plus 480 le (
       raw pn gc gcx gcy 0 draw-char
     ) () if
-    gc 1 plus 'gc let
+    1 plus
   ) while
+  drop
 ) show

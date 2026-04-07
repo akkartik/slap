@@ -3,64 +3,82 @@
 
 7 'COLS let  5 'ROWS let
 35 'N let
--1 'mx let  -1 'my let
 
 -- Home positions: 7x5 grid
-0 N range (COLS mod 88 mul 36 plus) map
-dup 'hxs let 'xs let
-0 N range (COLS div 90 mul 50 plus) map
-dup 'hys let 'ys let
-list N (0 give) repeat 'vxs let
-list N (0 give) repeat 'vys let
+0 N range (COLS mod 88 mul 36 plus) map 'hxs let
+0 N range (COLS div 90 mul 50 plus) map 'hys let
 
-0
+-- State: rec with xs ys vxs vys mx my
+rec
+  hxs dup 'xs0 let 'xs into
+  0 N range (COLS div 90 mul 50 plus) map dup 'ys0 let 'ys into
+  list N (0 give) repeat 'vxs into
+  list N (0 give) repeat 'vys into
+  -1 'mx into  -1 'my into  0 'frame into
 
-'mousemove ('my let 'mx let) on
+'mousemove (
+  'mmy let 'mmx let
+  'mx (drop mmx) edit 'my (drop mmy) edit
+) on
+
+'update-dot (
+  'frame let 'i let 'st let
+  st 'xs at i get 'x let  st 'ys at i get 'y let
+  st 'vxs at i get 'vx let  st 'vys at i get 'vy let
+  st 'mx at 'mxv let  st 'my at 'myv let
+
+  x mxv sub 'dx let  y myv sub 'dy let
+  dx dx mul dy dy mul plus 'dist2 let
+
+  -- Flee from mouse
+  dist2 10000 lt mxv -1 neq and (
+    vx dx sign 6 mul plus
+    vy dy sign 6 mul plus
+  ) (vx vy) if
+  'vy2 let 'vx2 let
+
+  -- Damping
+  vx2 3 mul 4 div 'vx3 let
+  vy2 3 mul 4 div 'vy3 let
+
+  -- Apply velocity
+  x vx3 plus 0 max 639 min 'x2 let
+  y vy3 plus 0 max 479 min 'y2 let
+
+  -- When nearly stopped, sneak back home directly
+  vx3 abs vy3 abs plus 2 lt (
+    hxs i get x2 sub 'hdx let
+    hys i get y2 sub 'hdy let
+    hdx abs hdy abs plus 'hd let
+    hd 1 lt (
+      hxs i get hys i get
+    ) (
+      frame i 7 mul plus 3 mod 0 eq (
+        x2 hdx sign plus
+        y2 hdy sign plus
+      ) (x2 y2) if
+    ) if
+  ) (x2 y2) if
+  'yf let 'xf let
+
+  st
+  'xs (i xf set) edit 'ys (i yf set) edit
+  'vxs (i vx3 set) edit 'vys (i vy3 set) edit
+) def
+
+'tick-loop recur (
+  'frame let 'i let 'st let
+  i N lt (
+    st i frame update-dot
+    i 1 plus frame tick-loop
+  ) (st) if
+) def
 
 'tick (
-  drop 1 plus
-  dup 'frame let
-  0 'i let
-  (i N lt) (
-    xs i get 'x let  ys i get 'y let
-    vxs i get 'vx let  vys i get 'vy let
-
-    x mx sub 'dx let  y my sub 'dy let
-    dx dx mul dy dy mul plus 'dist2 let
-
-    -- Flee from mouse
-    dist2 10000 lt mx -1 neq and (
-      vx dx sign 6 mul plus 'vx let
-      vy dy sign 6 mul plus 'vy let
-    ) () if
-
-    -- Damping
-    vx 3 mul 4 div 'vx let
-    vy 3 mul 4 div 'vy let
-
-    -- Apply velocity
-    x vx plus 0 max 639 min 'x let
-    y vy plus 0 max 479 min 'y let
-
-    -- When nearly stopped, sneak back home directly
-    vx abs vy abs plus 2 lt (
-      hxs i get x sub 'hdx let
-      hys i get y sub 'hdy let
-      hdx abs hdy abs plus 'hd let
-      hd 1 lt (
-        hxs i get 'x let  hys i get 'y let
-      ) (
-        frame i 7 mul plus 3 mod 0 eq (
-          x hdx sign plus 'x let
-          y hdy sign plus 'y let
-        ) () if
-      ) if
-    ) () if
-
-    xs i x set 'xs let  ys i y set 'ys let
-    vxs i vx set 'vxs let  vys i vy set 'vys let
-    i 1 plus 'i let
-  ) while
+  drop
+  'frame (1 plus) edit
+  dup 'frame at 'fr let
+  0 fr tick-loop
 ) on
 
 'draw-sq (
@@ -69,17 +87,16 @@ list N (0 give) repeat 'vys let
   cx r sub cy r sub r 2 mul 1 plus dup c fill-rect
 ) def
 
-(
-  'frame let
-  0 clear
-  0 'i let
-  (i N lt) (
-    xs i get 'x let  ys i get 'y let
-    x mx sub 'dx let  y my sub 'dy let
+'draw-dots recur (
+  'frame let 'st let 'i let
+  i N lt (
+    st 'xs at i get 'x let  st 'ys at i get 'y let
+    st 'mx at 'mxv let  st 'my at 'myv let
+    x mxv sub 'dx let  y myv sub 'dy let
     dx dx mul dy dy mul plus 'dist2 let
     x hxs i get sub abs y hys i get sub abs plus 'hd let
 
-    dist2 6400 lt mx -1 neq and (
+    dist2 6400 lt mxv -1 neq and (
       x y 3 1 draw-sq
     ) (hd 5 gt (
       x y 5 2 draw-sq
@@ -87,6 +104,14 @@ list N (0 give) repeat 'vys let
       frame i 3 mul plus 10 div 3 mod 1 sub 'bob let
       x y bob plus 7 3 draw-sq
     ) if) if
-    i 1 plus 'i let
-  ) while
+    i 1 plus st frame draw-dots
+  ) () if
+) def
+
+(
+  drop
+  dup 'st let
+  st 'frame at 'fr let
+  0 clear
+  0 st fr draw-dots
 ) show

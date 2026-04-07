@@ -4,34 +4,46 @@
 
 10000000000 'modulus let
 
--- Modular multiplication to avoid int64 overflow
+-- mm-step: m a r b -> m a' r' b'
+'mm-step (
+  'mms-b let 'mms-r let 'mms-a let 'mms-m let
+  mms-m
+  mms-a 2 mul mms-m mod
+  mms-b 2 mod 1 eq (mms-r mms-a plus mms-m mod) (mms-r) if
+  mms-b 2 div
+) def
+
+-- mod-mul: a b m -> (a*b) mod m
 'mod-mul (
-  'mm-m let 'mm-b let 'mm-a let
-  0 'mm-r let
-  mm-a mm-m mod 'mm-a let
-  (mm-b 0 gt)
-  (
-    mm-b 2 mod 1 eq (mm-r mm-a plus mm-m mod 'mm-r let) () if
-    mm-a 2 mul mm-m mod 'mm-a let
-    mm-b 2 div 'mm-b let
-  ) while
-  mm-r
+  'mm-m let 'mm-b let mm-m mod
+  -- stack: m a r b
+  mm-m swap 0 mm-b
+  (dup 0 gt)
+  (mm-step)
+  while
+  drop nip nip
 ) def
 
+-- mp-step: m b r e -> m b' r' e'
+'mp-step (
+  'mps-e let 'mps-r let 'mps-b let 'mps-m let
+  mps-m
+  mps-b dup mps-m mod-mul
+  mps-e 2 mod 1 eq (mps-r mps-b mps-m mod-mul) (mps-r) if
+  mps-e 2 div
+) def
+
+-- mod-pow: b e m -> (b^e) mod m
 'mod-pow (
-  'mp-m let 'mp-e let 'mp-b let
-  1 'mp-r let
-  mp-b mp-m mod 'mp-b let
-  (mp-e 0 gt)
-  (
-    mp-e 2 mod 1 eq (mp-r mp-b mp-m mod-mul 'mp-r let) () if
-    mp-b mp-b mp-m mod-mul 'mp-b let
-    mp-e 2 div 'mp-e let
-  ) while
-  mp-r
+  'mp-m let 'mp-e let mp-m mod
+  -- stack: m b r e
+  mp-m swap 1 mp-e
+  (dup 0 gt)
+  (mp-step)
+  while
+  drop nip nip
 ) def
 
--- stack: total k
 0 1
 (dup 1000 le)
 (

@@ -2,26 +2,44 @@
 -- First of 4 consecutive integers each having 4 distinct prime factors
 -- Answer: 134043
 
-'count-factors (
-  'cf-n let
-  0 'cf-count let
-  2 'cf-p let
-  (cf-p cf-p mul cf-n le)
-  (
-    cf-n cf-p mod 0 eq (
-      cf-count 1 plus 'cf-count let
-      (cf-n cf-p mod 0 eq) (cf-n cf-p div 'cf-n let) while
-    ) () if
-    cf-p 1 plus 'cf-p let
-  ) while
-  cf-n 1 gt (cf-count 1 plus) (cf-count) if
+-- divide-out: n p -> n' (divide n by p until not divisible)
+'divide-out (
+  'do-p let
+  (dup do-p mod 0 eq) (do-p div) while
 ) def
 
-0 'run let
-2 'n let
-(run 4 lt)
+-- check-factor: n count p -> n count p divisible?
+-- Check if n is divisible by p (need to reach n which is 3rd element)
+'check-factor (
+  'chk-p let 'chk-c let 'chk-n let
+  chk-n chk-p mod 0 eq (
+    chk-n chk-p divide-out chk-c 1 plus chk-p
+  ) (
+    chk-n chk-c chk-p
+  ) if
+) def
+
+'cf-pred (
+  'cfp-p let 'cfp-c let 'cfp-n let
+  cfp-n cfp-c cfp-p
+  cfp-p cfp-p mul cfp-n le
+) def
+
+'count-factors (
+  'cf-n let
+  -- stack: n' count p
+  cf-n 0 2
+  (cf-pred)
+  (check-factor 1 plus)
+  while
+  drop swap 1 gt (1 plus) () if
+) def
+
+-- stack: n run
+2 0
+(dup 4 lt)
 (
-  n count-factors 4 eq (run 1 plus 'run let) (0 'run let) if
-  n 1 plus 'n let
+  over count-factors 4 eq (1 plus) (drop 0) if
+  swap 1 plus swap
 ) while
-n 4 sub print
+drop 4 sub print

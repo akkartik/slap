@@ -2,16 +2,14 @@
 -- Largest prime factor of 600851475143.
 -- Answer: 6857
 
-600851475143 'n let
-2 'i let
-
-(i i mul n le)
+rec 600851475143 'n into 2 'i into
+(dup 'i at dup mul over 'n at le)
 (
+  dup 'n at 'n let  dup 'i at 'i let
   n i mod 0 eq
-    (n i div 'n let)
-    (i 1 plus 'i let)
+    ('n (i div) edit)
+    ('i (1 plus) edit)
   if
 )
 while
-
-n print
+'n at print

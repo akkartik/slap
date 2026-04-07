@@ -506,7 +506,7 @@ free
 'pow (
   1 rot rot
   (dup 0 eq not) (
-    1 sub (swap over mul swap) dip
+    1 sub (tuck mul swap) dip
   ) while
   drop drop
 ) def
@@ -646,9 +646,9 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 
 -- ===== Complex: box with record inside =====
 {'count 0 'total 0} box
-  (dup 'count at 1 plus 'count into) mutate
-  (dup 'count at 1 plus 'count into) mutate
-  (dup 'total at 100 plus 'total into) mutate
+  ('count (1 plus) edit) mutate
+  ('count (1 plus) edit) mutate
+  ('total (100 plus) edit) mutate
   () lend
   dup 'count at 2 eq assert
   'total at 100 eq assert
@@ -948,13 +948,11 @@ list "hi" give "--" str-join "hi" eq assert
   c4 big (256 mod) map tcp-send 'c4a let
   c4a tcp-close
 
-  list 'acc let
-  (p4 4096 tcp-recv 'ch let 'p4 let
-   acc ch cat 'acc let  ch len 0 gt) () while
+  p4 list
+  (swap 4096 tcp-recv 'ch let swap ch cat ch len 0 gt) () while
+  len 1000 eq assert
 
-  acc len 1000 eq assert
-
-  p4 tcp-close
+  tcp-close
   s4a tcp-close
 ) def tcp-large-data
 
@@ -988,13 +986,13 @@ list "hi" give "--" str-join "hi" eq assert
   peer http-resp tcp-send 'peer2 let
   peer2 tcp-close
 
-  list 'resp let
-  (cli 4096 tcp-recv 'ch let 'cli let
-   resp ch cat 'resp let  ch len 0 gt) () while
-  cli tcp-close
+  cli list
+  (swap 4096 tcp-recv 'ch let swap ch cat ch len 0 gt) () while
+  swap 'cli2 let
+  cli2 tcp-close
   srv2 tcp-close
 
-  resp parse-http 'rbody let 'rhdrs let 'rstat let
+  parse-http 'rbody let 'rhdrs let 'rstat let
   rstat 200 eq assert
   rbody "hello" eq assert
   rhdrs len 2 eq assert
@@ -1020,7 +1018,7 @@ list "hi" give "--" str-join "hi" eq assert
 
 -- dup/drop/swap on tagged values
 123 ok dup eq assert
-123 ok 456 ok swap drop 456 ok eq assert
+123 ok 456 ok nip 456 ok eq assert
 
 -- equality
 1 ok 1 ok eq assert
@@ -1166,6 +1164,58 @@ x (2 mul) then -1 default 84 eq assert
 'nil (0 'nil tag) def
 nil {'nil (drop 0) 'cons (first)} 0 untag 0 eq assert
 1 2 nil cons cons {'nil (drop 0) 'cons (first)} 0 untag 1 eq assert
+
+-- ===== Stack Combinators =====
+
+-- over: a b → a b a
+1 2 over 1 eq assert 2 eq assert 1 eq assert
+10 20 over 10 eq assert drop drop
+
+-- over with compound values
+[1 2] [3 4] over [1 2] eq assert drop drop
+
+-- peek (alias for over)
+5 6 peek 5 eq assert drop drop
+
+-- rot: a b c → b c a
+1 2 3 rot 1 eq assert 3 eq assert 2 eq assert
+10 20 30 rot 10 eq assert 30 eq assert 20 eq assert
+
+-- nip: a b → b
+1 2 nip 2 eq assert
+99 42 nip 42 eq assert
+
+-- nip with compound values
+[1 2] [3 4] nip [3 4] eq assert
+
+-- tuck: a b → b a b
+1 2 tuck 2 eq assert 1 eq assert 2 eq assert
+10 20 tuck 20 eq assert 10 eq assert 20 eq assert
+
+-- ===== Record edit =====
+
+-- basic edit
+{'a 1 'b 2} 'a (10 plus) edit dup 'a at 11 eq assert 'b at 2 eq assert
+
+-- chained edits
+{'x 0 'y 0} 'x (5 plus) edit 'y (3 plus) edit
+dup 'x at 5 eq assert 'y at 3 eq assert
+
+-- edit preserves other fields
+{'name [72 105] 'score 100 'lives 3}
+'score (50 plus) edit
+dup 'score at 150 eq assert
+dup 'lives at 3 eq assert
+'name at [72 105] eq assert
+
+-- edit with mul
+{'width 10 'height 20} 'width (2 mul) edit 'width at 20 eq assert
+
+-- edit on single-field record
+{'val 42} 'val (1 plus) edit 'val at 43 eq assert
+
+-- edit body that replaces value entirely
+{'a 1 'b 2} 'a (drop 99) edit 'a at 99 eq assert
 
 -- ===== Done =====
 "All tests passed!" print

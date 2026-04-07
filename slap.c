@@ -18,6 +18,7 @@
 #define STACK_MAX  65536
 #define SYM_MAX   4096
 #define FRAME_MAX 256
+#define FRAME_HASH_SIZE 512
 #define FRAME_VALS_MAX 65536
 #define TOK_MAX   65536
 #define LOCAL_MAX 16384
@@ -199,16 +200,29 @@ typedef struct Binding { uint32_t sym; int offset; int slots; int allocated; Bin
 struct Frame {
     struct Frame *parent; int bind_count; int vals_used; int refcount;
     Binding bindings[FRAME_MAX]; Value vals[FRAME_VALS_MAX];
+    int16_t hash[FRAME_HASH_SIZE]; // maps sym hash -> binding index+1 (0=empty)
 };
 
 static Frame *frame_new(Frame *parent) {
     Frame *f = malloc(sizeof(Frame));
-    f->parent = parent; f->bind_count = 0; f->vals_used = 0; f->refcount = 0; return f;
+    f->parent = parent; f->bind_count = 0; f->vals_used = 0; f->refcount = 0;
+    memset(f->hash, 0, sizeof(f->hash));
+    return f;
 }
 static void frame_free(Frame *f) { free(f); }
 
 static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind kind, int recur) {
-    for (int i = 0; i < f->bind_count; i++) {
+    // Use hash to find existing binding quickly
+    uint32_t h = sym % FRAME_HASH_SIZE;
+    int existing = -1;
+    for (int i = 0; i < FRAME_HASH_SIZE; i++) {
+        uint32_t slot = (h + i) % FRAME_HASH_SIZE;
+        if (f->hash[slot] == 0) break;
+        int idx = f->hash[slot] - 1;
+        if (idx < f->bind_count && f->bindings[idx].sym == sym) { existing = idx; break; }
+    }
+    if (existing >= 0) {
+        int i = existing;
         if (f->bindings[i].sym == sym) {
             if (slots <= f->bindings[i].allocated) {
                 memcpy(&f->vals[f->bindings[i].offset], vals, slots * sizeof(Value));
@@ -234,21 +248,45 @@ static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind 
     if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
     memcpy(&f->vals[off], vals, slots * sizeof(Value));
     f->vals_used += slots;
-    Binding *b = &f->bindings[f->bind_count++];
+    int idx = f->bind_count++;
+    Binding *b = &f->bindings[idx];
     b->sym = sym; b->offset = off; b->slots = slots; b->allocated = slots;
     b->kind = kind; b->recur = recur;
+    // update hash
+    for (int i = 0; i < FRAME_HASH_SIZE; i++) {
+        uint32_t slot = (h + i) % FRAME_HASH_SIZE;
+        if (f->hash[slot] == 0 || f->bindings[f->hash[slot]-1].sym == sym) {
+            f->hash[slot] = (int16_t)(idx + 1);
+            break;
+        }
+    }
 }
 
 typedef struct { Binding *bind; Frame *frame; } Lookup;
 static Lookup frame_lookup(Frame *f, uint32_t sym) {
-    for (Frame *cur = f; cur; cur = cur->parent)
-        for (int i = cur->bind_count - 1; i >= 0; i--)
-            if (cur->bindings[i].sym == sym) { Lookup r = {&cur->bindings[i], cur}; return r; }
+    for (Frame *cur = f; cur; cur = cur->parent) {
+        // Fast path: small frame (<=4 bindings) - linear scan
+        if (cur->bind_count <= 4) {
+            for (int i = cur->bind_count - 1; i >= 0; i--)
+                if (cur->bindings[i].sym == sym) { Lookup r = {&cur->bindings[i], cur}; return r; }
+        } else {
+            uint32_t h = sym % FRAME_HASH_SIZE;
+            for (int i = 0; i < FRAME_HASH_SIZE; i++) {
+                uint32_t slot = (h + i) % FRAME_HASH_SIZE;
+                if (cur->hash[slot] == 0) break;
+                int idx = cur->hash[slot] - 1;
+                if (idx < cur->bind_count && cur->bindings[idx].sym == sym) {
+                    Lookup r = {&cur->bindings[idx], cur}; return r;
+                }
+            }
+        }
+    }
     Lookup r = {NULL, NULL}; return r;
 }
 
 static void eval(Token *toks, int count, Frame *env);
 static void eval_body(Value *body, int slots, Frame *env);
+static void dispatch_word(uint32_t sym, Frame *env);
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *exec_env);
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close);
 
@@ -441,7 +479,7 @@ typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, T
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4, HO_SCRUTINEE_SYM=8,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 25
+#define HO_OP_COUNT 26
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
@@ -456,6 +494,7 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
     {"untag",0,3,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
     {"then",0,2,1,TC_TAGGED,HO_BODY_1TO1|HO_SCRUTINEE_TAGGED},
+    {"edit",0,3,1,TC_REC,HO_BODY_1TO1},
 };
 static HOEffect *ho_ops_find(uint32_t sym) { for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i]; return NULL; }
 static void syms_init(void) {
@@ -1071,7 +1110,7 @@ apply_sig:;
     for (int i = 0; i < sig->slot_count; i++) if (sig->slots[i].direction == DIR_IN) inputs++;
     if (tc->sp < inputs) {
         tc_error(tc, line, 0, "'%s' needs %d input(s), stack has %d", sym_name(sym), inputs, tc->sp);
-        if (tc->sp > 0) tc_dump_stack(tc);
+        if (tc->sp > 0 && !tc->suppress_errors) tc_dump_stack(tc);
         return;
     }
     #define MAX_TVARS 16
@@ -1173,8 +1212,10 @@ static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int s
 }
 
 static void tc_check_redef(TypeChecker *tc, uint32_t sym, int line) {
+    int saved = tc->suppress_errors; tc->suppress_errors = 0;
     if (tc_is_builtin(sym, tc->prelude_sig_count)) tc_error(tc, line, 0, "'%s' is already defined", sym_name(sym));
     else { TCBinding *existing = tc_lookup(tc, sym); if (existing) tc_error(tc, line, 0, "'%s' is already defined (first defined on line %d)", sym_name(sym), existing->def_line); }
+    tc->suppress_errors = saved;
 }
 static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, int total_count) {
     for (int i = start; i < end; i++) {
@@ -1200,20 +1241,27 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             for (int j = i+1; j < close; j++) if (toks[j].tag == TOK_LPAREN || toks[j].tag == TOK_LBRACKET || toks[j].tag == TOK_LBRACE) { is_simple = 0; break; }
             int scheme_base = tc->tvar_count, in_count = 0, out_count = 0, out_eff = -1;
             int in_tvars[8] = {0}, out_tvars[8] = {0}, scheme_count = 0;
-            if (eff_c <= 8 && eff_p <= 8) {
+            {
                 int saved_sp = tc->sp, saved_binds = tc->bind_count, saved_unknowns = tc->unknown_count;
                 int saved_recur = tc->recur_pending, saved_suppress = tc->suppress_errors;
                 int saved_sigs = type_sig_count, saved_effects = tc->effect_count, saved_floor = tc->sp_floor;
+                int wide_effect = (eff_c > 8 || eff_p > 8);
+                int skip_body = (wide_effect && i < tc->user_start);
                 if (!is_simple) {
                     tc->sp_floor = tc->sp;
                     if (i < tc->user_start) tc->suppress_errors = 1;
                 }
-                in_count = eff_c;
+                if (wide_effect && !skip_body) tc->suppress_errors = 1;
+                in_count = wide_effect ? 0 : eff_c;
                 for (int j = 0; j < in_count; j++) {
                     in_tvars[j] = tvar_fresh(tc);
                     tc->tvars[in_tvars[j]].elem = tvar_fresh(tc); tc->tvars[in_tvars[j]].box_c = tvar_fresh(tc); tc->tvars[in_tvars[j]].tag_p = tvar_fresh(tc);
                     tc_push(tc, TC_NONE, t->line);
                     tc->data[tc->sp-1].tvar_id = in_tvars[j];
+                }
+                if (wide_effect && !skip_body) {
+                    for (int j = 0; j < eff_c && tc->sp < ASTACK_MAX; j++)
+                        tc_push(tc, TC_NONE, t->line);
                 }
                 if (tc->recur_pending && tc->recur_sym) {
                     int pre_eidx = tc_alloc_effect(tc);
@@ -1222,24 +1270,30 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     AbstractType pre_at = {0}; pre_at.type = TC_TUPLE; pre_at.effect_idx = pre_eidx;
                     tc_bind(tc, tc->recur_sym, &pre_at, 1, t->line);
                 }
-                tc->body_depth++;
-                tc_process_range(tc, toks, i+1, close, total_count);
-                tc->body_depth--;
-                int actual_out = tc->sp - saved_sp;
-                {
-                    out_count = actual_out > 8 ? 8 : (actual_out > 0 ? actual_out : 0);
-                    for (int j = 0; j < out_count; j++) {
-                        int idx = tc->sp - out_count + j;
-                        if (idx >= 0) {
-                            out_tvars[j] = tc->data[idx].tvar_id;
-                            if (out_tvars[j] == 0 && tc->data[idx].type != TC_NONE) { out_tvars[j] = tvar_fresh(tc); tc->tvars[out_tvars[j]].bound = tc->data[idx].type; }
-                            else if (out_tvars[j] == 0) out_tvars[j] = tvar_fresh(tc);
-                        }
-                    }
-                    scheme_count = tc->tvar_count - scheme_base;
+                if (!skip_body) {
+                    tc->body_depth++;
+                    tc_process_range(tc, toks, i+1, close, total_count);
+                    tc->body_depth--;
                 }
-                if (actual_out == 1 && tc->data[tc->sp-1].type == TC_TUPLE && tc->data[tc->sp-1].effect_idx >= 0)
-                    out_eff = tc->data[tc->sp-1].effect_idx;
+                if (wide_effect) {
+                    tc->suppress_errors = saved_suppress;
+                } else if (!skip_body) {
+                    int actual_out = tc->sp - saved_sp;
+                    {
+                        out_count = actual_out > 8 ? 8 : (actual_out > 0 ? actual_out : 0);
+                        for (int j = 0; j < out_count; j++) {
+                            int idx = tc->sp - out_count + j;
+                            if (idx >= 0) {
+                                out_tvars[j] = tc->data[idx].tvar_id;
+                                if (out_tvars[j] == 0 && tc->data[idx].type != TC_NONE) { out_tvars[j] = tvar_fresh(tc); tc->tvars[out_tvars[j]].bound = tc->data[idx].type; }
+                                else if (out_tvars[j] == 0) out_tvars[j] = tvar_fresh(tc);
+                            }
+                        }
+                        scheme_count = tc->tvar_count - scheme_base;
+                    }
+                    if (actual_out == 1 && tc->data[tc->sp-1].type == TC_TUPLE && tc->data[tc->sp-1].effect_idx >= 0)
+                        out_eff = tc->data[tc->sp-1].effect_idx;
+                }
                 tc->sp = saved_sp; tc->bind_count = saved_binds; tc->unknown_count = saved_unknowns;
                 tc->recur_pending = saved_recur; tc->suppress_errors = saved_suppress;
                 type_sig_count = saved_sigs; tc->effect_count = saved_effects; tc->sp_floor = saved_floor;
@@ -1313,7 +1367,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         AbstractType vt = tc->data[tc->sp-1]; uint32_t name_sym = tc->data[tc->sp-2].sym_id;
                         tc->sp -= 2;
                         if (name_sym) {
-                            if (i >= tc->user_start && tc->sp_floor == 0) tc_check_redef(tc, name_sym, t->line);
+                            if (i >= tc->user_start) tc_check_redef(tc, name_sym, t->line);
                             tc_bind(tc, name_sym, &vt, 1, t->line);
                         }
                     } else if (tc->sp_floor == 0) tc->sp = 0;
@@ -1323,7 +1377,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     uint32_t name_sym = tc->data[tc->sp-1].sym_id; tc->sp--;
                     AbstractType val_t = tc->data[tc->sp-1]; tc->sp--;
                     if (name_sym) {
-                        if (i >= tc->user_start && tc->body_depth == 0) {
+                        if (i >= tc->user_start) {
+                            int saved_suppress = tc->suppress_errors; tc->suppress_errors = 0;
                             if (tc_is_builtin(name_sym, tc->prelude_sig_count)) tc_error(tc, t->line, 0, "'%s' shadows existing definition", sym_name(name_sym));
                             else {
                                 TCBinding *existing = tc_lookup(tc, name_sym);
@@ -1332,6 +1387,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                                     else tc_error(tc, t->line, 0, "'%s' is already bound (bound on line %d)", sym_name(name_sym), existing->def_line);
                                 }
                             }
+                            tc->suppress_errors = saved_suppress;
                         }
                         tc_bind(tc, name_sym, &val_t, 0, t->line);
                     }
@@ -1449,11 +1505,16 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     int name##_base __attribute__((unused)) = sp - name##_s; \
     Value name##_buf[name##_s]; memcpy(name##_buf, &stack[name##_base], name##_s*sizeof(Value)); sp = name##_base
 
-static void prim_dup(Frame *e) { (void)e; if (sp<=0) die("dup: stack underflow"); Value top=stack[sp-1]; int s=val_slots(top); if(sp+s>STACK_MAX) die("dup: stack overflow"); memcpy(&stack[sp],&stack[sp-s],s*sizeof(Value)); sp+=s; }
-static void prim_drop(Frame *e) { (void)e; if (sp<=0) die("drop: stack underflow"); sp-=val_slots(stack[sp-1]); }
+static void prim_dup(Frame *e) { (void)e; if (sp<=0) die("dup: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){stack[sp++]=top;return;} int s=val_slots(top); if(sp+s>STACK_MAX) die("dup: stack overflow"); memcpy(&stack[sp],&stack[sp-s],s*sizeof(Value)); sp+=s; }
+static void prim_drop(Frame *e) { (void)e; if (sp<=0) die("drop: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){sp--;return;} sp-=val_slots(top); }
 static void prim_swap(Frame *e) {
-    (void)e; if (sp<=0) die("swap: stack underflow");
-    Value top=stack[sp-1]; int top_s=val_slots(top); if(sp<top_s) die("swap: stack underflow");
+    (void)e; if (sp<2) die("swap: stack underflow");
+    Value top=stack[sp-1], below=stack[sp-2];
+    // Fast path: both single-slot scalars (INT=0, FLOAT=1, SYM=2, WORD=3, XT=4)
+    if(top.tag<=VAL_XT && below.tag<=VAL_XT){
+        stack[sp-1]=below; stack[sp-2]=top; return;
+    }
+    int top_s=val_slots(top); if(sp<top_s) die("swap: stack underflow");
     int bp=sp-top_s-1; if(bp<0) die("swap: stack underflow");
     int below_s=val_slots(stack[bp]); int total=top_s+below_s; if(sp<total) die("swap: stack underflow");
     if(total>LOCAL_MAX) die("swap: value too large (%d slots, max %d)",total,LOCAL_MAX);
@@ -1462,7 +1523,53 @@ static void prim_swap(Frame *e) {
     memmove(&stack[base],&stack[base+below_s],top_s*sizeof(Value));
     memcpy(&stack[base+top_s],tmp,below_s*sizeof(Value));
 }
-static void prim_dip(Frame *env) { if(sp<2) die("dip: need body and value"); POP_BODY(body,"dip"); POP_VAL(saved); eval_body(body_buf,body_s,env); memcpy(&stack[sp],saved_buf,saved_s*sizeof(Value)); sp+=saved_s; }
+
+static inline void eval_scalar_tuple_inner(Value *body, int len, Frame *exec_env) {
+    for(int k=0;k<len;k++){
+        Value elem=body[k];
+        if(elem.tag==VAL_XT) elem.as.xt.fn(exec_env);
+        else if(elem.tag==VAL_INT||elem.tag==VAL_FLOAT||elem.tag==VAL_SYM) stack[sp++]=elem;
+        else if(elem.tag==VAL_WORD) {
+            uint32_t sym=elem.as.sym;
+            if(sym==S_DEF){
+                Value dv_top=stack[sp-1]; int dv_s=val_slots(dv_top); uint32_t name; int rec=0;
+                if(recur_pending){name=recur_sym;rec=1;recur_pending=0;frame_bind(exec_env,name,&stack[sp-dv_s],dv_s,BIND_DEF,rec);sp-=dv_s;}
+                else{Value dv_buf[dv_s];memcpy(dv_buf,&stack[sp-dv_s],dv_s*sizeof(Value));sp-=dv_s;name=pop_sym();frame_bind(exec_env,name,dv_buf,dv_s,BIND_DEF,rec);}
+            } else if(sym==S_LET){
+                uint32_t name=pop_sym(); Value lv_top=stack[sp-1]; int lv_s=val_slots(lv_top);
+                frame_bind(exec_env,name,&stack[sp-lv_s],lv_s,BIND_LET,0); sp-=lv_s;
+            } else if(sym==S_RECUR){recur_sym=pop_sym();recur_pending=1;}
+            else dispatch_word(sym,exec_env);
+        }
+        else if(is_compound(elem.tag)){stack[sp++]=elem;if(elem.tag==VAL_TUPLE){exec_env->refcount++;stack[sp-1].as.compound.env=exec_env;}}
+        else if(elem.tag==VAL_BOX) spush(elem);
+    }
+}
+static inline void eval_scalar_tuple(Value *body, int len, Frame *env) {
+    eval_depth++;
+    Frame *exec_env=body[len].as.compound.env?body[len].as.compound.env:env;
+    eval_scalar_tuple_inner(body,len,exec_env);
+    eval_depth--;
+}
+
+static void prim_dip(Frame *env) {
+    if(sp<2) die("dip: need body and value");
+    POP_BODY(body,"dip");
+    int body_scalar=(body_s==(int)body_buf[body_s-1].as.compound.len+1);
+    // Fast path: single-slot value below body
+    Value top=stack[sp-1];
+    if(!is_compound(top.tag)&&top.tag!=VAL_TAGGED){
+        Value saved=stack[sp-1]; sp--;
+        if(body_scalar) eval_scalar_tuple(body_buf,(int)body_buf[body_s-1].as.compound.len,env);
+        else eval_body(body_buf,body_s,env);
+        stack[sp++]=saved;
+    } else {
+        POP_VAL(saved);
+        if(body_scalar) eval_scalar_tuple(body_buf,(int)body_buf[body_s-1].as.compound.len,env);
+        else eval_body(body_buf,body_s,env);
+        memcpy(&stack[sp],saved_buf,saved_s*sizeof(Value)); sp+=saved_s;
+    }
+}
 static void prim_apply(Frame *env) { if(sp<=0) die("apply: stack underflow"); POP_BODY(body,"apply"); eval_body(body_buf,body_s,env); }
 
 #define ARITH2(nm,iop,fop) static void prim_##nm(Frame *e){(void)e;Value b=spop(),a=spop(); \
@@ -1499,15 +1606,36 @@ static void prim_random(Frame *e){(void)e;int64_t max=pop_int();if(max<=0)die("r
 static void eval_default(Value *buf, int s, Value top, Value *scrut, int scrut_s, Frame *env) {
     if (top.tag == VAL_TUPLE) {
         if (scrut) { memcpy(&stack[sp], scrut, scrut_s*sizeof(Value)); sp += scrut_s; }
-        eval_body(buf, s, env);
+        int len=(int)top.as.compound.len;
+        if(s==len+1 && !scrut) eval_scalar_tuple(buf,len,env);
+        else eval_body(buf, s, env);
     } else { memcpy(&stack[sp], buf, s*sizeof(Value)); sp += s; }
 }
 
 static void prim_if(Frame *env) {
     POP_VAL(el); POP_BODY(then,"if");
     Value cond=spop(); if(cond.tag!=VAL_INT) die("if: condition must be int, got tag %d",cond.tag);
-    if(cond.as.i) eval_body(then_buf,then_s,env);
-    else eval_default(el_buf,el_s,el_top,NULL,0,env);
+    if(cond.as.i) {
+        int len=(int)then_buf[then_s-1].as.compound.len;
+        if(then_s==len+1) {
+            Frame *exec_env=then_buf[len].as.compound.env?then_buf[len].as.compound.env:env;
+            eval_depth++;
+            eval_scalar_tuple_inner(then_buf,len,exec_env);
+            eval_depth--;
+        }
+        else eval_body(then_buf,then_s,env);
+    } else {
+        if(el_top.tag==VAL_TUPLE){
+            int len=(int)el_top.as.compound.len;
+            if(el_s==len+1) {
+                Frame *exec_env=el_buf[len].as.compound.env?el_buf[len].as.compound.env:env;
+                eval_depth++;
+                eval_scalar_tuple_inner(el_buf,len,exec_env);
+                eval_depth--;
+            }
+            else eval_body(el_buf,el_s,env);
+        } else { memcpy(&stack[sp],el_buf,el_s*sizeof(Value)); sp+=el_s; }
+    }
 }
 
 static void prim_cond(Frame *env) {
@@ -1632,6 +1760,48 @@ static void prim_loop(Frame *env) {
     for(;;){eval_body(body_buf,body_s,env);if(!pop_int())break;}
 }
 
+typedef struct {
+    Value *body; int slots, len, all_scalar, has_bindings;
+    int offsets[LOCAL_MAX], sizes[LOCAL_MAX];
+    Frame *exec_env;
+} PreparedBody;
+
+static void prepare_body(Value *body, int slots, Frame *env, PreparedBody *pb) {
+    pb->body = body; pb->slots = slots;
+    Value hdr = body[slots-1]; pb->len = (int)hdr.as.compound.len;
+    pb->all_scalar = (slots == pb->len + 1);
+    pb->exec_env = hdr.as.compound.env ? hdr.as.compound.env : env;
+    if (!pb->all_scalar) compute_offsets(body, slots, pb->len, pb->offsets, pb->sizes);
+    // Check if body contains def/let/recur words
+    pb->has_bindings = 0;
+    for(int k=0; k<pb->len; k++){
+        int eoff=pb->all_scalar?k:pb->offsets[k], esz=pb->all_scalar?1:pb->sizes[k];
+        Value elem=body[eoff+esz-1];
+        if(elem.tag==VAL_WORD&&(elem.as.sym==S_DEF||elem.as.sym==S_LET||elem.as.sym==S_RECUR)){
+            pb->has_bindings=1; break;
+        }
+    }
+}
+
+static inline void eval_prepared(PreparedBody *pb) {
+    if(pb->all_scalar){
+        eval_scalar_tuple_inner(pb->body, pb->len, pb->exec_env);
+    } else {
+        Frame *exec_env = pb->exec_env;
+        for(int k=0; k<pb->len; k++){
+            int eoff=pb->offsets[k], esz=pb->sizes[k];
+            Value elem=pb->body[eoff+esz-1];
+            if(elem.tag==VAL_XT) elem.as.xt.fn(exec_env);
+            else if(elem.tag==VAL_INT||elem.tag==VAL_FLOAT||elem.tag==VAL_SYM) stack[sp++]=elem;
+            else if(is_compound(elem.tag)){
+                memcpy(&stack[sp],&pb->body[eoff],esz*sizeof(Value)); sp+=esz;
+                if(elem.tag==VAL_TUPLE){exec_env->refcount++;stack[sp-1].as.compound.env=exec_env;}
+            } else if(elem.tag==VAL_WORD) dispatch_word(elem.as.sym,exec_env);
+            else if(elem.tag==VAL_BOX) spush(elem);
+        }
+    }
+}
+
 static void prim_while(Frame *env) {
     if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected tuple");
     int body_s=val_slots(stack[sp-1]); if(body_s>LOCAL_MAX||body_s>sp) die("while: stack underflow");
@@ -1639,7 +1809,14 @@ static void prim_while(Frame *env) {
     if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected tuple");
     int pred_s=val_slots(stack[sp-1]); if(pred_s>LOCAL_MAX||pred_s>sp) die("while: stack underflow");
     Value pred_buf[pred_s]; memcpy(pred_buf,&stack[sp-pred_s],pred_s*sizeof(Value)); sp-=pred_s;
-    for(;;){eval_body(pred_buf,pred_s,env);if(!pop_int())break;eval_body(body_buf,body_s,env);}
+    PreparedBody pp, pb;
+    prepare_body(pred_buf, pred_s, env, &pp);
+    prepare_body(body_buf, body_s, env, &pb);
+    if(pp.has_bindings || pb.has_bindings) {
+        for(;;){eval_body(pred_buf,pred_s,env);if(!pop_int())break;eval_body(body_buf,body_s,env);}
+    } else {
+        for(;;){eval_prepared(&pp);if(!pop_int())break;eval_prepared(&pb);}
+    }
 }
 
 static void prim_itof(Frame *e){(void)e;spush(val_float((double)pop_int()));}
@@ -1850,6 +2027,35 @@ static void prim_into(Frame *e) {
     }
 }
 
+static void prim_edit(Frame *env) {
+    POP_BODY(fn,"edit"); uint32_t key=pop_sym();
+    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("edit: expected record");
+    int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s;
+    int found; ElemRef ref=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
+    if(!found) die("edit: key '%s' not found in record",sym_name(key));
+    Value field_buf[LOCAL_MAX]; memcpy(field_buf,&stack[rec_base+ref.base],ref.slots*sizeof(Value));
+    memcpy(&stack[sp],field_buf,ref.slots*sizeof(Value)); sp+=ref.slots;
+    eval_body(fn_buf,fn_s,env);
+    Value new_top=stack[sp-1]; int new_s=val_slots(new_top);
+    if(new_s==ref.slots) {
+        memcpy(&stack[rec_base+ref.base],&stack[sp-new_s],new_s*sizeof(Value));
+        sp-=new_s;
+    } else {
+        Value new_val_buf[LOCAL_MAX]; memcpy(new_val_buf,&stack[sp-new_s],new_s*sizeof(Value)); sp-=new_s;
+        Value tmp[LOCAL_MAX]; int tmp_sp=0;
+        int kpos[LOCAL_MAX],voff[LOCAL_MAX],vsz[LOCAL_MAX];
+        record_offsets(&stack[rec_base],rec_s,rec_len,kpos,voff,vsz);
+        for(int i=0;i<rec_len;i++){
+            uint32_t k=stack[rec_base+kpos[i]].as.sym;
+            tmp[tmp_sp++]=stack[rec_base+kpos[i]];
+            if(k==key){memcpy(&tmp[tmp_sp],new_val_buf,new_s*sizeof(Value));tmp_sp+=new_s;}
+            else{memcpy(&tmp[tmp_sp],&stack[rec_base+voff[i]],vsz[i]*sizeof(Value));tmp_sp+=vsz[i];}
+        }
+        sp=rec_base; memcpy(&stack[sp],tmp,tmp_sp*sizeof(Value)); sp+=tmp_sp;
+        spush(val_compound(VAL_RECORD,rec_len,tmp_sp+1));
+    }
+}
+
 typedef struct BoxData { Value *data; int slots; } BoxData;
 static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;memcpy(bd->data,&stack[sp-s],s*sizeof(Value));sp-=s;Value v;v.tag=VAL_BOX;v.as.box=bd;spush(v);}
 static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box");BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
@@ -1912,10 +2118,14 @@ static void prim_shape(Frame *e) {
 
 static void dispatch_word(uint32_t sym, Frame *env) {
     Lookup lu=frame_lookup(env,sym);
-    if(!lu.bind){PrimFn fn=prim_lookup(sym);if(fn){fn(env);return;}die("unknown word: %s",sym_name(sym));}
-    Binding *b=lu.bind; Value *v=&lu.frame->vals[b->offset];
-    if(b->kind==BIND_DEF&&v[b->slots-1].tag==VAL_TUPLE){eval_body(v,b->slots,env);return;}
-    memcpy(&stack[sp],v,b->slots*sizeof(Value)); sp+=b->slots;
+    if(lu.bind){
+        Binding *b=lu.bind; Value *v=&lu.frame->vals[b->offset];
+        if(b->kind==BIND_DEF&&v[b->slots-1].tag==VAL_TUPLE){eval_body(v,b->slots,env);return;}
+        memcpy(&stack[sp],v,b->slots*sizeof(Value)); sp+=b->slots;
+        return;
+    }
+    PrimFn fn=prim_lookup(sym);if(fn){fn(env);return;}
+    die("unknown word: %s",sym_name(sym));
 }
 
 static void eval_body(Value *body, int slots, Frame *env) {
@@ -1926,9 +2136,8 @@ static void eval_body(Value *body, int slots, Frame *env) {
     int saved_bc=exec_env->bind_count,saved_vu=exec_env->vals_used;
     int all_scalar=(slots==len+1);
     if(len>LOCAL_MAX) die("tuple body too large");
-    int *offsets_buf=NULL, *sizes_buf=NULL;
+    int offsets_buf[all_scalar?1:len], sizes_buf[all_scalar?1:len];
     if(!all_scalar) {
-        offsets_buf=malloc(len*2*sizeof(int)); sizes_buf=offsets_buf+len;
         compute_offsets(body,slots,len,offsets_buf,sizes_buf);
     }
     for(int k=0;k<len;k++){
@@ -1953,7 +2162,6 @@ static void eval_body(Value *body, int slots, Frame *env) {
             else dispatch_word(sym,exec_env);
         } else if(elem.tag==VAL_BOX) spush(elem);
     }
-    free(offsets_buf);
     if(exec_env->refcount==0){exec_env->bind_count=saved_bc;exec_env->vals_used=saved_vu;}
     eval_depth--;
 }
@@ -2138,6 +2346,7 @@ static const char *BUILTIN_TYPES =
 static const char *PRELUDE =
     "'over (swap dup (swap) dip) def\n'peek (over) def\n'nip (swap drop) def\n"
     "'rot ((swap) dip swap) def\n"
+    "'tuck (swap over) def\n"
     "'not (0 eq) [int lent in  int move out] effect def\n"
     "'neq (eq not) [lent in  lent in  int move out] effect def\n"
     "'gt (swap lt) [lent in  lent in  int move out] effect def\n"
@@ -2241,44 +2450,48 @@ static const char *PRELUDE =
     "  dup 'width at swap dup 'height at swap dup 'depth at swap 'pixels at tga-header\n"
     ") def\n"
     /* -- GLY: 1-bit inline graphics (ASCII-encoded) -- */
-    "'gly-decode (\n"
-    "  list 'rows let  list 'cur let  0 'maxw let\n"
-    "  (dup len 0 eq not) (\n"
-    "    dup first 'ch let  1 drop-n\n"
+    "'gly-parse-rows recur ('input let 'cur let 'rows let 'maxw let\n"
+    "  input len 0 eq (\n"
+    "    cur len 0 eq not\n"
+    "      (cur len maxw max rows cur give)\n"
+    "      (maxw rows) if\n"
+    "  ) (\n"
+    "    input first 'ch let  input 1 drop-n 'rest let\n"
     "    ch 10 eq (\n"
-    "      cur len maxw max 'maxw let\n"
-    "      rows cur give 'rows let  list 'cur let\n"
+    "      cur len maxw max  rows cur give  list  rest  gly-parse-rows\n"
     "    ) (\n"
-    "      ch 32 eq (cur 0 give 'cur let) (cur ch 63 sub give 'cur let) if\n"
+    "      ch 32 eq (cur 0 give) (cur ch 63 sub give) if 'ncur let\n"
+    "      maxw  rows  ncur  rest  gly-parse-rows\n"
     "    ) if\n"
-    "  ) while drop\n"
-    "  cur len 0 eq not (rows cur give 'rows let  cur len maxw max 'maxw let) () if\n"
+    "  ) if\n"
+    ") def\n"
+    "'gly-decode (\n"
+    "  'input let 0 list list input gly-parse-rows 'rows let 'maxw let\n"
     "  rows len 'nrows let  maxw 'w let  nrows 4 mul 'h let\n"
-    "  list 'pixels let\n"
+    "  list\n"
     "  0 h range ('y let\n"
     "    0 w range ('c let\n"
     "      y 4 div 'r let  y 4 mod 'bit let\n"
-    "      rows len r gt (rows r get dup len c gt (c get bit shr 1 band) (drop 0) if) (0) if\n"
-    "      pixels swap give 'pixels let\n"
+    "      rows len r gt (rows r get dup len c gt (c get bit shr 1 band) (drop 0) if) (0) if give\n"
     "    ) each\n"
     "  ) each\n"
+    "  'pixels let\n"
     "  rec w 'width into h 'height into pixels 'pixels into\n"
     ") def\n"
     "'gly-encode (\n"
     "  dup 'width at 'w let dup 'height at 'h let 'pixels at 'px let\n"
     "  h 4 div 'nrows let\n"
-    "  list 'out let\n"
+    "  list\n"
     "  0 nrows range ('r let\n"
     "    0 w range ('c let\n"
     "      0  0 4 range ('bit let\n"
     "        px r 4 mul bit plus w mul c plus get\n"
     "        bit shl bor\n"
     "      ) each\n"
-    "      63 plus out swap give 'out let\n"
+    "      63 plus give\n"
     "    ) each\n"
-    "    r nrows 1 sub lt (out 10 give 'out let) () if\n"
+    "    r nrows 1 sub lt (10 give) () if\n"
     "  ) each\n"
-    "  out\n"
     ") def\n"
     /* -- UFX: proportional font (widths + ICN tiles) -- */
     "'ufx-decode (\n"
@@ -2291,35 +2504,38 @@ static const char *PRELUDE =
     ") def\n"
     /* -- ULZ: LZ compression -- */
     "'ulz-decode (\n"
-    "  'src let  list 'out let  0 'i let\n"
-    "  (i src len lt) (\n"
-    "    src i get 'op let  i 1 plus 'i let\n"
+    "  'src let  list 0\n"
+    "  (dup src len lt) (\n"
+    "    dup src swap get 'op let  1 plus\n"
     "    op 128 band 0 eq (\n"
     "      op 127 band 1 plus 'cnt let\n"
-    "      cnt (src i get out swap give 'out let  i 1 plus 'i let) repeat\n"
+    "      cnt (dup src swap get swap (give) dip 1 plus) repeat\n"
     "    ) (\n"
     "      op 64 band 0 eq (\n"
     "        op 63 band 4 plus 'lng let\n"
-    "        src i get 1 plus 'off let  i 1 plus 'i let\n"
-    "        lng (out len off sub 'pos let  out pos get out swap give 'out let) repeat\n"
+    "        dup src swap get 1 plus 'off let  1 plus\n"
+    "        lng (swap dup dup len off sub get give swap) repeat\n"
     "      ) (\n"
-    "        op 63 band 8 shl src i get bor 4 plus 'lng let  i 1 plus 'i let\n"
-    "        src i get 1 plus 'off let  i 1 plus 'i let\n"
-    "        lng (out len off sub 'pos let  out pos get out swap give 'out let) repeat\n"
+    "        op 63 band 8 shl (dup src swap get) dip swap bor 4 plus 'lng let  1 plus\n"
+    "        dup src swap get 1 plus 'off let  1 plus\n"
+    "        lng (swap dup dup len off sub get give swap) repeat\n"
     "      ) if\n"
     "    ) if\n"
     "  ) while\n"
-    "  out\n"
+    "  drop\n"
     ") def\n"
 #ifndef SLAP_WASM
     /* -- string helpers -- */
     "'crlf (list 13 give 10 give) def\n"
     "'space (32) def\n"
-    "'int-str recur ('n let n 0 lt\n"
+    "'int-str-digits recur ('n let n 0 gt\n"
+    "  (n 10 mod 48 plus give  n 10 div int-str-digits)\n"
+    "  () if\n"
+    ") def\n"
+    "'int-str ('n let n 0 lt\n"
     "  (n neg int-str list 45 give swap cat)\n"
-    "  (n 10 lt (list n 48 plus give)\n"
-    "   (list (n 0 gt) (n 10 mod 48 plus give  n 10 div 'n let) while reverse) if\n"
-    "  ) if\n"
+    "  (n 0 eq (list 48 give) (list n int-str-digits reverse) if)\n"
+    "  if\n"
     ") def\n"
     "'str-join ('sep let 'parts let\n"
     "  parts len 0 eq (list)\n"
@@ -2336,25 +2552,23 @@ static const char *PRELUDE =
     "  crlf cat body cat\n"
     ") def\n"
     "'http-get ('path let 'port let 'host let\n"
-    "  host port tcp-connect 'sock let\n"
+    "  host port tcp-connect\n"
     "  \"GET\" host path list list http-request\n"
-    "  sock swap tcp-send 'sock let\n"
-    "  list 'response let\n"
-    "  (sock 4096 tcp-recv 'chunk let 'sock let\n"
-    "   response chunk cat 'response let  chunk len 0 gt) () while\n"
-    "  sock tcp-close\n"
-    "  response parse-http\n"
+    "  (swap tcp-send) dip swap\n"
+    "  list swap\n"
+    "  (swap 4096 tcp-recv 'chunk let swap chunk cat chunk len 0 gt) () while\n"
+    "  swap tcp-close\n"
+    "  parse-http\n"
     ") def\n"
     "'http-post ('body let 'content-type let 'path let 'port let 'host let\n"
-    "  host port tcp-connect 'sock let\n"
+    "  host port tcp-connect\n"
     "  \"Content-Type: \" content-type cat crlf cat 'ct-hdr let\n"
     "  \"POST\" host path ct-hdr body http-request\n"
-    "  sock swap tcp-send 'sock let\n"
-    "  list 'response let\n"
-    "  (sock 4096 tcp-recv 'chunk let 'sock let\n"
-    "   response chunk cat 'response let  chunk len 0 gt) () while\n"
-    "  sock tcp-close\n"
-    "  response parse-http\n"
+    "  (swap tcp-send) dip swap\n"
+    "  list swap\n"
+    "  (swap 4096 tcp-recv 'chunk let swap chunk cat chunk len 0 gt) () while\n"
+    "  swap tcp-close\n"
+    "  parse-http\n"
     ") def\n"
 #endif
 ;
@@ -2971,7 +3185,7 @@ static void register_prims(void) {
         {"sort",prim_sort},{"index-of",prim_index_of},{"scan",prim_scan},
         {"at",prim_at},{"rise",prim_rise},{"fall",prim_fall},
         {"shape",prim_shape},
-        {"rec",prim_rec},{"into",prim_into},{"reverse",prim_reverse},{"dedup",prim_dedup},
+        {"rec",prim_rec},{"into",prim_into},{"edit",prim_edit},{"reverse",prim_reverse},{"dedup",prim_dedup},
         {"where",prim_where},{"find",prim_find_elem},
         {"millis",prim_millis},{"box",prim_box},{"free",prim_free},
         {"lend",prim_lend},{"mutate",prim_mutate},{"clone",prim_clone},

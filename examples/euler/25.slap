@@ -2,37 +2,43 @@
 -- Index of first Fibonacci number with 1000+ digits
 -- Answer: 4782
 
--- Pad a digit list to 1100 elements (avoids frame-storage growth on rebind)
 'pad-1100 (
   (dup len 1100 lt) (0 give) while
 ) def
 
-[1] pad-1100 'fa let
-[1] pad-1100 'fb let
-1 'alen let
-1 'blen let
-2 'idx let
-(blen 1000 lt)
-(
-  alen blen max 'n let
-  0 'carry let
-  0 'j let
-  list
-  (j n lt)
-  (
-    'fa j nth 'fb j nth plus carry plus 'v let
-    v 10 mod give
-    v 10 div 'carry let
-    j 1 plus 'j let
-  ) while
-  (carry 0 gt)
-  (carry 10 mod give carry 10 div 'carry let j 1 plus 'j let)
-  while
-  j 'new-len let
-  pad-1100 'fc let
-  fb 'fa let  blen 'alen let
-  fc 'fb let  new-len 'blen let
-  idx 1 plus 'idx let
-)
+-- add-digits: a-list a-len b-list b-len -> result-list result-len
+'add-digits (
+  'ad-blen let 'ad-b let 'ad-alen let 'ad-a let
+  ad-alen ad-blen max 'ad-n let
+  'ad-carry-loop recur (
+    'adcl-j let 'adcl-carry let
+    adcl-carry 0 gt (adcl-carry 10 mod give adcl-carry 10 div adcl-j 1 plus ad-carry-loop) (adcl-j) if
+  ) def
+  'ad-loop recur (
+    'ad-j let 'ad-carry let
+    ad-j ad-n lt (
+      'ad-a ad-j nth 'ad-b ad-j nth plus ad-carry plus 'ad-v let
+      ad-v 10 mod give
+      ad-v 10 div ad-j 1 plus ad-loop
+    ) (
+      ad-carry ad-j ad-carry-loop
+    ) if
+  ) def
+  list 0 0 ad-loop
+) def
+
+-- fib-step: fa alen fb blen idx -> fa' alen' fb' blen' idx'
+'fib-step (
+  'fs-idx let 'fs-blen let 'fs-fb let 'fs-alen let 'fs-fa let
+  fs-fa fs-alen fs-fb fs-blen add-digits 'fs-clen let pad-1100 'fs-fc let
+  fs-fb fs-blen fs-fc fs-clen fs-idx 1 plus
+) def
+
+-- stack: fa alen fb blen idx
+[1] pad-1100 1 [1] pad-1100 1 2
+-- predicate: check blen < 1000 (blen is 2nd from top)
+(over 1000 lt)
+(fib-step)
 while
-idx print
+-- stack: fa alen fb blen idx
+'final-idx let drop drop drop drop final-idx print

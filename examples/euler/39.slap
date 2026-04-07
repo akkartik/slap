@@ -2,26 +2,39 @@
 -- For p <= 1000, which p has most right triangle solutions a+b+c=p?
 -- Answer: 840
 
-0 'best-count let
-0 'best-p let
+-- For a+b+c=p, a²+b²=c², substituting c=p-a-b:
+--   b = p(p-2a) / 2(p-a)
+-- Valid when b is positive integer and b >= a.
 
-12 'p let
-(p 1000 le)
-(
-  0 'count let
-  1 'a let
-  (a p 3 div lt)
+-- count-triples: p -> count
+'count-triples (
+  'ctp let
+  -- stack: cnt a
+  0 1
+  -- while a < p/3
+  (dup ctp 3 div lt)
   (
-    a 'b let
-    (b p a sub 2 div le)
-    (
-      p a sub b sub 'c let
-      a a mul b b mul plus c c mul eq (count 1 plus 'count let) () if
-      b 1 plus 'b let
-    ) while
-    a 1 plus 'a let
+    -- stack: cnt a
+    dup 'cta let
+    ctp ctp cta 2 mul sub mul 'ctnum let
+    ctp cta sub 2 mul 'ctden let
+    ctnum ctden mod 0 eq
+    ctnum ctden div cta ge and
+    (swap 1 plus swap) () if
+    1 plus
   ) while
-  count best-count gt (count 'best-count let p 'best-p let) () if
-  p 2 plus 'p let
-) while
-best-p print
+  drop
+) def
+
+'step39 (
+  'stp let 'stbp let 'stbc let
+  stp count-triples 'stcnt let
+  stcnt stbc gt (stcnt stp) (stbc stbp) if
+  stp 2 plus
+) def
+
+0 0 12
+(dup 1000 le)
+(step39)
+while
+drop nip print

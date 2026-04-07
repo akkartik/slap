@@ -2,23 +2,26 @@
 -- Smallest x where x, 2x, 3x, 4x, 5x, 6x all have same digits
 -- Answer: 142857
 
-'sorted-digits (
-  'sd-n let
-  list
-  (sd-n 0 gt) (sd-n 10 mod give sd-n 10 div 'sd-n let) while
-  sort
+-- digit-sig: n -> signature (sorted digit list)
+'digit-sig (
+  list swap
+  (dup 0 gt) (dup 10 mod (swap) dip give swap 10 div) while
+  drop sort
 ) def
 
-0 'found let
-1 'x let
-(found not)
-(
-  x sorted-digits 'xd let
-  x 2 mul sorted-digits xd eq
-  x 3 mul sorted-digits xd eq and
-  x 4 mul sorted-digits xd eq and
-  x 5 mul sorted-digits xd eq and
-  x 6 mul sorted-digits xd eq and
-  (1 'found let) (x 1 plus 'x let) if
-) while
-x print
+-- check-permuted: x -> bool (do x..6x have same digit signature?)
+'check-permuted (
+  'cp-x let
+  cp-x digit-sig 'cp-sig let
+  cp-x 2 mul digit-sig cp-sig eq
+  cp-x 3 mul digit-sig cp-sig eq and
+  cp-x 4 mul digit-sig cp-sig eq and
+  cp-x 5 mul digit-sig cp-sig eq and
+  cp-x 6 mul digit-sig cp-sig eq and
+) def
+
+1
+(dup check-permuted not)
+(1 plus)
+while
+print

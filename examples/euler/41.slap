@@ -8,57 +8,70 @@
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (
-        1 'ip-ok let
-        3 'ip-i let
-        (ip-i ip-i mul ip-n le ip-ok and)
-        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        3 1
+        (over dup mul ip-n le over and)
+        (swap ip-n over mod 0 eq (nip 0 swap) () if 2 plus swap)
         while
-        ip-ok
+        nip
       ) if
     ) if
   ) if
 ) def
 
 'digits-to-num (
-  'dn-ds let
-  0 'dn-r let
-  0 'dn-i let
-  (dn-i dn-ds len lt)
-  (dn-r 10 mul dn-ds dn-i get plus 'dn-r let dn-i 1 plus 'dn-i let)
-  while
-  dn-r
+  0 (swap 10 mul plus) fold
 ) def
 
--- Generate permutations of [7 6 5 4 3 2 1] in descending order
--- Use "previous permutation" algorithm: find rightmost ascent, swap, reverse
-[7 6 5 4 3 2 1] 'perm let
-0 'answer let
-(answer 0 eq)
+-- list-swap: list i j -> list  (swap elements at i and j)
+'list-swap (
+  'lsw-j let 'lsw-i let 'lsw-l let
+  lsw-l lsw-i get 'lsw-tmp let
+  lsw-l lsw-i lsw-l lsw-j get set lsw-j lsw-tmp set
+) def
+
+-- prev-perm-apply: perm i -> new-perm
+-- Given descent index i, compute previous permutation
+'prev-perm-apply (
+  'pa-i let 'pa-perm let
+  -- Find rightmost j > i where perm[j] < perm[i]
+  pa-perm len 1 sub
+  (pa-perm over get pa-perm pa-i get ge) (1 sub) while
+  'pa-j let
+  -- Swap i and j, then reverse suffix after i
+  pa-perm pa-i pa-j list-swap 'pa-s let
+  pa-s pa-i 1 plus take-n pa-s pa-i 1 plus drop-n reverse cat
+) def
+
+'descent-check (
+  'dc-perm let 'dc-i let
+  dc-i 0 ge (dc-perm dc-i get dc-perm dc-i 1 plus get le) (0) if
+) def
+
+'prev-perm (
+  'pp-perm let
+  -- Find rightmost i where perm[i] > perm[i+1]
+  pp-perm len 2 sub
+  (dup pp-perm descent-check) (1 sub) while
+  dup 0 lt (
+    drop pp-perm 0
+  ) (
+    pp-perm swap prev-perm-apply 1
+  ) if
+) def
+
+-- stack: perm answer
+[7 6 5 4 3 2 1] 0
+(dup 0 eq)
 (
-  perm digits-to-num 'pn let
-  pn is-prime (pn 'answer let) (
-    -- Find previous permutation
-    -- Find rightmost i where perm[i] > perm[i+1]
-    perm len 2 sub 'pi let
-    (pi 0 ge perm pi get perm pi 1 plus get le and) (pi 1 sub 'pi let) while
-    pi 0 lt (1 'answer let) (
-      -- Find rightmost j > i where perm[j] < perm[i]
-      perm len 1 sub 'pj let
-      (perm pj get perm pi get ge) (pj 1 sub 'pj let) while
-      -- Swap perm[i] and perm[j]
-      perm pi get 'tmp let
-      perm pi perm pj get set pj tmp set 'perm let
-      -- Reverse perm[i+1..end]
-      pi 1 plus 'lo let
-      perm len 1 sub 'hi let
-      (lo hi lt)
-      (
-        perm lo get 'tmp let
-        perm lo perm hi get set hi tmp set 'perm let
-        lo 1 plus 'lo let
-        hi 1 sub 'hi let
-      ) while
+  swap dup digits-to-num
+  dup is-prime (
+    nip nip 1 swap
+  ) (
+    drop prev-perm not (
+      swap 1 swap
+    ) (
+      swap
     ) if
   ) if
 ) while
-answer print
+nip print

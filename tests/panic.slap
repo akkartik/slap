@@ -143,3 +143,33 @@ stack pop
 
 -- EXPECT: swap: value too large
 0 10000 range 0 10000 range swap
+
+-- EXPECT: stack underflow
+1 over
+
+-- EXPECT: stack underflow
+over
+
+-- EXPECT: stack underflow
+1 2 rot
+
+-- EXPECT: stack underflow
+rot
+
+-- EXPECT: stack underflow
+1 nip
+
+-- EXPECT: stack underflow
+nip
+
+-- EXPECT: stack underflow
+1 tuck
+
+-- EXPECT: stack underflow
+tuck
+
+-- EXPECT: edit: expected record
+1 'x (1 plus) edit
+
+-- EXPECT: edit: key
+{'a 1} 'b (1 plus) edit

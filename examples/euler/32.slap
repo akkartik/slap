@@ -2,11 +2,11 @@
 -- Sum of products c=a*b where digits of a,b,c form 1-9 pandigital
 -- Answer: 45228
 
-'get-digits (
-  'gd-n let
-  list
-  (gd-n 0 gt) (gd-n 10 mod give gd-n 10 div 'gd-n let) while
+'gd-helper recur (
+  'gdh-n let 'gdh-lst let
+  gdh-n 0 gt (gdh-lst gdh-n 10 mod give gdh-n 10 div gd-helper) (gdh-lst) if
 ) def
+'get-digits (list swap gd-helper) def
 
 'is-pan9 (
   'ipt-c let 'ipt-b let 'ipt-a let
@@ -14,34 +14,42 @@
   dup len 9 eq (sort [1 2 3 4 5 6 7 8 9] eq) (drop 0) if
 ) def
 
-list 'products let
+-- scan1-inner: products a b -> products'
+'scan1-inner recur (
+  'si-b let 'si-a let 'si-prods let
+  si-b 9876 le si-a si-b mul 9999 le and (
+    si-a si-b mul 'si-c let
+    si-a si-b si-c is-pan9 (si-prods si-c give) (si-prods) if
+    si-a si-b 1 plus scan1-inner
+  ) (si-prods) if
+) def
 
--- Case 1: a is 1-digit, b is 4-digit
-2 'a let
-(a 9 le)
-(
-  1234 'b let
-  (b 9876 le a b mul 9999 le and)
-  (
-    a b mul 'c let
-    a b c is-pan9 (products c give 'products let) () if
-    b 1 plus 'b let
-  ) while
-  a 1 plus 'a let
-) while
+-- scan1: products a -> products'
+'scan1 recur (
+  's1-a let 'prods1 let
+  s1-a 9 le (
+    prods1 s1-a 1234 scan1-inner
+    s1-a 1 plus scan1
+  ) (prods1) if
+) def
 
--- Case 2: a is 2-digit, b is 3-digit
-12 'a2 let
-(a2 98 le)
-(
-  123 'b let
-  (b 987 le a2 b mul 9999 le and)
-  (
-    a2 b mul 'c let
-    a2 b c is-pan9 (products c give 'products let) () if
-    b 1 plus 'b let
-  ) while
-  a2 1 plus 'a2 let
-) while
+-- scan2-inner: products a b -> products'
+'scan2-inner recur (
+  'si2-b let 'si2-a let 'si2-prods let
+  si2-b 987 le si2-a si2-b mul 9999 le and (
+    si2-a si2-b mul 'si2-c let
+    si2-a si2-b si2-c is-pan9 (si2-prods si2-c give) (si2-prods) if
+    si2-a si2-b 1 plus scan2-inner
+  ) (si2-prods) if
+) def
 
-products sort dedup sum print
+-- scan2: products a -> products'
+'scan2 recur (
+  's2-a let 'prods2 let
+  s2-a 98 le (
+    prods2 s2-a 123 scan2-inner
+    s2-a 1 plus scan2
+  ) (prods2) if
+) def
+
+list 2 scan1 12 scan2 sort dedup sum print

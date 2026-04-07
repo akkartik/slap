@@ -22,66 +22,52 @@
  20 69 36 41 72 30 23 88 34 62 99 69 82 67 59 85 74 04 36 16
  20 73 35 29 78 31 90 01 74 31 49 71 48 86 81 16 23 57 05 54
  01 70 54 71 83 51 54 69 16 92 33 48 61 43 52 01 89 19 67 48]
-box 'grid let
+'grid let
 
-0 'best let
+-- ga: row col -> value
+'ga ('col let 'row let grid row 20 mul col plus get) def
 
-0 'r let
-(r 20 lt)
+-- check-all: best r c -> best'
+-- checks all 4 directions and returns max product seen
+'check-all (
+  'c let 'r let
+
+  c 16 lt (
+    r c ga r c 1 plus ga mul r c 2 plus ga mul r c 3 plus ga mul max
+  ) () if
+
+  r 16 lt (
+    r c ga r 1 plus c ga mul r 2 plus c ga mul r 3 plus c ga mul max
+  ) () if
+
+  r 16 lt c 16 lt and (
+    r c ga r 1 plus c 1 plus ga mul r 2 plus c 2 plus ga mul r 3 plus c 3 plus ga mul max
+  ) () if
+
+  r 16 lt c 3 ge and (
+    r c ga r 1 plus c 1 sub ga mul r 2 plus c 2 sub ga mul r 3 plus c 3 sub ga mul max
+  ) () if
+) def
+
+-- stack: best r
+0 0
+(dup 20 lt)
 (
-  0 'c let
-  (c 20 lt)
+  -- stack: best r
+  0
+  -- stack: best r c
+  (dup 20 lt)
   (
-    -- horizontal
-    c 16 lt (
-      grid ('g let
-        r 20 mul c plus g swap get
-        r 20 mul c 1 plus plus g swap get mul
-        r 20 mul c 2 plus plus g swap get mul
-        r 20 mul c 3 plus plus g swap get mul
-      ) lend swap 'grid let
-      'p let p best gt (p 'best let) () if
-    ) () if
-
-    -- vertical
-    r 16 lt (
-      grid ('g let
-        r 20 mul c plus g swap get
-        r 1 plus 20 mul c plus g swap get mul
-        r 2 plus 20 mul c plus g swap get mul
-        r 3 plus 20 mul c plus g swap get mul
-      ) lend swap 'grid let
-      'p let p best gt (p 'best let) () if
-    ) () if
-
-    -- diagonal down-right
-    r 16 lt c 16 lt and (
-      grid ('g let
-        r 20 mul c plus g swap get
-        r 1 plus 20 mul c 1 plus plus g swap get mul
-        r 2 plus 20 mul c 2 plus plus g swap get mul
-        r 3 plus 20 mul c 3 plus plus g swap get mul
-      ) lend swap 'grid let
-      'p let p best gt (p 'best let) () if
-    ) () if
-
-    -- diagonal down-left
-    r 16 lt c 3 ge and (
-      grid ('g let
-        r 20 mul c plus g swap get
-        r 1 plus 20 mul c 1 sub plus g swap get mul
-        r 2 plus 20 mul c 2 sub plus g swap get mul
-        r 3 plus 20 mul c 3 sub plus g swap get mul
-      ) lend swap 'grid let
-      'p let p best gt (p 'best let) () if
-    ) () if
-
-    c 1 plus 'c let
+    -- stack: best r c
+    over 'r let dup 'c let
+    -- save r c, run check-all on best, restore r c
+    ((r c check-all) dip) dip
+    -- stack: best' r c
+    1 plus
   )
   while
-  r 1 plus 'r let
+  -- stack: best r c=20
+  drop 1 plus
 )
 while
-
-grid free
-best print
+drop print

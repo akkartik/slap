@@ -11,20 +11,28 @@
   ) (0) if
 ) def
 
-0 'answer let
-2 'k let
-(answer 0 eq)
-(
-  k 3 k mul 1 sub mul 2 div 'pk let
-  1 'j let
-  (j k lt answer 0 eq and)
+-- inner-search: k -> 0 or diff (the pentagonal difference found)
+'inner-search (
+  'is-k let
+  is-k 3 is-k mul 1 sub mul 2 div 'is-pk let
+  -- stack: result j
+  0 1
+  (dup is-k lt (over 0 eq) (0) if)
   (
-    j 3 j mul 1 sub mul 2 div 'pj let
-    pk pj sub 'diff let
-    pk pj plus 'sum let
-    diff is-pentagonal sum is-pentagonal and (diff 'answer let) () if
-    j 1 plus 'j let
+    dup 3 over mul 1 sub mul 2 div 'is-pj let
+    is-pk is-pj sub 'is-diff let
+    is-pk is-pj plus 'is-psum let
+    is-diff is-pentagonal is-psum is-pentagonal and (
+      (drop is-diff) dip
+    ) () if
+    1 plus
   ) while
-  k 1 plus 'k let
-) while
-answer print
+  drop
+) def
+
+-- stack: k
+2
+(dup inner-search dup 0 eq)
+(drop 1 plus)
+while
+nip print

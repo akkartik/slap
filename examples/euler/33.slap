@@ -4,26 +4,29 @@
 
 'gcd recur (dup 0 eq (drop) (swap over mod gcd) if) def
 
-1 'np let
-1 'dp let
+-- inner-loop: np dp a b -> np' dp'
+'inner-loop recur (
+  'il-b let 'il-a let 'il-dp let 'il-np let
+  il-b 99 le (
+    il-a 10 mod 'a2 let
+    il-b 10 div 'b1 let
+    a2 b1 eq a2 0 neq and il-b 10 mod 0 neq and (
+      il-a il-b 10 mod mul il-b il-a 10 div mul eq (
+        il-np il-a 10 div mul il-dp il-b 10 mod mul il-a il-b 1 plus inner-loop
+      ) (il-np il-dp il-a il-b 1 plus inner-loop) if
+    ) (il-np il-dp il-a il-b 1 plus inner-loop) if
+  ) (il-np il-dp) if
+) def
 
-10 'a let
-(a 99 le)
-(
-  a 1 plus 'b let
-  (b 99 le)
-  (
-    a 10 mod 'a2 let
-    b 10 div 'b1 let
-    a2 b1 eq a2 0 neq and b 10 mod 0 neq and (
-      a b 10 mod mul b a 10 div mul eq (
-        np a 10 div mul 'np let
-        dp b 10 mod mul 'dp let
-      ) () if
-    ) () if
-    b 1 plus 'b let
-  ) while
-  a 1 plus 'a let
-) while
+-- outer-loop: np dp a -> np' dp'
+'outer-loop recur (
+  'ol-a let 'ol-dp let 'ol-np let
+  ol-a 99 le (
+    ol-np ol-dp ol-a ol-a 1 plus inner-loop
+    ol-a 1 plus outer-loop
+  ) (ol-np ol-dp) if
+) def
 
-dp np dp gcd div print
+1 1 10 outer-loop
+'final-dp let 'final-np let
+final-dp final-np final-dp gcd div print

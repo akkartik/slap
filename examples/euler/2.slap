@@ -2,17 +2,13 @@
 -- Sum of even Fibonacci numbers not exceeding 4,000,000.
 -- Answer: 4613732
 
-0 'total let
-1 'a let
-1 'b let
-
-(a 4000000 le)
+rec 0 'total into 1 'a into 1 'b into
+(dup 'a at 4000000 le)
 (
-  a iseven (total a plus 'total let) () if
-  a b plus 'next let
-  b 'a let
-  next 'b let
+  dup 'a at 'a let
+  a iseven ('total (a plus) edit) () if
+  dup 'b at 'nb let
+  'a (drop nb) edit 'b (a plus) edit
 )
 while
-
-total print
+'total at print

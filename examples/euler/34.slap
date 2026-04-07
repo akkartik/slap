@@ -2,20 +2,26 @@
 -- Sum of numbers equal to the sum of factorial of their digits
 -- Answer: 40730
 
-[1 1 2 6 24 120 720 5040 40320 362880] 'facts let
+(1 1 2 6 24 120 720 5040 40320 362880) 'facts let
 
-0 'total let
-3 'n let
-(n 2540161 lt)
+-- stack: total n
+0 3
+(dup 2540161 lt)
 (
-  n 'dn let
-  0 'dsum let
-  (dn 0 gt)
+  -- stack: total n
+  dup 0 swap
+  -- stack: total n acc dn
+  (dup 0 gt)
   (
-    facts dn 10 mod get dsum plus 'dsum let
-    dn 10 div 'dn let
+    -- stack: total n acc dn
+    dup 10 mod 'facts swap nth swap (plus) dip
+    -- stack: total n acc' dn
+    10 div
+    -- stack: total n acc' dn'
   ) while
-  dsum n eq (total n plus 'total let) () if
-  n 1 plus 'n let
+  drop
+  -- stack: total n dfs
+  over eq (dup (plus) dip) () if
+  1 plus
 ) while
-total print
+drop print

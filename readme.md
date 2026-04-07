@@ -322,9 +322,9 @@ Realistic example — a mutable counter:
 
 ```slap
 {'count 0 'total 0} box
-  (dup 'count at 1 plus 'count into) mutate
-  (dup 'count at 1 plus 'count into) mutate
-  (dup 'total at 100 plus 'total into) mutate
+  ('count (1 plus) edit) mutate
+  ('count (1 plus) edit) mutate
+  ('total (100 plus) edit) mutate
   () lend
   dup 'count at 2 eq assert
   'total at 100 eq assert

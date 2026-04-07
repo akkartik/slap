@@ -17,25 +17,36 @@
 91 71 52 38 17 14 91 43 58 50 27 29 48
 63 66 04 68 89 53 67 30 73 16 69 87 40 31
 04 62 98 27 23 09 70 98 73 93 38 53 60 04 23]
-box 'tri let
+box
 
--- DP: bottom-up. Start from second-to-last row.
--- Row r starts at index r*(r+1)/2 and has r+1 elements.
-13 'r let
-(r 0 ge)
+-- upd-tri: box left-idx right-idx cur-idx -> box
+'upd-tri (
+  'ci let 'ri let 'li let
+  ('t let t li get t ri get max t ci get plus 'v let t ci v set) mutate
+) def
+
+-- DP: bottom-up. stack: box r
+13
+(dup 0 ge)
 (
-  0 'c let
-  (c r le)
+  -- stack: box r
+  0
+  -- stack: box r c
+  (over over swap le)
   (
-    r 1 plus r 2 plus mul 2 div c plus 'left-idx let
-    left-idx 1 plus 'right-idx let
-    r r 1 plus mul 2 div c plus 'cur-idx let
-    tri ('t let t left-idx get t right-idx get max t cur-idx get plus 'v let t cur-idx v set) mutate 'tri let
-    c 1 plus 'c let
+    -- stack: box r c
+    over 'r let dup 'c let
+    r 1 plus r 2 plus mul 2 div c plus 'li let
+    li 1 plus 'ri let
+    r r 1 plus mul 2 div c plus 'ci let
+    ((li ri ci upd-tri) dip) dip
+    1 plus
   )
   while
-  r 1 sub 'r let
+  drop
+  1 sub
 )
 while
+drop
 
-tri (0 get) lend swap free print
+(0 get) lend swap free print

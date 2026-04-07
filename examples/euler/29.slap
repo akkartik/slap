@@ -7,17 +7,22 @@
 -- Solo bases (not perfect powers) each contribute 99 distinct values.
 
 'count-group (
-  'exps let
-  list
-  0 'ei let
-  (ei exps len lt)
-  (
-    exps ei get 'e let
-    2 'b let
-    (b 100 le)
-    (e b mul give b 1 plus 'b let) while
-    ei 1 plus 'ei let
-  ) while
+  'cg-exps let
+  -- stack: accumulating list
+  -- inner: generate e*b for b=2..100, giving into list on stack
+  'cg-inner recur (
+    'cg-b let 'cg-e let
+    cg-b 100 le (cg-e cg-b mul give cg-e cg-b 1 plus cg-inner) () if
+  ) def
+  -- outer: iterate over exps
+  'cg-outer recur (
+    'cg-ei let
+    cg-ei cg-exps len lt (
+      cg-exps cg-ei get 2 cg-inner
+      cg-ei 1 plus cg-outer
+    ) () if
+  ) def
+  list 0 cg-outer
   sort dedup len
 ) def
 

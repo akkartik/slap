@@ -2,23 +2,33 @@
 -- Which starting number under 1,000,000 produces the longest Collatz chain?
 -- Answer: 837799
 
--- Even n always has chain = 1 + chain(n/2), so the longest chain starts odd.
-0 'best-len let
-1 'best-start let
-1 'i let
-(i 1000000 lt)
-(
-  i 'n let
-  1 'count let
-  (n 1 neq)
-  (n iseven
-    (n 2 div 'n let count inc 'count let)
-    (n 3 mul 1 plus 2 div 'n let count 2 plus 'count let)
+-- collatz-len: n -> chain-length
+-- stack: n cnt (no dip, uses swap instead)
+'collatz-len (
+  1
+  (over 1 neq)
+  (over iseven
+    (swap 2 div swap 1 plus)
+    (swap 3 mul 1 plus 2 div swap 2 plus)
   if)
   while
-  count best-len gt (count 'best-len let i 'best-start let) () if
-  i 2 plus 'i let
+  nip
+) def
+
+-- stack: best-len best-start i
+0 1 1
+(dup 1000000 lt)
+(
+  dup collatz-len
+  -- stack: bl bs i cl
+  (rot) dip
+  -- stack: bs i bl cl
+  over over swap gt (
+    nip (nip) dip swap dup
+  ) (
+    drop rot rot
+  ) if
+  2 plus
 )
 while
-
-best-start print
+drop nip print

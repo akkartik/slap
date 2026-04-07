@@ -7,92 +7,137 @@
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (
-        1 'ip-ok let
-        3 'ip-i let
-        (ip-i ip-i mul ip-n le ip-ok and)
-        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        3 1
+        (over dup mul ip-n le over and)
+        (swap ip-n over mod 0 eq (nip 0 swap) () if 2 plus swap)
         while
-        ip-ok
+        nip
       ) if
     ) if
   ) if
 ) def
 
--- Brute force: for d2d3d4 div by 2, d3d4d5 div by 3, d4d5d6 div by 5,
--- d5d6d7 div by 7, d6d7d8 div by 11, d7d8d9 div by 13, d8d9d10 div by 17
--- Build from right: d8d9d10 multiples of 17, extend left checking divisibility
-
-0 'total let
-
--- d8d9d10: multiples of 17 from 10 to 999
-1 'mi let
-(mi 17 mul 999 le)
-(
-  mi 17 mul 'n89a let
-  n89a 10 ge (
-    n89a 100 div 'u8 let n89a 10 div 10 mod 'u9 let n89a 10 mod 'ua let
-    u8 u9 neq u8 ua neq and u9 ua neq and (
-    -- Try d7 (0-9, not in {u8,u9,ua})
-    0 'd7 let
-    (d7 9 le)
-    (
-      d7 u8 neq d7 u9 neq and d7 ua neq and (
-        d7 100 mul u8 10 mul plus u9 plus 13 mod 0 eq (
-          -- d7d8d9 div by 13. Try d6
-          0 'd6 let
-          (d6 9 le)
-          (
-            d6 d7 neq d6 u8 neq and d6 u9 neq and d6 ua neq and (
-              d6 100 mul d7 10 mul plus u8 plus 11 mod 0 eq (
-                -- d6d7d8 div by 11. Try d5
-                0 'd5 let
-                (d5 9 le)
-                (
-                  d5 d6 neq d5 d7 neq and d5 u8 neq and d5 u9 neq and d5 ua neq and (
-                    d5 100 mul d6 10 mul plus d7 plus 7 mod 0 eq (
-                      -- d5d6d7 div by 7. Try d4
-                      0 'd4 let
-                      (d4 9 le)
-                      (
-                        d4 d5 neq d4 d6 neq and d4 d7 neq and d4 u8 neq and d4 u9 neq and d4 ua neq and (
-                          d4 100 mul d5 10 mul plus d6 plus 5 mod 0 eq (
-                            -- d4d5d6 div by 5. Try d3
-                            0 'd3 let
-                            (d3 9 le)
-                            (
-                              d3 d4 neq d3 d5 neq and d3 d6 neq and d3 d7 neq and d3 u8 neq and d3 u9 neq and d3 ua neq and (
-                                d3 100 mul d4 10 mul plus d5 plus 3 mod 0 eq (
-                                  -- d3d4d5 div by 3. Try d2
-                                  0 'd2 let
-                                  (d2 9 le)
-                                  (
-                                    d2 d3 neq d2 d4 neq and d2 d5 neq and d2 d6 neq and d2 d7 neq and d2 u8 neq and d2 u9 neq and d2 ua neq and (
-                                      d2 100 mul d3 10 mul plus d4 plus 2 mod 0 eq (
-                                        -- d2d3d4 div by 2. d1 is the remaining digit
-                                        45 d2 sub d3 sub d4 sub d5 sub d6 sub d7 sub u8 sub u9 sub ua sub 'd1 let
-                                        d1 1000000000 mul d2 100000000 mul plus d3 10000000 mul plus
-                                        d4 1000000 mul plus d5 100000 mul plus d6 10000 mul plus
-                                        d7 1000 mul plus u8 100 mul plus u9 10 mul plus ua plus
-                                        total plus 'total let
-                                      ) () if
-                                    ) () if
-                                  d2 1 plus 'd2 let) while
-                                ) () if
-                              ) () if
-                            d3 1 plus 'd3 let) while
-                          ) () if
-                        ) () if
-                      d4 1 plus 'd4 let) while
-                    ) () if
-                  ) () if
-                d5 1 plus 'd5 let) while
-              ) () if
-            ) () if
-          d6 1 plus 'd6 let) while
-        ) () if
+-- For each level, take total on stack, return updated total
+-- d2 loop: total u8 u9 ua d7 d6 d5 d4 d3 -> total
+'try-d2 (
+  'td-d3 let 'td-d4 let 'td-d5 let 'td-d6 let 'td-d7 let 'td-ua let 'td-u9 let 'td-u8 let
+  -- stack: total
+  0
+  (dup 9 le)
+  (
+    'td-d2 let
+    td-d2 td-d3 neq td-d2 td-d4 neq and td-d2 td-d5 neq and td-d2 td-d6 neq and td-d2 td-d7 neq and td-d2 td-u8 neq and td-d2 td-u9 neq and td-d2 td-ua neq and (
+      td-d2 100 mul td-d3 10 mul plus td-d4 plus 2 mod 0 eq (
+        45 td-d2 sub td-d3 sub td-d4 sub td-d5 sub td-d6 sub td-d7 sub td-u8 sub td-u9 sub td-ua sub 'td-d1 let
+        td-d1 1000000000 mul td-d2 100000000 mul plus td-d3 10000000 mul plus
+        td-d4 1000000 mul plus td-d5 100000 mul plus td-d6 10000 mul plus
+        td-d7 1000 mul plus td-u8 100 mul plus td-u9 10 mul plus td-ua plus
+        plus
       ) () if
-    d7 1 plus 'd7 let) while
-  ) () if ) () if
-  mi 1 plus 'mi let
+    ) () if
+    td-d2 1 plus
+  ) while
+  drop
+) def
+
+-- d3 loop
+'try-d3 (
+  'td3-d4 let 'td3-d5 let 'td3-d6 let 'td3-d7 let 'td3-ua let 'td3-u9 let 'td3-u8 let
+  0
+  (dup 9 le)
+  (
+    'td3-d3 let
+    td3-d3 td3-d4 neq td3-d3 td3-d5 neq and td3-d3 td3-d6 neq and td3-d3 td3-d7 neq and td3-d3 td3-u8 neq and td3-d3 td3-u9 neq and td3-d3 td3-ua neq and (
+      td3-d3 100 mul td3-d4 10 mul plus td3-d5 plus 3 mod 0 eq (
+        td3-u8 td3-u9 td3-ua td3-d7 td3-d6 td3-d5 td3-d4 td3-d3 try-d2
+      ) () if
+    ) () if
+    td3-d3 1 plus
+  ) while
+  drop
+) def
+
+-- d4 loop
+'try-d4 (
+  'td4-d5 let 'td4-d6 let 'td4-d7 let 'td4-ua let 'td4-u9 let 'td4-u8 let
+  0
+  (dup 9 le)
+  (
+    'td4-d4 let
+    td4-d4 td4-d5 neq td4-d4 td4-d6 neq and td4-d4 td4-d7 neq and td4-d4 td4-u8 neq and td4-d4 td4-u9 neq and td4-d4 td4-ua neq and (
+      td4-d4 100 mul td4-d5 10 mul plus td4-d6 plus 5 mod 0 eq (
+        td4-u8 td4-u9 td4-ua td4-d7 td4-d6 td4-d5 td4-d4 try-d3
+      ) () if
+    ) () if
+    td4-d4 1 plus
+  ) while
+  drop
+) def
+
+-- d5 loop
+'try-d5 (
+  'td5-d6 let 'td5-d7 let 'td5-ua let 'td5-u9 let 'td5-u8 let
+  0
+  (dup 9 le)
+  (
+    'td5-d5 let
+    td5-d5 td5-d6 neq td5-d5 td5-d7 neq and td5-d5 td5-u8 neq and td5-d5 td5-u9 neq and td5-d5 td5-ua neq and (
+      td5-d5 100 mul td5-d6 10 mul plus td5-d7 plus 7 mod 0 eq (
+        td5-u8 td5-u9 td5-ua td5-d7 td5-d6 td5-d5 try-d4
+      ) () if
+    ) () if
+    td5-d5 1 plus
+  ) while
+  drop
+) def
+
+-- d6 loop
+'try-d6 (
+  'td6-d7 let 'td6-ua let 'td6-u9 let 'td6-u8 let
+  0
+  (dup 9 le)
+  (
+    'td6-d6 let
+    td6-d6 td6-d7 neq td6-d6 td6-u8 neq and td6-d6 td6-u9 neq and td6-d6 td6-ua neq and (
+      td6-d6 100 mul td6-d7 10 mul plus td6-u8 plus 11 mod 0 eq (
+        td6-u8 td6-u9 td6-ua td6-d7 td6-d6 try-d5
+      ) () if
+    ) () if
+    td6-d6 1 plus
+  ) while
+  drop
+) def
+
+-- d7 loop
+'try-d7 (
+  'td7-ua let 'td7-u9 let 'td7-u8 let
+  0
+  (dup 9 le)
+  (
+    'td7-d7 let
+    td7-d7 td7-u8 neq td7-d7 td7-u9 neq and td7-d7 td7-ua neq and (
+      td7-d7 100 mul td7-u8 10 mul plus td7-u9 plus 13 mod 0 eq (
+        td7-u8 td7-u9 td7-ua td7-d7 try-d6
+      ) () if
+    ) () if
+    td7-d7 1 plus
+  ) while
+  drop
+) def
+
+-- mi loop: stack total mi -> total
+-- Each iteration: compute u8 u9 ua from mi*17, then try-d7
+0 1
+(dup 17 mul 999 le)
+(
+  'mi-i let
+  mi-i 17 mul 'mi-n let
+  mi-n 10 ge (
+    mi-n 100 div 'mi-u8 let mi-n 10 div 10 mod 'mi-u9 let mi-n 10 mod 'mi-ua let
+    mi-u8 mi-u9 neq mi-u8 mi-ua neq and mi-u9 mi-ua neq and (
+      mi-u8 mi-u9 mi-ua try-d7
+    ) () if
+  ) () if
+  mi-i 1 plus
 ) while
-total print
+drop print

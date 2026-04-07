@@ -2,24 +2,26 @@
 -- Sum of the digits of 2^1000.
 -- Answer: 1366
 
--- Big number as list of digits (LSB first).
--- double-digits: digits → digits' (on stack, no let for result)
+-- double-digits: digits -> digits' (doubles the big number)
 'double-digits (
   'ds let
-  0 'carry let
-  0 'j let
-  list
-  (j ds len lt)
+  rec 0 'carry into list 'result into 0 'j into
+  (dup 'j at ds len lt)
   (
-    ds j get 2 mul carry plus 'val let
-    val 10 mod give
-    val 10 div 'carry let
-    j 1 plus 'j let
+    dup 'j at ds swap get 2 mul over 'carry at plus 'val let
+    'result (val 10 mod give) edit
+    'carry (drop val 10 div) edit
+    'j (1 plus) edit
   )
   while
-  (carry 0 gt)
-  (carry 10 mod give carry 10 div 'carry let)
+  (dup 'carry at 0 gt)
+  (
+    dup 'carry at 'c let
+    'result (c 10 mod give) edit
+    'carry (10 div) edit
+  )
   while
+  'result at
 ) def
 
 [1] box

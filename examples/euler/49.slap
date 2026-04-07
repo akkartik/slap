@@ -7,64 +7,79 @@
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (
-        1 'ip-ok let
-        3 'ip-i let
-        (ip-i ip-i mul ip-n le ip-ok and)
-        (ip-n ip-i mod 0 eq (0 'ip-ok let) () if ip-i 2 plus 'ip-i let)
+        3 1
+        (over dup mul ip-n le over and)
+        (swap ip-n over mod 0 eq (nip 0 swap) () if 2 plus swap)
         while
-        ip-ok
+        nip
       ) if
     ) if
   ) if
 ) def
 
 'digit-sig (
-  'ds-n let
-  ds-n 1000 div 'ds-a let
-  ds-n 100 div 10 mod 'ds-b let
-  ds-n 10 div 10 mod 'ds-c let
-  ds-n 10 mod 'ds-d let
-  ds-a ds-b gt (ds-b 'ds-tmp let ds-a 'ds-b let ds-tmp 'ds-a let) () if
-  ds-c ds-d gt (ds-d 'ds-tmp let ds-c 'ds-d let ds-tmp 'ds-c let) () if
-  ds-a ds-c gt (ds-c 'ds-tmp let ds-a 'ds-c let ds-tmp 'ds-a let) () if
-  ds-b ds-d gt (ds-d 'ds-tmp let ds-b 'ds-d let ds-tmp 'ds-b let) () if
-  ds-b ds-c gt (ds-c 'ds-tmp let ds-b 'ds-c let ds-tmp 'ds-b let) () if
-  ds-a 1000 mul ds-b 100 mul plus ds-c 10 mul plus ds-d plus
+  'dsn let
+  dsn 1000 div 'ds-a let
+  dsn 100 div 10 mod 'ds-b let
+  dsn 10 div 10 mod 'ds-c let
+  dsn 10 mod 'ds-d let
+  -- sort 4 values with unique names per comparison
+  ds-a ds-b gt (ds-b ds-a) (ds-a ds-b) if 'srt-b1 let 'srt-a1 let
+  ds-c ds-d gt (ds-d ds-c) (ds-c ds-d) if 'srt-d1 let 'srt-c1 let
+  srt-a1 srt-c1 gt (srt-c1 srt-a1) (srt-a1 srt-c1) if 'srt-c2 let 'srt-a2 let
+  srt-b1 srt-d1 gt (srt-d1 srt-b1) (srt-b1 srt-d1) if 'srt-d2 let 'srt-b2 let
+  srt-b2 srt-c2 gt (srt-c2 srt-b2) (srt-b2 srt-c2) if 'srt-c3 let 'srt-b3 let
+  srt-a2 1000 mul srt-b3 100 mul plus srt-c3 10 mul plus srt-d2 plus
 ) def
 
--- Build encoded list on stack (sig*10000+prime), sort
+-- Build encoded list: sig*10000+prime for all 4-digit odd primes
 list
-1001 'en let
-(en 9999 le)
-(en is-prime (en digit-sig 10000 mul en plus give) () if en 2 plus 'en let)
+1001
+(dup 9999 le)
+(dup is-prime (swap over dup digit-sig 10000 mul swap plus give swap) () if 2 plus)
 while
+drop
 sort 'encoded let
 encoded len 'elen let
 
--- Scan for arithmetic sequences of 3 with same digit signature
-0 'answer let
-0 'ei let
-(ei elen lt answer 0 eq and)
-(
-  'encoded ei nth 'ev let
-  ev 10000 div 'esig let
-  ev 10000 mod 'ep1 let
-  ei 1 plus 'ej let
-  (ej elen lt answer 0 eq and)
+-- Search for arithmetic sequences of 3 with same digit signature
+'check-triple (
+  'ct-esig let 'ct-ep1 let 'ct-ev2 let
+  ct-ev2 10000 div ct-esig eq (
+    ct-ev2 10000 mod 'ct-ep2 let
+    ct-ep2 ct-ep1 sub 'ct-ediff let
+    ct-ep2 ct-ediff plus 'ct-ep3 let
+    ct-ep3 9999 le ct-ep3 is-prime and (ct-ep3 digit-sig ct-esig eq) (0) if (
+      ct-ep1 1487 neq (
+        ct-ep1 100000000 mul ct-ep2 10000 mul plus ct-ep3 plus
+      ) (0) if
+    ) (0) if
+  ) (0) if
+) def
+
+'search-inner (
+  'si-esig let 'si-ep1 let 'si-start let
+  -- stack: result j
+  0 si-start
+  (dup elen lt (over 0 eq) (0) if)
   (
-    'encoded ej nth 'ev2 let
-    ev2 10000 div esig eq (
-      ev2 10000 mod 'ep2 let
-      ep2 ep1 sub 'ediff let
-      ep2 ediff plus 'ep3 let
-      ep3 9999 le ep3 is-prime and (ep3 digit-sig esig eq) (0) if (
-        ep1 1487 neq (
-          ep1 100000000 mul ep2 10000 mul plus ep3 plus 'answer let
-        ) () if
-      ) () if
-    ) () if
-    ej 1 plus 'ej let
+    'si-j let
+    'encoded si-j nth si-ep1 si-esig check-triple
+    dup 0 gt (nip) (drop) if
+    si-j 1 plus
   ) while
-  ei 1 plus 'ei let
+  drop
+) def
+
+0 0
+(dup elen lt (over 0 eq) (0) if)
+(
+  'ei-i let
+  'encoded ei-i nth 'ei-ev let
+  ei-ev 10000 div 'ei-esig let
+  ei-ev 10000 mod 'ei-ep1 let
+  ei-i 1 plus ei-ep1 ei-esig search-inner
+  dup 0 gt (nip) (drop) if
+  ei-i 1 plus
 ) while
-answer print
+drop print

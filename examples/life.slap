@@ -6,9 +6,10 @@
 W H mul 'N let
 4 'S let
 
-0 'drawing let
--1 'mx let
--1 'my let
+-- State packed into grid list: indices 0..N-1 = cells, N = drawing, N+1 = mx, N+2 = my
+N 'I-DRAW let
+N 1 plus 'I-MX let
+N 2 plus 'I-MY let
 
 -- Look up cell at wrapped (x, y) via nth (no grid copy)
 'cell (
@@ -33,19 +34,24 @@ W H mul 'N let
 -- Compute next generation
 'step (
   'g let
-  list
-  0 'i let
-  (i N lt) (
-    i W divmod 'y let 'x let
+  'g I-DRAW nth 'dv let
+  'g I-MX nth 'mxv let
+  'g I-MY nth 'myv let
+  list 0
+  (dup N lt)
+  (
+    dup W divmod 'y let 'x let
     'g x y neighbors 'n let
-    'g i nth 1 eq
+    'g over nth 1 eq
       (n 2 eq n 3 eq or)
       (n 3 eq)
     if
     (1) (0) if
-    give
-    i 1 plus 'i let
-  ) while
+    swap (give) dip 1 plus
+  )
+  while
+  drop
+  dv give mxv give myv give
 ) def
 
 -- Draw SxS block for one alive cell
@@ -63,53 +69,51 @@ W H mul 'N let
   px py S S cc fill-rect
 ) def
 
--- Set cell alive at pixel coords; grid is on stack
-'paint-cell (
-  S div 'cy let
-  S div 'cx let
-  cy W mul cx plus 1 set
-) def
-
--- Random initial grid
+-- Random initial grid + state slots
 list N (2 random give) repeat
+0 give -1 give -1 give
 
 -- Mouse handlers
 'mousedown (
-  S div 'my let S div 'mx let
-  1 'drawing let
-  my W mul mx plus 1 set
+  S div 'mdy let S div 'mdx let
+  I-DRAW 1 set I-MX mdx set I-MY mdy set
+  mdy W mul mdx plus 1 set
 ) on
 
 'mouseup (
   drop drop
-  0 'drawing let
+  I-DRAW 0 set
 ) on
 
 'mousemove (
-  S div 'my let S div 'mx let
-  drawing 1 eq (
-    my W mul mx plus 1 set
+  S div 'mmy let S div 'mmx let
+  I-MX mmx set I-MY mmy set
+  dup I-DRAW get 1 eq (
+    mmy W mul mmx plus 1 set
   ) () if
 ) on
 
 -- Step on each tick (skip when drawing)
 'tick (
   drop
-  drawing 0 eq (step) () if
+  dup I-DRAW get 0 eq (step) () if
 ) on
 
 -- Render
 (
-  'g let
+  'sg let
   0 clear
-  0 'i let
-  (i N lt) (
-    'g i nth 1 eq (
-      i W divmod draw-cell
+  'sg I-DRAW nth 'sdv let
+  'sg I-MX nth 'smxv let
+  'sg I-MY nth 'smyv let
+  0 (dup N lt) (
+    dup 'ri let
+    'sg ri nth 1 eq (
+      ri W divmod draw-cell
     ) () if
-    i 1 plus 'i let
-  ) while
-  drawing 1 eq mx 0 ge and (
-    mx my 2 draw-cell-color
+    1 plus
+  ) while drop
+  sdv 1 eq smxv 0 ge and (
+    smxv smyv 2 draw-cell-color
   ) () if
 ) show

@@ -6,22 +6,27 @@ list 201 (0 give) repeat 0 1 set box 'ways let
 
 [1 2 5 10 20 50 100 200] 'coins let
 
-0 'ci let
-(ci 8 lt)
-(
-  coins ci get 'coin let
-  ways (
-    'w let
-    coin 'j let
-    (j 200 le)
-    (
-      w j get w j coin sub get plus 'v let
-      w j v set 'w let
-      j 1 plus 'j let
-    ) while
-    w
-  ) mutate 'ways let
-  ci 1 plus 'ci let
-) while
+-- uw-step: coin w j -> w' j'
+'uw-step (
+  'uw-j let 'uw-w let 'uw-coin let
+  uw-w uw-j get uw-w uw-j uw-coin sub get plus 'uw-v let
+  uw-w uw-j uw-v set uw-j 1 plus
+) def
+
+-- update-ways: w coin -> w'
+'update-ways (
+  'uwc let
+  uwc
+  -- stack: w j
+  (dup 200 le)
+  (swap uwc swap rot uw-step)
+  while
+  drop
+) def
+
+coins (
+  'coin let
+  ways (coin update-ways) mutate
+) each
 
 ways (200 get) lend swap free print

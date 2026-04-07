@@ -2,28 +2,33 @@
 -- Sum of the digits of 100!
 -- Answer: 648
 
--- mul-digits: digits n → digits' (keeps result on stack)
+-- mul-digits: digits n -> digits' (multiplies big number by n)
 'mul-digits (
   'n let 'ds let
-  0 'carry let
-  0 'j let
-  list
-  (j ds len lt)
+  rec 0 'carry into list 'result into 0 'j into
+  (dup 'j at ds len lt)
   (
-    ds j get n mul carry plus 'v let
-    v 10 mod give
-    v 10 div 'carry let
-    j 1 plus 'j let
+    dup 'j at ds swap get n mul over 'carry at plus 'val let
+    'result (val 10 mod give) edit
+    'carry (drop val 10 div) edit
+    'j (1 plus) edit
   )
   while
-  (carry 0 gt)
-  (carry 10 mod give carry 10 div 'carry let)
+  (dup 'carry at 0 gt)
+  (
+    dup 'carry at 'c let
+    'result (c 10 mod give) edit
+    'carry (10 div) edit
+  )
   while
+  'result at
 ) def
 
-[1] box
-2 'n let
-(n 100 le)
-((n mul-digits) mutate n 1 plus 'n let)
+'mul-box ('nn let (nn mul-digits) mutate) def
+
+[1] box 2
+(dup 100 le)
+(dup (mul-box) dip 1 plus)
 while
+drop
 () lend sum swap free print

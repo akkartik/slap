@@ -2,21 +2,30 @@
 -- Answer: 137846528820
 -- C(40,20) using DP on a 21-element row
 
-list 21 (0 give) repeat 0 1 set box 'row let
+-- upd-row: box j -> box (update row[j] = row[j] + row[j-1])
+'upd-row ('j let ('r let r j get r j 1 sub get plus 'v let r j v set) mutate) def
 
-1 'i let
-(i 40 le)
+-- stack: box i
+list 21 (0 give) repeat 0 1 set box 1
+(dup 40 le)
 (
-  i 'j let
-  (j 0 gt)
+  -- stack: box i
+  -- inner loop: box j (j goes from i down to 1, only updating j<=20)
+  dup
+  -- stack: box i j
+  (dup 0 gt)
   (
-    j 20 le (
-      row ('r let r j get r j 1 sub get plus 'v let r j v set) mutate 'row let
+    -- stack: box i j
+    dup 20 le (
+      dup (swap (upd-row) dip swap) dip rot swap
     ) () if
-    j 1 sub 'j let
+    1 sub
   )
   while
-  i 1 plus 'i let
+  drop
+  -- stack: box i
+  1 plus
 )
 while
-row (20 get) lend swap free print
+drop
+(20 get) lend swap free print

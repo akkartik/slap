@@ -18,34 +18,41 @@
 'draw-char (
   'dc let 'gy let 'gx let 'ch let 'n let 'raw let
   ch n n mul 8 mul mul 256 plus 'base let
-  0 'ti let
-  (ti n n mul lt) (
+  0
+  (dup n n mul lt) (
+    dup 'ti let
     ti n div 8 mul gx plus 'tx let
     ti n mod 8 mul gy plus 'ty let
-    0 'row let
-    (row 8 lt) (
+    0
+    (dup 8 lt) (
+      dup 'row let
       raw base ti 8 mul plus row plus get
       tx ty row plus dc draw-byte
-      row 1 plus 'row let
+      1 plus
     ) while
-    ti 1 plus 'ti let
+    drop
+    1 plus
   ) while
+  drop
 ) def
 
 -- Draw a string (no wrapping)
 'draw-text (
   'dc let 'sy let 'sx let 'str let 'n let 'raw let
-  sx 'cx let
-  0 'si let
-  (si str len lt) (
+  sx 0
+  (dup str len lt) (
+    dup 'si let
+    swap 'cx-cur let
     str si get 'ch let
     raw ch get 'w let
     w 0 gt (
-      raw n ch cx sy dc draw-char
-      cx w plus 1 plus 'cx let
-    ) () if
-    si 1 plus 'si let
+      raw n ch cx-cur sy dc draw-char
+      cx-cur w plus 1 plus
+    ) (cx-cur) if
+    swap
+    1 plus
   ) while
+  drop drop
 ) def
 
 -- Fonts
@@ -61,47 +68,57 @@ BAR-H 4 plus 'PAD-Y let
 16 'PAD-X let
 640 PAD-X 2 mul sub 'TW let
 
--- State: gap buffer
-list 'before let
-list 'after let
+-- State: gap buffer as record on stack
+rec list 'before into list 'after into
 
 -- File I/O
 args 'argv let
+argv len 0 gt (argv 0 get) ("") if 'fpath let
 argv len 0 gt (
-  argv 0 get 'fpath let
   fpath read 'fbytes let
-  0 'fi let
-  (fi fbytes len lt) (
-    before fbytes fi get give 'before let
-    fi 1 plus 'fi let
-  ) while
+  'before (
+    0
+    (dup fbytes len lt) (
+      dup 'fi let
+      ('fbytes fi nth give) dip
+      1 plus
+    ) while
+    drop
+  ) edit
 ) () if
 
 'do-save (
   argv len 0 gt (
-    list 'bytes let
-    0 'wi let
-    (wi before len lt) (
-      bytes before wi get give 'bytes let
-      wi 1 plus 'wi let
+    dup 'before at 'sav-bef let
+    dup 'after at 'sav-aft let
+    list 0
+    (dup sav-bef len lt) (
+      dup 'wi let
+      ('sav-bef wi nth give) dip
+      1 plus
     ) while
-    after len 1 sub 'wi let
-    (wi 0 ge) (
-      bytes after wi get give 'bytes let
-      wi 1 sub 'wi let
+    drop
+    sav-aft len 1 sub
+    (dup 0 ge) (
+      dup 'wj let
+      ('sav-aft wj nth give) dip
+      1 sub
     ) while
-    fpath bytes write
+    drop
+    fpath swap write
   ) () if
 ) def
 
 -- Chrome
 'draw-titlebar (
   0 0 640 BAR-H 1 fill-rect
-  2 'by let
-  (by BAR-H 2 sub lt) (
+  2
+  (dup BAR-H 2 sub lt) (
+    dup 'by let
     by 2 mod 0 eq (0 by 640 1 2 fill-rect) () if
-    by 1 plus 'by let
+    1 plus
   ) while
+  drop
   -- Close box
   4 4 12 12 3 fill-rect
   4 4 12 1 0 fill-rect
@@ -116,69 +133,79 @@ argv len 0 gt (
 ) def
 
 'draw-torn (
-  0 'tx let
-  (tx 640 lt) (
+  0
+  (dup 640 lt) (
+    dup 'tx let
     tx 4 div 2 mod 0 eq
     (tx BAR-H 2 pixel  tx BAR-H 1 plus 2 pixel)
     (tx BAR-H 3 pixel  tx BAR-H 1 plus 3 pixel) if
-    tx 1 plus 'tx let
+    1 plus
   ) while
+  drop
   0 BAR-H 2 plus 640 1 1 fill-rect
 ) def
 
 'draw-rules (
-  PAD-Y LH plus 'ry let
-  (ry 480 lt) (
+  PAD-Y LH plus
+  (dup 480 lt) (
+    dup 'ry let
     0 ry 640 1 2 fill-rect
-    ry LH plus 'ry let
+    LH plus
   ) while
+  drop
 ) def
 
 -- Render gap buffer text
 'render-text (
-  PAD-X 'rcx let
-  PAD-Y 2 plus 'rcy let
+  'aft let 'bef let
 
-  -- Before cursor
-  0 'ri let
-  (ri before len lt) (
-    before ri get 'rch let
+  -- Before cursor: stack carries rcx, rcy, ri
+  PAD-X PAD-Y 2 plus 0
+  (dup bef len lt) (
+    dup 'ri let
+    rot 'rcx-cur let swap 'rcy-cur let
+    'bef ri nth 'rch let
     rch 10 eq (
-      PAD-X 'rcx let  rcy LH plus 'rcy let
+      PAD-X rcy-cur LH plus
     ) (
-      rcy 480 lt (
-        body-font FN rch rcx rcy 0 draw-char
-        rcx body-font rch get plus 1 plus 'rcx let
-        rcx PAD-X TW plus gt (
-          PAD-X 'rcx let  rcy LH plus 'rcy let
-        ) () if
-      ) () if
+      rcy-cur 480 lt (
+        body-font FN rch rcx-cur rcy-cur 0 draw-char
+        rcx-cur body-font rch get plus 1 plus 'rcx-new let
+        rcx-new PAD-X TW plus gt
+          (PAD-X rcy-cur LH plus) (rcx-new rcy-cur) if
+      ) (rcx-cur rcy-cur) if
     ) if
-    ri 1 plus 'ri let
+    rot 1 plus
   ) while
+  drop
+  -- stack: rcx, rcy
 
   -- Cursor
+  over over
   millis 500 div 2 mod 1 eq (
-    rcx rcy 1 FH 0 fill-rect
-  ) () if
+    1 FH 0 fill-rect
+  ) (drop drop) if
 
-  -- After cursor (reversed)
-  after len 1 sub 'ra let
-  (ra 0 ge) (
-    after ra get 'rch let
+  -- After cursor (reversed): stack carries rcx, rcy, ra
+  aft len 1 sub
+  (dup 0 ge) (
+    dup 'ra let
+    rot 'rcx-cur let swap 'rcy-cur let
+    'aft ra nth 'rch let
     rch 10 eq (
-      PAD-X 'rcx let  rcy LH plus 'rcy let
+      PAD-X rcy-cur LH plus
     ) (
-      rcy 480 lt (
-        body-font FN rch rcx rcy 0 draw-char
-        rcx body-font rch get plus 1 plus 'rcx let
-        rcx PAD-X TW plus gt (
-          PAD-X 'rcx let  rcy LH plus 'rcy let
-        ) () if
-      ) () if
+      rcy-cur 480 lt (
+        body-font FN rch rcx-cur rcy-cur 0 draw-char
+        rcx-cur body-font rch get plus 1 plus 'rcx-new let
+        rcx-new PAD-X TW plus gt
+          (PAD-X rcy-cur LH plus) (rcx-new rcy-cur) if
+      ) (rcx-cur rcy-cur) if
     ) if
-    ra 1 sub 'ra let
+    rot 1 sub
   ) while
+  drop
+  drop drop
 ) def
 
 -- Click to move cursor
@@ -186,90 +213,118 @@ argv len 0 gt (
   'my let 'mx let
   my PAD-Y ge (
     -- Build full text: before + reversed after
-    list 'full let
-    0 'fi let
-    (fi before len lt) (
-      full before fi get give 'full let
-      fi 1 plus 'fi let
+    dup 'before at 'mbef let
+    dup 'after at 'maft let
+    list 0
+    (dup mbef len lt) (
+      dup 'mfi let
+      ('mbef mfi nth give) dip
+      1 plus
     ) while
-    after len 1 sub 'fi let
-    (fi 0 ge) (
-      full after fi get give 'full let
-      fi 1 sub 'fi let
+    drop
+    maft len 1 sub
+    (dup 0 ge) (
+      dup 'mfj let
+      ('maft mfj nth give) dip
+      1 sub
     ) while
+    drop
+    'full let
     -- Walk text computing positions, find closest index
-    PAD-X 'hx let  PAD-Y 2 plus 'hy let
-    0 'hi let  0 'best let  1000000 'best-d let
-    (hi full len lt) (
-      full hi get 'hch let
-      -- Distance from click to this char position
-      mx hx sub dup mul my hy sub dup mul plus 'hd let
-      hd best-d lt (hi 'best let  hd 'best-d let) () if
+    -- Walk state record: hx, hy, best, bestd
+    rec PAD-X 'hx into PAD-Y 2 plus 'hy into 0 'best into 1000000 'bestd into
+    0
+    (dup full len lt) (
+      dup 'hi let
+      swap 'ws let
+      'full hi nth 'hch let
+      mx ws 'hx at sub dup mul my ws 'hy at sub dup mul plus 'hd let
+      hd ws 'bestd at lt
+        (ws hi 'best into hd 'bestd into)
+        (ws)
+      if
       hch 10 eq (
-        PAD-X 'hx let  hy LH plus 'hy let
+        PAD-X 'hx into 'hy (LH plus) edit
       ) (
         body-font hch get 'hw let
         hw 0 gt (
-          hx hw plus 1 plus 'hx let
-          hx PAD-X TW plus gt (
-            PAD-X 'hx let  hy LH plus 'hy let
+          'hx (hw plus 1 plus) edit
+          dup 'hx at PAD-X TW plus gt (
+            PAD-X 'hx into 'hy (LH plus) edit
           ) () if
         ) () if
       ) if
-      hi 1 plus 'hi let
+      swap
+      1 plus
     ) while
-    -- Also check end-of-text position
-    mx hx sub dup mul my hy sub dup mul plus 'hd let
-    hd best-d lt (full len 'best let) () if
-    -- Rebuild gap buffer at best
-    list 'before let  list 'after let
-    0 'fi let
-    (fi best lt) (
-      before full fi get give 'before let
-      fi 1 plus 'fi let
+    drop
+    -- Check end-of-text position
+    'ws-end let
+    mx ws-end 'hx at sub dup mul my ws-end 'hy at sub dup mul plus 'end-d let
+    end-d ws-end 'bestd at lt
+      (full len) (ws-end 'best at) if
+    'best-pos let
+    -- Rebuild gap buffer at best-pos
+    list 0
+    (dup best-pos lt) (
+      dup 'rbi let
+      ('full rbi nth give) dip
+      1 plus
     ) while
-    full len 1 sub 'fi let
-    (fi best ge) (
-      after full fi get give 'after let
-      fi 1 sub 'fi let
+    drop
+    'before into
+    list full len 1 sub
+    (dup best-pos ge) (
+      dup 'raj let
+      ('full raj nth give) dip
+      1 sub
     ) while
+    drop
+    'after into
   ) () if
 ) on
 
 -- Input
 'keydown (
-  dup 8 eq (
-    drop
-    before len 0 gt (before grab drop 'before let do-save) () if
+  'key let
+  key 8 eq (
+    dup 'before at len 0 gt (
+      dup 'before at grab drop 'before into do-save
+    ) () if
   ) (
-  dup 13 eq (
-    drop before 10 give 'before let do-save
+  key 13 eq (
+    'before (10 give) edit do-save
   ) (
-  dup 127 eq (
-    drop
-    after len 0 gt (after grab drop 'after let do-save) () if
+  key 127 eq (
+    dup 'after at len 0 gt (
+      dup 'after at grab drop 'after into do-save
+    ) () if
   ) (
-  dup 1073741904 eq (
-    drop
-    before len 0 gt (before grab 'mc let after mc give 'after let) () if
+  key 1073741904 eq (
+    dup 'before at len 0 gt (
+      dup 'before at grab 'mc let 'before into
+      'after (mc give) edit
+    ) () if
   ) (
-  dup 1073741903 eq (
-    drop
-    after len 0 gt (after grab 'mc let before mc give 'before let) () if
+  key 1073741903 eq (
+    dup 'after at len 0 gt (
+      dup 'after at grab 'mc let 'after into
+      'before (mc give) edit
+    ) () if
   ) (
-    'k let
-    k 32 ge k 127 lt and (
-      before k give 'before let do-save
+    key 32 ge key 127 lt and (
+      'before (key give) edit do-save
     ) () if
   ) if) if) if) if) if
 ) on
 
-0
 (
   drop
+  dup 'before at 'show-bef let
+  dup 'after at 'show-aft let
   3 clear
   draw-titlebar
   draw-torn
   draw-rules
-  render-text
+  show-bef show-aft render-text
 ) show

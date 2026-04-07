@@ -2,171 +2,182 @@
 -- Run with: ./slap-sdl < examples/fish.slap
 
 12 'N let
--1 'mx let  -1 'my let
+8 'NR let
 
-list N (560 random 40 plus give) repeat 'xs let
-list N (400 random 40 plus give) repeat 'ys let
-list N (25 random 12 sub give) repeat 'vxs let
-list N (25 random 12 sub give) repeat 'vys let
 list N (3 random 2 plus give) repeat 'szs let
 list N (5 random 2 sub give) repeat 'bxs let
 list N (5 random 2 sub give) repeat 'bys let
 
--- Ripple ring buffer
-8 'NR let
-list NR (0 give) repeat 'rxs let
-list NR (0 give) repeat 'rys let
-list NR (-1 give) repeat 'rages let
-0 'rnext let
+-- State record on stack
+rec
+  list N (560 random 40 plus give) repeat 'xs into
+  list N (400 random 40 plus give) repeat 'ys into
+  list N (25 random 12 sub give) repeat 'vxs into
+  list N (25 random 12 sub give) repeat 'vys into
+  list NR (0 give) repeat 'rxs into
+  list NR (0 give) repeat 'rys into
+  list NR (-1 give) repeat 'rages into
+  0 'rnext into
+  -1 'mx into  -1 'my into  0 'frame into
 
-0
-
-'mousemove ('my let 'mx let) on
+'mousemove (
+  'mmy let 'mmx let
+  'mx (drop mmx) edit 'my (drop mmy) edit
+) on
 
 'tick (
-  drop 1 plus
-  dup 'frame let
+  drop
+  'frame (1 plus) edit
+  dup 'frame at 'frame let
 
   -- Age ripples
-  0 'ri let
-  (ri NR lt) (
-    rages ri get -1 neq (
-      rages ri rages ri get 1 plus set 'rages let
-    ) () if
-    ri 1 plus 'ri let
-  ) while
+  'rages (
+    0 (dup NR lt) (
+      'ri let
+      dup ri get -1 neq (ri over ri get 1 plus set) () if
+      ri 1 plus
+    ) while drop
+  ) edit
 
   -- Spawn ripple from mouse
-  frame 12 mod 0 eq mx -1 neq and (
-    rxs rnext mx set 'rxs let
-    rys rnext my set 'rys let
-    rages rnext 0 set 'rages let
-    rnext 1 plus NR mod 'rnext let
+  dup 'mx at 'mxv let
+  frame 12 mod 0 eq mxv -1 neq and (
+    dup 'my at 'myv let
+    dup 'rnext at 'rn let
+    'rxs (rn mxv set) edit
+    'rys (rn myv set) edit
+    'rages (rn 0 set) edit
+    'rnext (drop rn 1 plus NR mod) edit
   ) () if
 
-  0 'i let
-  (i N lt) (
-    xs i get 'x let  ys i get 'y let
-    vxs i get 'vx let  vys i get 'vy let
+  -- Update fish
+  0 (dup N lt) (
+    'i let
+    dup 'xs at i get 'x let  dup 'ys at i get 'y let
+    dup 'mx at 'fmx let  dup 'my at 'fmy let
+    dup 'xs at 'xsv let  dup 'ys at 'ysv let
 
-    -- Koi turning: gentle perpendicular nudge for curved paths
+    dup 'vxs at i get 'vx0 let  dup 'vys at i get 'vy0 let
+
+    -- Koi turning
     frame i 7 mul plus 3 mod 1 sub 'turn let
-    vx 'ovx let
-    vx vy neg turn mul 8 div plus 'vx let
-    vy ovx turn mul 8 div plus 'vy let
+    vx0 vy0 neg turn mul 8 div plus 'vx1 let
+    vy0 vx0 turn mul 8 div plus 'vy1 let
 
-    -- Idle bias: gentle pull in preferred direction
-    vx bxs i get plus 'vx let
-    vy bys i get plus 'vy let
+    -- Idle bias
+    vx1 bxs i get plus 'vx2 let
+    vy1 bys i get plus 'vy2 let
 
     -- Flee from mouse
-    x mx sub 'dx let  y my sub 'dy let
+    x fmx sub 'dx let  y fmy sub 'dy let
     dx abs dy abs plus 'dist let
-    dist 80 lt mx -1 neq and dist 0 gt and (
-      vx dx sign 20 mul plus 'vx let
-      vy dy sign 20 mul plus 'vy let
-    ) () if
+    dist 80 lt fmx -1 neq and dist 0 gt and (
+      vx2 dx sign 20 mul plus
+      vy2 dy sign 20 mul plus
+    ) (vx2 vy2) if
+    'vy3 let 'vx3 let
 
-    -- Avoid other fish
-    0 'j let
-    (j N lt) (
-      j i neq (
-        x xs j get sub 'fdx let
-        y ys j get sub 'fdy let
+    -- Avoid other fish: stack is (state vx vy j)
+    vx3 vy3 0
+    (dup N lt) (
+      'aj let
+      aj i neq (
+        x xsv aj get sub 'fdx let
+        y ysv aj get sub 'fdy let
         fdx abs fdy abs plus 'fdist let
         fdist 30 lt fdist 0 gt and (
-          vx fdx sign 6 mul plus 'vx let
-          vy fdy sign 6 mul plus 'vy let
+          (fdx sign 6 mul plus) dip
+          fdy sign 6 mul plus
         ) () if
       ) () if
-      j 1 plus 'j let
-    ) while
+      aj 1 plus
+    ) while drop
+    'vy4 let 'vx4 let
 
     -- Maintain minimum swimming speed
-    vx abs vy abs plus 'spd let
+    vx4 abs vy4 abs plus 'spd let
     spd 4 lt (
-      vx 7 random 3 sub plus 'vx let
-      vy 7 random 3 sub plus 'vy let
-    ) () if
+      vx4 7 random 3 sub plus
+      vy4 7 random 3 sub plus
+    ) (vx4 vy4) if
+    'vy5 let 'vx5 let
 
-    -- Light damping
-    vx 63 mul 64 div 'vx let
-    vy 63 mul 64 div 'vy let
+    -- Light damping, clamp
+    vx5 63 mul 64 div -24 24 clamp 'fvx let
+    vy5 63 mul 64 div -24 24 clamp 'fvy let
+    x fvx 8 div plus 640 wrap 'xf let
+    y fvy 8 div plus 480 wrap 'yf let
 
-    -- Clamp
-    vx -24 24 clamp 'vx let
-    vy -24 24 clamp 'vy let
-
-    -- Update position (velocity / 8)
-    x vx 8 div plus 640 wrap 'x let
-    y vy 8 div plus 480 wrap 'y let
-
-    xs i x set 'xs let  ys i y set 'ys let
-    vxs i vx set 'vxs let  vys i vy set 'vys let
-    i 1 plus 'i let
-  ) while
+    'xs (i xf set) edit  'ys (i yf set) edit
+    'vxs (i fvx set) edit  'vys (i fvy set) edit
+    i 1 plus
+  ) while drop
 ) on
 
 (
-  'frame let
+  drop
+  dup 'frame at 'frame let
+
   0 clear
 
   -- Water shimmer
-  0 'wy let
-  (wy 480 lt) (
-    0 'wx let
-    (wx 640 lt) (
-      wx frame plus wy 3 div plus 8 mod 3 lt (
-        wx wy 1 pixel
+  0 (dup 480 lt) (
+    'wy let
+    0 (dup 640 lt) (
+      dup frame plus wy 3 div plus 8 mod 3 lt (
+        dup wy 1 pixel
       ) () if
-      wx 2 plus 'wx let
-    ) while
-    wy 6 plus 'wy let
-  ) while
+      2 plus
+    ) while drop
+    wy 6 plus
+  ) while drop
 
-  -- Ripples: expanding diamond outlines
-  0 'ri let
-  (ri NR lt) (
-    rages ri get 'ra let
+  -- Ripples
+  dup 'rages at 'ragesv let
+  dup 'rxs at 'rxsv let
+  dup 'rys at 'rysv let
+  0 (dup NR lt) (
+    dup ragesv swap get 'ra let
     ra -1 neq ra 35 lt and (
-      rxs ri get 'rx let  rys ri get 'ry let
+      dup rxsv swap get 'rx let
+      dup rysv swap get 'ry let
       ra 2 mul 1 plus 'rr let
       ra 15 lt (2) (1) if 'rc let
-      rr neg 'cd let
-      (cd rr 1 plus lt) (
-        rr cd abs sub 'rdy let
-        rx cd plus ry rdy plus rc pixel
+      rr neg (dup rr 1 plus lt) (
+        rr over abs sub 'rdy let
+        rx over plus ry rdy plus rc pixel
         rdy 0 neq (
-          rx cd plus ry rdy sub rc pixel
+          rx over plus ry rdy sub rc pixel
         ) () if
-        cd 1 plus 'cd let
-      ) while
+        1 plus
+      ) while drop
     ) () if
-    ri 1 plus 'ri let
-  ) while
+    1 plus
+  ) while drop
 
   -- Fish
-  0 'i let
-  (i N lt) (
-    xs i get 'fx let  ys i get 'fy let
-    vxs i get 'fvx let  vys i get 'fvy let
+  dup 'xs at 'xsv let  dup 'ys at 'ysv let
+  dup 'vxs at 'vxsv let
+  0 (dup N lt) (
+    'i let
+    xsv i get 'fx let  ysv i get 'fy let
+    vxsv i get 'fvx let
     szs i get 'sz let
 
-    -- Body: diamond shape scaled by sz
-    sz neg 'dy let
-    (dy sz 1 plus lt) (
+    -- Body: diamond
+    sz neg (dup sz 1 plus lt) (
+      'dy let
       sz dy abs sub 'hw let
       hw 0 gt (
-        hw neg 'dx let
-        (dx hw 1 plus lt) (
-          fx dx plus fy dy plus 3 pixel
-          dx 1 plus 'dx let
-        ) while
+        hw neg (dup hw 1 plus lt) (
+          fx over plus fy dy plus 3 pixel
+          1 plus
+        ) while drop
       ) () if
-      dy 1 plus 'dy let
-    ) while
+      dy 1 plus
+    ) while drop
 
-    -- Eye + tail based on facing direction
+    -- Eye + tail
     fvx 0 lt (
       fx sz sub fy 1 sub 0 pixel
       fx sz 1 plus plus fy 2 pixel
@@ -179,6 +190,6 @@ list NR (-1 give) repeat 'rages let
       fx sz 2 plus sub fy 1 plus 2 pixel
     ) if
 
-    i 1 plus 'i let
-  ) while
+    i 1 plus
+  ) while drop
 ) show

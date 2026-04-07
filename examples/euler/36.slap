@@ -2,34 +2,28 @@
 -- Sum of numbers < 1M palindromic in both base 10 and base 2
 -- Answer: 872187
 
-'to-digits (
-  'td-base let 'td-n let
-  list
-  (td-n 0 gt)
-  (td-n td-base mod give td-n td-base div 'td-n let)
-  while
+'td-helper recur (
+  'tdh-n let 'tdh-lst let 'tdh-base let
+  tdh-n 0 gt (tdh-base tdh-lst tdh-n tdh-base mod give tdh-n tdh-base div td-helper) (tdh-lst) if
 ) def
+'to-digits ('td-base let 'td-n let td-base list td-n td-helper) def
 
-'is-palindrome (
-  'ip-ds let
-  ip-ds len 'ip-len let
-  1 'ip-ok let
-  0 'ip-i let
-  (ip-i ip-len 2 div lt ip-ok and)
-  (
-    ip-ds ip-i get ip-ds ip-len 1 sub ip-i sub get neq (0 'ip-ok let) () if
-    ip-i 1 plus 'ip-i let
-  ) while
-  ip-ok
+'ip-check recur (
+  'ipc-i let 'ipc-ds let
+  ipc-i ipc-ds len 2 div lt (
+    ipc-ds ipc-i get ipc-ds ipc-ds len 1 sub ipc-i sub get eq
+    (ipc-ds ipc-i 1 plus ip-check) (0) if
+  ) (1) if
 ) def
+'is-palindrome ('ip-ds let ip-ds 0 ip-check) def
 
-0 'total let
-1 'n let
-(n 1000000 lt)
+-- stack: total n
+0 1
+(dup 1000000 lt)
 (
-  n 10 to-digits is-palindrome (
-    n 2 to-digits is-palindrome (total n plus 'total let) () if
+  dup 10 to-digits is-palindrome (
+    dup 2 to-digits is-palindrome (dup (plus) dip) () if
   ) () if
-  n 2 plus 'n let
+  2 plus
 ) while
-total print
+drop print

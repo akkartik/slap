@@ -134,6 +134,21 @@
 1 'eee let
 2 'eee let
 
+-- EXPECT: shadows existing definition
+-- TYPE ERROR: let inside closure shadows outer def (issue #7)
+'fff (1) def
+'ggg (2 'fff let fff) def
+
+-- EXPECT: already bound
+-- TYPE ERROR: let inside closure shadows outer let
+3 'hhh let
+'iii (4 'hhh let hhh) def
+
+-- EXPECT: shadows existing definition
+-- TYPE ERROR: let shadows def in wide-effect closure (>8 args)
+'jjj (1) def
+'kkk ('a1 let 'a2 let 'a3 let 'a4 let 'a5 let 'a6 let 'a7 let 'a8 let 'a9 let 'jjj let jjj) def
+
 -- EXPECT: expected num
 -- TYPE ERROR: plus on list inside non-simple tuple (soundness: nested structure)
 'bad3 (1 [2 3] plus) def

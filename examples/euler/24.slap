@@ -2,27 +2,29 @@
 -- The millionth lexicographic permutation of digits 0-9
 -- Answer: 2783915460
 
-[0 1 2 3 4 5 6 7 8 9] 'digits let
-999999 'rem let
-0 'result let
+'factorial (
+  'fac-n let
+  'fac-loop recur (
+    'fac-j let 'fac-acc let
+    fac-j fac-n le (fac-acc fac-j mul fac-j 1 plus fac-loop) (fac-acc) if
+  ) def
+  1 1 fac-loop
+) def
 
-9 'pos let
-(pos 0 gt)
-(
-  1 'fact let
-  1 'j let
-  (j pos le) (fact j mul 'fact let j 1 plus 'j let) while
+'perm-step recur (
+  'ps-pos let 'ps-digits let 'ps-rem let 'ps-result let
+  ps-pos 0 gt (
+    ps-pos factorial 'ps-fact let
+    ps-rem ps-fact div 'ps-idx let
+    ps-rem ps-fact mod 'ps-rem2 let
+    ps-digits ps-idx get 'ps-d let
+    ps-result 10 mul ps-d plus
+    ps-digits ps-idx take-n ps-digits ps-idx 1 plus drop-n cat
+    ps-rem2 swap
+    ps-pos 1 sub perm-step
+  ) (
+    ps-result 10 mul ps-digits 0 get plus
+  ) if
+) def
 
-  rem fact div 'idx let
-  rem fact mod 'rem let
-
-  digits idx get 'd let
-  result 10 mul d plus 'result let
-
-  digits idx take-n digits idx 1 plus drop-n cat 'digits let
-
-  pos 1 sub 'pos let
-)
-while
-
-result 10 mul digits 0 get plus print
+0 [0 1 2 3 4 5 6 7 8 9] 999999 swap 9 perm-step print

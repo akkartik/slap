@@ -7,22 +7,23 @@
 (48 sub) map
 'digits let
 
-0 'best let
-0 'i let
-
-(i digits len 13 sub le)
+-- stack: best i
+0 0
+(dup digits len 13 sub le)
 (
-  1 'prod let
-  0 'j let
-  (j 13 lt)
+  'idx let 'best let
+  -- inner loop stack: prod j
+  1 0
+  (dup 13 lt)
   (
-    prod digits i j plus get mul 'prod let
-    j 1 plus 'j let
+    'jj let
+    digits idx jj plus get mul
+    jj 1 plus
   )
   while
-  prod best gt (prod 'best let) () if
-  i 1 plus 'i let
+  drop
+  best max
+  idx 1 plus
 )
 while
-
-best print
+drop print
