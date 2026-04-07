@@ -1217,5 +1217,134 @@ dup 'lives at 3 eq assert
 -- edit body that replaces value entirely
 {'a 1 'b 2} 'a (drop 99) edit 'a at 99 eq assert
 
+-- ===== Adversarial: Tagged Unions =====
+
+-- tag with 0 payload
+0 ok -1 default 0 eq assert
+
+-- tag with empty list payload
+[] ok -1 default [] eq assert
+
+-- tag with empty record payload
+rec ok -1 default rec eq assert
+
+-- tag with negative payload
+-999 ok -1 default -999 eq assert
+
+-- tag/untag roundtrip preserves equality
+42 'x tag dup {'x ()} -1 untag 42 eq assert
+42 'x tag eq assert
+
+-- untag with record-style clauses
+42 'a tag {'a (1 plus) 'b (2 plus)} -1 untag 43 eq assert
+42 'b tag {'a (1 plus) 'b (2 plus)} -1 untag 44 eq assert
+
+-- then on ok with body that changes payload size (int -> tuple)
+42 ok (dup 1 plus couple) then -1 default first 42 eq assert
+
+-- default on 3-level nested tags
+1 'a tag 'b tag 'c tag
+  {'c ()} -1 untag
+  {'b ()} -1 untag
+  {'a ()} -1 untag
+  1 eq assert
+
+-- then chain where no passes through untouched
+"err" no (1 plus) then (2 mul) then (3 sub) then (4 div) then (5 plus) then
+  {'no ()} -1 untag "err" eq assert
+
+-- untag where default is a plain value
+42 'x tag {'y ()} -1 untag -1 eq assert
+
+-- tag with large tuple payload
+(1 2 3 4 5 6 7 8 9 10) ok -1 default size 10 eq assert
+
+-- tag, untag, re-tag
+42 ok {'ok (1 plus no)} (-1) untag -1 default -1 eq assert
+
+-- then on ok preserves tag after body
+42 ok (1 plus) then dup {'ok ()} -1 untag 43 eq assert drop
+
+-- ===== Adversarial: Record Edit =====
+
+-- edit that changes value size (int -> list)
+rec 1 'a into 2 'b into 'a (drop [10 20 30]) edit
+  dup 'a at [10 20 30] eq assert
+  'b at 2 eq assert
+
+-- edit on record with many fields
+rec 1 'a into 2 'b into 3 'c into 4 'd into 5 'e into
+  'c (100 plus) edit
+  dup 'a at 1 eq assert
+  dup 'b at 2 eq assert
+  dup 'c at 103 eq assert
+  dup 'd at 4 eq assert
+  'e at 5 eq assert
+
+-- chained edit then at on every field
+rec 0 'x into 0 'y into 0 'z into
+  'x (10 plus) edit 'y (20 plus) edit 'z (30 plus) edit
+  dup 'x at 10 eq assert
+  dup 'y at 20 eq assert
+  'z at 30 eq assert
+
+-- edit with body that doubles a list
+rec [1 2] 'data into 'data (dup cat) edit 'data at [1 2 1 2] eq assert
+
+-- ===== Adversarial: Stack Combinators =====
+
+-- over with records
+rec 1 'x into  rec 2 'y into  over 'x at 1 eq assert drop drop
+
+-- rot with 3 different compound values
+[1] [2 3] [4 5 6] rot [1] eq assert [4 5 6] eq assert [2 3] eq assert
+
+-- nip with tagged values
+42 ok 99 ok nip -1 default 99 eq assert
+
+-- tuck with records
+rec 1 'a into  rec 2 'b into  tuck 'b at 2 eq assert 'a at 1 eq assert 'b at 2 eq assert
+
+-- over with tagged values
+1 ok 2 ok over -1 default 1 eq assert drop drop
+
+-- ===== Adversarial: String Helpers =====
+
+-- str-find: empty needle in non-empty haystack
+"hello" "" str-find 0 eq assert
+
+-- str-find: not found
+"hello" "xyz" str-find -1 eq assert
+
+-- str-find: at beginning
+"hello world" "hello" str-find 0 eq assert
+
+-- str-find: at end
+"hello world" "world" str-find 6 eq assert
+
+-- str-find: middle
+"abcdef" "cd" str-find 2 eq assert
+
+-- str-split: delimiter not found returns single element
+"hello" "," str-split len 1 eq assert
+"hello" "," str-split first "hello" eq assert
+
+-- str-split: empty string
+"" "," str-split len 1 eq assert
+
+-- str-split: multiple splits
+"a,b,c,d" "," str-split len 4 eq assert
+
+-- str-split: multi-char delimiter
+"a::b::c" "::" str-split len 3 eq assert
+
+-- str-join roundtrip
+"a,b,c" "," str-split "," str-join "a,b,c" eq assert
+
+-- int-str basics
+42 int-str "42" eq assert
+0 int-str "0" eq assert
+-7 int-str "-7" eq assert
+
 -- ===== Done =====
 "All tests passed!" print

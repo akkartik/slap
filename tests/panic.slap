@@ -173,3 +173,9 @@ tuck
 
 -- EXPECT: edit: key
 {'a 1} 'b (1 plus) edit
+
+-- EXPECT: recursion depth exceeded
+'inf recur (inf) def inf
+
+-- EXPECT: parse-http: no header/body separator
+"garbage" parse-http

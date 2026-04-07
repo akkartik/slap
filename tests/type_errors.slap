@@ -249,3 +249,31 @@
 -- EXPECT: expected list, got int
 -- TYPE ERROR: default preserves payload type (int given to len)
 42 ok -1 default len print
+
+-- EXPECT: expected tuple, got tagged
+-- TYPE ERROR: push onto tagged
+1 'x tag 99 push
+
+-- EXPECT: expected tuple, got tagged
+-- TYPE ERROR: pop from tagged
+1 'x tag pop
+
+-- EXPECT: expected tuple, got tagged
+-- TYPE ERROR: size on tagged
+1 'x tag size
+
+-- EXPECT: expected list, got tagged
+-- TYPE ERROR: get on tagged
+1 'x tag 0 get
+
+-- EXPECT: expected list, got tagged
+-- TYPE ERROR: cat on tagged
+[1] 1 'x tag cat
+
+-- EXPECT: expected num, got tagged
+-- TYPE ERROR: arithmetic on tagged
+42 ok 1 plus
+
+-- EXPECT: expected num, got tagged
+-- TYPE ERROR: tagged value in mul
+42 ok 2 mul
