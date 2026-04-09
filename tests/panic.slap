@@ -244,3 +244,27 @@ tuck
 
 -- EXPECT: lt: type mismatch, got int and float
 1 2.0 lt
+
+-- Source-location tests: every case below asserts the reported line+col.
+-- Each test runs in a file whose first (and only) non-empty line is line 1.
+
+-- EXPECT: division by zero
+-- EXPECT-LINE: 1
+-- EXPECT-COL: 5
+1 0 div
+
+-- EXPECT: mod: division by zero
+-- EXPECT-LINE: 1
+-- EXPECT-COL: 5
+1 0 mod
+
+-- EXPECT: index 0 out of bounds
+-- EXPECT-LINE: 1
+-- EXPECT-COL: 6
+[] 0 get
+
+-- EXPECT: index 5 out of bounds
+-- EXPECT-LINE: 1
+-- EXPECT-COL: 14
+[10 20 30] 5 get
+

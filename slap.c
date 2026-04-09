@@ -28,6 +28,7 @@ typedef struct Frame Frame;
 typedef void (*PrimFn)(Frame *env);
 typedef struct Value {
     ValTag tag;
+    uint64_t loc;  // (fid<<56) | (line<<24) | col ; 0 = no location
     union {
         int64_t i; double f; uint32_t sym;
         struct { uint32_t sym; PrimFn fn; } xt;
@@ -35,6 +36,12 @@ typedef struct Value {
         void *box;
     } as;
 } Value;
+
+#define LOC_PACK(fid, line, col) \
+    (((uint64_t)(fid) << 56) | (((uint64_t)(line) & 0xFFFFFFFFu) << 24) | ((uint64_t)(col) & 0xFFFFFFu))
+#define LOC_FID(loc)  ((int)((loc) >> 56))
+#define LOC_LINE(loc) ((int)(((loc) >> 24) & 0xFFFFFFFFu))
+#define LOC_COL(loc)  ((int)((loc) & 0xFFFFFFu))
 
 __attribute__((noreturn)) static void die(const char *fmt, ...);
 
@@ -64,44 +71,68 @@ static uint32_t sym_intern(const char *name) {
 }
 static const char *sym_name(uint32_t id) { return sym_names[id]; }
 
+#define SRC_MAX 4
+#define FID_UNKNOWN 0
+#define FID_PRELUDE 1
+#define FID_BUILTIN 2
+#define FID_STDIN   3
+
+static const char *src_files[SRC_MAX] = { "<unknown>", "<prelude>", "<builtin>", "<stdin>" };
+static char        *src_text[SRC_MAX]       = { 0 };
+static const char **src_lines[SRC_MAX]      = { 0 };
+static int          src_line_count[SRC_MAX] = { 0 };
+
+static int current_fid  = FID_STDIN;
 static int current_line = 0;
-static const char *current_file = "<input>";
+static int current_col  = 0;
+
 static void print_stack_summary(FILE *out);
 
-static char *source_text = NULL;
-static const char **source_lines = NULL;
-static int source_line_count = 0;
-
-static void store_source_lines(const char *src) {
-    source_text = strdup(src);
+static void store_source_lines(const char *src, int fid) {
+    if (fid < 0 || fid >= SRC_MAX) die("store_source_lines: bad fid %d (SRC_MAX=%d)", fid, SRC_MAX);
+    if (src_text[fid]) { free(src_text[fid]); free(src_lines[fid]); }
+    src_text[fid] = strdup(src);
+    if (!src_text[fid]) die("store_source_lines: strdup failed");
     int count = 1;
-    for (const char *p = source_text; *p; p++) if (*p == '\n') count++;
-    source_lines = malloc(count * sizeof(char *));
-    source_line_count = 0;
-    char *p = source_text;
+    for (const char *p = src_text[fid]; *p; p++) if (*p == '\n') count++;
+    src_lines[fid] = malloc(count * sizeof(char *));
+    if (!src_lines[fid]) die("store_source_lines: malloc failed (%d lines)", count);
+    src_line_count[fid] = 0;
+    char *p = src_text[fid];
     while (*p) {
-        source_lines[source_line_count++] = p;
+        src_lines[fid][src_line_count[fid]++] = p;
         char *nl = strchr(p, '\n');
         if (nl) { *nl = '\0'; p = nl + 1; } else break;
     }
 }
 
-static void print_source_line(FILE *out, int line) {
-    if (!source_lines || line < 1 || line > source_line_count) return;
-    fprintf(out, "    %4d| %s\n", line, source_lines[line - 1]);
+static void print_source_line(FILE *out, int fid, int line, int col) {
+    if (fid < 0 || fid >= SRC_MAX || !src_lines[fid] || line < 1 || line > src_line_count[fid]) {
+        fprintf(out, "    (source unavailable: fid=%d line=%d)\n", fid, line);
+        return;
+    }
+    fprintf(out, "    %4d| %s\n", line, src_lines[fid][line - 1]);
+    if (col > 0) {
+        // prefix is "    NNNN| " = 4 spaces + %4d + "| " = 10 chars
+        fprintf(out, "          ");
+        for (int i = 1; i < col; i++) fputc(' ', out);
+        fprintf(out, "^^^\n");
+    }
 }
 
 __attribute__((noreturn))
 static void die(const char *fmt, ...) {
     static int dying = 0;
+    const char *file = src_files[current_fid];
     va_list ap; va_start(ap, fmt);
-    fprintf(stderr, "\n-- ERROR %s:%d ", current_file, current_line);
-    int hdr_len = 10 + (int)strlen(current_file) + 10;
+    if (current_col > 0) fprintf(stderr, "\n-- ERROR %s:%d:%d ", file, current_line, current_col);
+    else                 fprintf(stderr, "\n-- ERROR %s:%d ",    file, current_line);
+    int hdr_len = 10 + (int)strlen(file) + 10;
     for (int i = hdr_len; i < 60; i++) fprintf(stderr, "-");
     fprintf(stderr, "\n\n    ");
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n\n");
-    print_source_line(stderr, current_line);
+    print_source_line(stderr, current_fid, current_line, current_col);
     va_end(ap);
     if (!dying) { dying = 1; print_stack_summary(stderr); fprintf(stderr, "\n"); }
     exit(1);
@@ -115,13 +146,13 @@ static void spush(Value v) { if (sp >= STACK_MAX) die("stack overflow"); stack[s
 static Value spop(void) { if (sp <= 0) die("stack underflow"); return stack[--sp]; }
 static Value speek(void) { if (sp <= 0) die("stack underflow on peek"); return stack[sp - 1]; }
 
-static Value val_int(int64_t i) { Value v; v.tag = VAL_INT; v.as.i = i; return v; }
-static Value val_float(double f) { Value v; v.tag = VAL_FLOAT; v.as.f = f; return v; }
-static Value val_sym(uint32_t s) { Value v; v.tag = VAL_SYM; v.as.sym = s; return v; }
-static Value val_word(uint32_t s) { Value v; v.tag = VAL_WORD; v.as.sym = s; return v; }
-static Value val_xt(uint32_t s, PrimFn fn) { Value v; v.tag = VAL_XT; v.as.xt.sym = s; v.as.xt.fn = fn; return v; }
+static Value val_int(int64_t i) { Value v; v.tag = VAL_INT; v.loc = 0; v.as.i = i; return v; }
+static Value val_float(double f) { Value v; v.tag = VAL_FLOAT; v.loc = 0; v.as.f = f; return v; }
+static Value val_sym(uint32_t s) { Value v; v.tag = VAL_SYM; v.loc = 0; v.as.sym = s; return v; }
+static Value val_word(uint32_t s) { Value v; v.tag = VAL_WORD; v.loc = 0; v.as.sym = s; return v; }
+static Value val_xt(uint32_t s, PrimFn fn) { Value v; v.tag = VAL_XT; v.loc = 0; v.as.xt.sym = s; v.as.xt.fn = fn; return v; }
 static Value val_compound(ValTag tag, uint32_t len, uint32_t slots) {
-    Value v; v.tag = tag; v.as.compound.len = len; v.as.compound.slots = slots; v.as.compound.env = NULL; return v;
+    Value v; v.tag = tag; v.loc = 0; v.as.compound.len = len; v.as.compound.slots = slots; v.as.compound.env = NULL; return v;
 }
 
 typedef enum {
@@ -132,41 +163,47 @@ typedef struct {
     TokTag tag;
     union { int64_t i; double f; uint32_t sym; struct { int *codes; int len; } str; } as;
     int line;
+    int col;
+    int fid;
 } Token;
 static Token tokens[TOK_MAX];
 static int tok_count = 0;
 
-static void lex(const char *src) {
-    tok_count = 0; int line = 1; const char *p = src;
+#define LEX_ADVANCE() do { if (*p == '\n') { line++; col = 1; } else { col++; } p++; } while (0)
+
+static void lex(const char *src, int fid) {
+    tok_count = 0; int line = 1; int col = 1; const char *p = src;
     while (*p) {
-        if (*p == '\n') { line++; p++; continue; }
-        if (isspace((unsigned char)*p)) { p++; continue; }
-        if (p[0] == '-' && p[1] == '-') { while (*p && *p != '\n') p++; continue; }
+        if (*p == '\n') { line++; col = 1; p++; continue; }
+        if (isspace((unsigned char)*p)) { col++; p++; continue; }
+        if (p[0] == '-' && p[1] == '-') { while (*p && *p != '\n') { col++; p++; } continue; }
         if (tok_count >= TOK_MAX) die("too many tokens");
-        Token *t = &tokens[tok_count]; t->line = line;
-        if (*p == '(') { t->tag = TOK_LPAREN; p++; tok_count++; continue; }
-        if (*p == ')') { t->tag = TOK_RPAREN; p++; tok_count++; continue; }
-        if (*p == '[') { t->tag = TOK_LBRACKET; p++; tok_count++; continue; }
-        if (*p == ']') { t->tag = TOK_RBRACKET; p++; tok_count++; continue; }
-        if (*p == '{') { t->tag = TOK_LBRACE; p++; tok_count++; continue; }
-        if (*p == '}') { t->tag = TOK_RBRACE; p++; tok_count++; continue; }
+        Token *t = &tokens[tok_count];
+        t->line = line; t->col = col; t->fid = fid;
+        if (*p == '(') { t->tag = TOK_LPAREN;   LEX_ADVANCE(); tok_count++; continue; }
+        if (*p == ')') { t->tag = TOK_RPAREN;   LEX_ADVANCE(); tok_count++; continue; }
+        if (*p == '[') { t->tag = TOK_LBRACKET; LEX_ADVANCE(); tok_count++; continue; }
+        if (*p == ']') { t->tag = TOK_RBRACKET; LEX_ADVANCE(); tok_count++; continue; }
+        if (*p == '{') { t->tag = TOK_LBRACE;   LEX_ADVANCE(); tok_count++; continue; }
+        if (*p == '}') { t->tag = TOK_RBRACE;   LEX_ADVANCE(); tok_count++; continue; }
         if (*p == '"') {
-            p++; int *codes = NULL; int len = 0, cap = 0;
+            LEX_ADVANCE();
+            int *codes = NULL; int len = 0, cap = 0;
             while (*p && *p != '"') {
                 int ch;
-                if (*p == '\\') { p++; switch (*p) { case 'n': ch='\n'; break; case 't': ch='\t'; break; case '\\': ch='\\'; break; case '"': ch='"'; break; case '0': ch=0; break; default: ch=*p; break; } }
+                if (*p == '\\') { LEX_ADVANCE(); switch (*p) { case 'n': ch='\n'; break; case 't': ch='\t'; break; case '\\': ch='\\'; break; case '"': ch='"'; break; case '0': ch=0; break; default: ch=*p; break; } }
                 else ch = (unsigned char)*p;
-                if (*p == '\n') line++;
-                p++;
+                LEX_ADVANCE();
                 if (len >= cap) { cap = cap ? cap*2 : 16; codes = realloc(codes, cap * sizeof(int)); }
                 codes[len++] = ch;
             }
-            if (*p == '"') p++;
+            if (*p == '"') LEX_ADVANCE();
             t->tag = TOK_STRING; t->as.str.codes = codes; t->as.str.len = len; tok_count++; continue;
         }
         if (*p == '\'') {
-            p++; const char *start = p;
-            while (*p && !isspace((unsigned char)*p) && *p!='(' && *p!=')' && *p!='[' && *p!=']' && *p!='{' && *p!='}') p++;
+            LEX_ADVANCE();
+            const char *start = p;
+            while (*p && !isspace((unsigned char)*p) && *p!='(' && *p!=')' && *p!='[' && *p!=']' && *p!='{' && *p!='}') LEX_ADVANCE();
             int len = (int)(p - start);
             if (len == 0) die("empty symbol literal");
             char buf[256]; if (len >= (int)sizeof(buf)) die("symbol too long");
@@ -174,16 +211,17 @@ static void lex(const char *src) {
             t->tag = TOK_SYM; t->as.sym = sym_intern(buf); tok_count++; continue;
         }
         if (isdigit((unsigned char)*p) || (*p == '-' && isdigit((unsigned char)p[1]))) {
-            const char *start = p; if (*p == '-') p++;
-            while (isdigit((unsigned char)*p)) p++;
+            const char *start = p; if (*p == '-') LEX_ADVANCE();
+            while (isdigit((unsigned char)*p)) LEX_ADVANCE();
             if (*p == '.' && isdigit((unsigned char)p[1])) {
-                p++; while (isdigit((unsigned char)*p)) p++;
+                LEX_ADVANCE();
+                while (isdigit((unsigned char)*p)) LEX_ADVANCE();
                 t->tag = TOK_FLOAT; t->as.f = strtod(start, NULL);
             } else { t->tag = TOK_INT; t->as.i = strtoll(start, NULL, 10); }
             tok_count++; continue;
         }
         { const char *start = p;
-          while (*p && !isspace((unsigned char)*p) && *p!='(' && *p!=')' && *p!='[' && *p!=']' && *p!='{' && *p!='}') p++;
+          while (*p && !isspace((unsigned char)*p) && *p!='(' && *p!=')' && *p!='[' && *p!=']' && *p!='{' && *p!='}') LEX_ADVANCE();
           int len = (int)(p - start); char buf[256];
           if (len >= (int)sizeof(buf)) die("word too long");
           memcpy(buf, start, len); buf[len] = 0;
@@ -192,7 +230,17 @@ static void lex(const char *src) {
           t->tag = TOK_WORD; t->as.sym = sym_intern(buf); tok_count++;
         }
     }
-    if (tok_count < TOK_MAX) { tokens[tok_count].tag = TOK_EOF; tokens[tok_count].line = line; }
+    if (tok_count < TOK_MAX) {
+        tokens[tok_count].tag = TOK_EOF;
+        tokens[tok_count].line = line;
+        tokens[tok_count].col = col;
+        tokens[tok_count].fid = fid;
+    }
+}
+
+static inline Value with_tok(Value v, const Token *t) {
+    v.loc = LOC_PACK(t->fid, t->line, t->col);
+    return v;
 }
 
 typedef enum { BIND_DEF, BIND_LET } BindKind;
@@ -792,15 +840,19 @@ static TCBinding *tc_lookup(TypeChecker *tc, uint32_t sym) {
 static void tc_error(TypeChecker *tc, int line, int origin_line, const char *fmt, ...) {
     if (tc->suppress_errors) { va_list ap; va_start(ap, fmt); va_end(ap); return; }
     tc->errors++;
+    const char *file = src_files[current_fid];
     va_list ap; va_start(ap, fmt);
-    fprintf(stderr, "\n-- TYPE ERROR %s:%d ", current_file, line);
-    int hdr_len = 15 + (int)strlen(current_file) + 10;
+    fprintf(stderr, "\n-- TYPE ERROR %s:%d ", file, line);
+    int hdr_len = 15 + (int)strlen(file) + 10;
     for (int i = hdr_len; i < 60; i++) fprintf(stderr, "-");
     fprintf(stderr, "\n\n    ");
     vfprintf(stderr, fmt, ap); fprintf(stderr, "\n\n"); va_end(ap);
-    print_source_line(stderr, line);
+    /* No caret for type errors: the checker's current_col may belong to a different token
+       than the reported line, and a wrong caret is worse than none. Track col in tc->data
+       as a follow-up. */
+    print_source_line(stderr, current_fid, line, 0);
     if (origin_line > 0 && origin_line != line)
-        print_source_line(stderr, origin_line);
+        print_source_line(stderr, current_fid, origin_line, 0);
     fprintf(stderr, "\n");
 }
 
@@ -890,8 +942,8 @@ static int tc_check_body_against_sig(Token *toks, int start, int end, int total_
         if (sig->slots[i].direction == DIR_IN) n_in++; else n_out++;
     int eff_consumed, eff_produced;
     tc_infer_effect_ctx(toks, start, end, total_count, &eff_consumed, &eff_produced, NULL);
-    if (eff_consumed != n_in) { fprintf(stderr, "%s:%d: type error: function body consumes %d value(s) but type declares %d input(s)\n", current_file, toks[start].line, eff_consumed, n_in); errors++; }
-    if (eff_produced != n_out) { fprintf(stderr, "%s:%d: type error: function body produces %d value(s) but type declares %d output(s)\n", current_file, toks[start].line, eff_produced, n_out); errors++; }
+    if (eff_consumed != n_in) { fprintf(stderr, "%s:%d: type error: function body consumes %d value(s) but type declares %d input(s)\n", src_files[current_fid], toks[start].line, eff_consumed, n_in); errors++; }
+    if (eff_produced != n_out) { fprintf(stderr, "%s:%d: type error: function body produces %d value(s) but type declares %d output(s)\n", src_files[current_fid], toks[start].line, eff_produced, n_out); errors++; }
     return errors;
 }
 
@@ -1238,7 +1290,7 @@ static void tc_check_redef(TypeChecker *tc, uint32_t sym, int line) {
 static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, int total_count) {
     for (int i = start; i < end; i++) {
         if (i == tc->user_start && !tc->prelude_sig_count) tc->prelude_sig_count = type_sig_count;
-        Token *t = &toks[i]; current_line = t->line;
+        Token *t = &toks[i]; current_line = t->line; current_col = t->col; current_fid = t->fid;
         switch (t->tag) {
         case TOK_INT: tc_push(tc, TC_INT, t->line); break;
         case TOK_FLOAT: tc_push(tc, TC_FLOAT, t->line); break;
@@ -2100,7 +2152,7 @@ static void prim_edit(Frame *env) {
 }
 
 typedef struct BoxData { Value *data; int slots; } BoxData;
-static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;memcpy(bd->data,&stack[sp-s],s*sizeof(Value));sp-=s;Value v;v.tag=VAL_BOX;v.as.box=bd;spush(v);}
+static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;memcpy(bd->data,&stack[sp-s],s*sizeof(Value));sp-=s;Value v;v.tag=VAL_BOX;v.loc=0;v.as.box=bd;spush(v);}
 static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box, got %s", valtag_name(v.tag));BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
 
 static void prim_lend(Frame *env) {
@@ -2132,7 +2184,7 @@ static void deep_copy_values(Value *dst, const Value *src, int slots) {
     }
 }
 
-static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box, got %s", valtag_name(v.tag));BoxData *orig=(BoxData*)v.as.box;BoxData *copy=malloc(sizeof(BoxData));copy->data=malloc(orig->slots*sizeof(Value));copy->slots=orig->slots;deep_copy_values(copy->data,orig->data,orig->slots);spush(v);Value v2;v2.tag=VAL_BOX;v2.as.box=copy;spush(v2);}
+static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box, got %s", valtag_name(v.tag));BoxData *orig=(BoxData*)v.as.box;BoxData *copy=malloc(sizeof(BoxData));copy->data=malloc(orig->slots*sizeof(Value));copy->slots=orig->slots;deep_copy_values(copy->data,orig->data,orig->slots);spush(v);Value v2;v2.tag=VAL_BOX;v2.loc=0;v2.as.box=copy;spush(v2);}
 
 static void prim_grade(Frame *e,int ascending) {
     (void)e; Value top=speek();
@@ -2188,6 +2240,7 @@ static void eval_body(Value *body, int slots, Frame *env) {
     for(int k=0;k<len;k++){
         int eoff,esz; if(all_scalar){eoff=k;esz=1;}else{eoff=offsets_buf[k];esz=sizes_buf[k];}
         Value elem=body[eoff+esz-1];
+        if(elem.loc){current_fid=LOC_FID(elem.loc);current_line=LOC_LINE(elem.loc);current_col=LOC_COL(elem.loc);}
         if(elem.tag==VAL_INT||elem.tag==VAL_FLOAT||elem.tag==VAL_SYM) stack[sp++]=elem;
         else if(is_compound(elem.tag)){
             memcpy(&stack[sp],&body[eoff],esz*sizeof(Value)); sp+=esz;
@@ -2219,41 +2272,45 @@ static int find_matching(Token *toks, int start, int count, TokTag open, TokTag 
 
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *env) {
     int elem_base=sp,elem_count=0;
+    Token *first_tok = (start < end) ? &toks[start] : NULL;
     for(int j=start;j<end;j++){
         Token *tt=&toks[j];
+        current_fid=tt->fid; current_line=tt->line; current_col=tt->col;
         switch(tt->tag){
-        case TOK_INT: spush(val_int(tt->as.i)); elem_count++; break;
-        case TOK_FLOAT: spush(val_float(tt->as.f)); elem_count++; break;
-        case TOK_SYM: spush(val_sym(tt->as.sym)); elem_count++; break;
+        case TOK_INT:   spush(with_tok(val_int(tt->as.i),   tt)); elem_count++; break;
+        case TOK_FLOAT: spush(with_tok(val_float(tt->as.f), tt)); elem_count++; break;
+        case TOK_SYM:   spush(with_tok(val_sym(tt->as.sym), tt)); elem_count++; break;
         case TOK_WORD:
             if(tt->as.sym==S_CHECK){if(elem_count>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;elem_count--;}else die("check: expected preceding type word, got %s", elem_count>0?valtag_name(stack[sp-1].tag):"empty stack");}
-            else{PrimFn xt_fn=prim_lookup(tt->as.sym);if(xt_fn)spush(val_xt(tt->as.sym,xt_fn));else spush(val_word(tt->as.sym));elem_count++;}
+            else{PrimFn xt_fn=prim_lookup(tt->as.sym);if(xt_fn)spush(with_tok(val_xt(tt->as.sym,xt_fn),tt));else spush(with_tok(val_word(tt->as.sym),tt));elem_count++;}
             break;
         case TOK_STRING:
-            for(int c=0;c<tt->as.str.len;c++) spush(val_int(tt->as.str.codes[c]));
-            spush(val_compound(VAL_LIST,tt->as.str.len,tt->as.str.len+1)); elem_count++; break;
-        case TOK_LPAREN:{int nc=find_matching(toks,j+1,total_count,TOK_LPAREN,TOK_RPAREN);build_tuple(toks,j+1,nc,total_count,env);elem_count++;j=nc;break;}
+            for(int c=0;c<tt->as.str.len;c++) spush(with_tok(val_int(tt->as.str.codes[c]), tt));
+            spush(with_tok(val_compound(VAL_LIST,tt->as.str.len,tt->as.str.len+1), tt)); elem_count++; break;
+        case TOK_LPAREN:{int nc=find_matching(toks,j+1,total_count,TOK_LPAREN,TOK_RPAREN);build_tuple(toks,j+1,nc,total_count,env);stack[sp-1].loc=LOC_PACK(tt->fid,tt->line,tt->col);elem_count++;j=nc;break;}
         case TOK_LBRACKET:{
             int bc=find_matching(toks,j+1,total_count,TOK_LBRACKET,TOK_RBRACKET);
             if(bc+1<total_count&&toks[bc+1].tag==TOK_WORD&&toks[bc+1].as.sym==S_EFFECT){j=bc+1;break;}
             int lb=sp; eval(toks+j+1,bc-j-1,env); int ls=sp-lb;
             int ec2=0,pos=sp; while(pos>lb){pos-=val_slots(stack[pos-1]);ec2++;}
-            spush(val_compound(VAL_LIST,ec2,ls+1)); elem_count++; j=bc; break;
+            spush(with_tok(val_compound(VAL_LIST,ec2,ls+1), tt)); elem_count++; j=bc; break;
         }
         case TOK_LBRACE:{
             int bc=find_matching(toks,j+1,total_count,TOK_LBRACE,TOK_RBRACE);
             int lb=sp; eval(toks+j+1,bc-j-1,env); int total_slots=sp-lb;
             int nfields=0,is_record=1,pos=sp;
             while(pos>lb){Value v=stack[pos-1];int vs=val_slots(v);pos-=vs;if(is_record&&pos>lb&&stack[pos-1].tag==VAL_SYM){pos--;nfields++;}else is_record=0;}
-            if(is_record&&nfields>0) spush(val_compound(VAL_RECORD,nfields,total_slots+1));
-            else{int ec2=0;pos=sp;while(pos>lb){pos-=val_slots(stack[pos-1]);ec2++;}spush(val_compound(VAL_TUPLE,ec2,total_slots+1));}
+            if(is_record&&nfields>0) spush(with_tok(val_compound(VAL_RECORD,nfields,total_slots+1), tt));
+            else{int ec2=0;pos=sp;while(pos>lb){pos-=val_slots(stack[pos-1]);ec2++;}spush(with_tok(val_compound(VAL_TUPLE,ec2,total_slots+1), tt));}
             elem_count++; j=bc; break;
         }
         default: break;
         }
     }
     int total_elem_slots=sp-elem_base;
-    spush(val_compound(VAL_TUPLE,elem_count,total_elem_slots+1));
+    Value hdr = val_compound(VAL_TUPLE,elem_count,total_elem_slots+1);
+    if (first_tok) hdr.loc = LOC_PACK(first_tok->fid, first_tok->line, first_tok->col);
+    spush(hdr);
     if(env) env->refcount++;
     stack[sp-1].as.compound.env=env;
 }
@@ -2939,7 +2996,7 @@ static void push_socket_box(int fd) {
     bd->slots = s;
     memcpy(bd->data, &stack[sp-s], s * sizeof(Value));
     sp -= s;
-    Value v; v.tag = VAL_BOX; v.as.box = bd;
+    Value v; v.tag = VAL_BOX; v.loc = 0; v.as.box = bd;
     spush(v);
 }
 
@@ -3263,10 +3320,11 @@ int main(int argc, char **argv) {
         else if(argv[i][0]=='-'&&argv[i][1]=='-'){fprintf(stderr,"unknown flag: %s\nusage: slap [--check] [--headless] [args...] < file.slap\n",argv[i]);free(cli_args);return 1;}
         else cli_args[cli_argc++]=argv[i];
     }
-    current_file="<stdin>"; syms_init(); register_prims();
+    syms_init(); register_prims();
     Frame *global=frame_new(NULL);
-    current_file="<prelude>"; lex(PRELUDE); eval(tokens,tok_count,global);
-    current_file="<stdin>";
+    store_source_lines(PRELUDE, FID_PRELUDE);
+    current_fid=FID_PRELUDE; lex(PRELUDE, FID_PRELUDE); eval(tokens,tok_count,global);
+    current_fid=FID_STDIN;
 #ifdef SLAP_WASM
     FILE *f=fopen("program.slap","r"); if(!f){fprintf(stderr,"error: cannot open 'program.slap'\n");return 1;}
 #else
@@ -3279,17 +3337,19 @@ int main(int argc, char **argv) {
     fclose(f);
 #endif
     if(sz==0){fprintf(stderr,"usage: slap [--check] [--headless] [args...] < file.slap\n");return 1;}
-    store_source_lines(src);
-    lex(src); int user_tok_count=tok_count;
+    store_source_lines(src, FID_STDIN);
+    lex(src, FID_STDIN); int user_tok_count=tok_count;
     static Token user_tokens[TOK_MAX]; memcpy(user_tokens,tokens,user_tok_count*sizeof(Token));
     static Token combined[TOK_MAX]; int cpos=0;
-    lex(BUILTIN_TYPES); memcpy(combined,tokens,tok_count*sizeof(Token)); cpos=tok_count;
-    lex(PRELUDE); memcpy(&combined[cpos],tokens,tok_count*sizeof(Token)); cpos+=tok_count;
+    store_source_lines(BUILTIN_TYPES, FID_BUILTIN);
+    lex(BUILTIN_TYPES, FID_BUILTIN); memcpy(combined,tokens,tok_count*sizeof(Token)); cpos=tok_count;
+    lex(PRELUDE, FID_PRELUDE); memcpy(&combined[cpos],tokens,tok_count*sizeof(Token)); cpos+=tok_count;
     int user_start=cpos;
     memcpy(&combined[cpos],user_tokens,user_tok_count*sizeof(Token)); cpos+=user_tok_count;
     int errors=typecheck_tokens(combined,cpos,user_start);
     if(errors>0){fprintf(stderr,"%d type error(s)\n",errors);free(src);frame_free(global);return 1;}
     if(check_only){fprintf(stderr,"type check passed\n");free(src);frame_free(global);return 0;}
+    current_fid=FID_STDIN; current_line=0; current_col=0;
     eval(user_tokens,user_tok_count,global);
     free(src); frame_free(global); return 0;
 }

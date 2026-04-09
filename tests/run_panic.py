@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Run each panic test case from tests/panic.slap and verify it crashes with the expected error."""
-import subprocess, sys, tempfile, os
+"""Run each panic test case from tests/panic.slap and verify it crashes with the expected error.
+
+Each test is preceded by `-- EXPECT: <substring>` and optionally `-- EXPECT-LINE: N` and
+`-- EXPECT-COL: N` directives that assert the reported source position.
+"""
+import re, subprocess, sys, tempfile, os
+
+LOC_RE = re.compile(r"-- ERROR [^:\s]+:(\d+)(?::(\d+))?")
 
 def main():
     with open("tests/panic.slap") as f:
         lines = f.readlines()
 
     expect = None
+    expect_line = None
+    expect_col = None
     passed = 0
     failed = 0
 
@@ -14,7 +22,11 @@ def main():
         line = line.strip()
         if not line or line.startswith("--"):
             if line.startswith("-- EXPECT:"):
-                expect = line.split("-- EXPECT:")[1].strip()
+                expect = line.split("-- EXPECT:", 1)[1].strip()
+            elif line.startswith("-- EXPECT-LINE:"):
+                expect_line = int(line.split("-- EXPECT-LINE:", 1)[1].strip())
+            elif line.startswith("-- EXPECT-COL:"):
+                expect_col = int(line.split("-- EXPECT-COL:", 1)[1].strip())
             continue
 
         if expect is None:
@@ -38,6 +50,25 @@ def main():
                 print(f"  code: {line}")
                 print(f"  stderr: {r.stderr.strip()}")
                 failed += 1
+            elif expect_line is not None or expect_col is not None:
+                m = LOC_RE.search(r.stderr)
+                if not m:
+                    print(f"FAIL line {i+1}: expected line:col in error banner, got:")
+                    print(f"  code: {line}")
+                    print(f"  stderr: {r.stderr.strip()}")
+                    failed += 1
+                else:
+                    got_line = int(m.group(1))
+                    got_col = int(m.group(2)) if m.group(2) else None
+                    ok = True
+                    if expect_line is not None and got_line != expect_line: ok = False
+                    if expect_col is not None and got_col != expect_col: ok = False
+                    if ok:
+                        passed += 1
+                    else:
+                        print(f"FAIL line {i+1}: expected loc {expect_line}:{expect_col}, got {got_line}:{got_col}")
+                        print(f"  code: {line}")
+                        failed += 1
             else:
                 passed += 1
         except subprocess.TimeoutExpired:
@@ -48,6 +79,8 @@ def main():
             os.unlink(tmp_path)
 
         expect = None
+        expect_line = None
+        expect_col = None
 
     if failed > 0:
         print(f"panic tests: {passed} passed, {failed} FAILED")
