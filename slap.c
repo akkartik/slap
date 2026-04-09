@@ -3176,39 +3176,12 @@ static void prim_parse_http(Frame *e) {
             status_code = status_code * 10 + (raw[i] - '0');
     }
     spush(val_int(status_code));
-    /* parse headers into list of records */
-    int hdr_base = sp, hdr_count = 0;
-    int pos = status_end + 2; /* skip first \r\n */
-    while (pos < split) {
-        int line_end = split;
-        for (int i = pos; i < split - 1; i++) {
-            if (raw[i]=='\r' && raw[i+1]=='\n') { line_end = i; break; }
-        }
-        if (line_end == pos) { pos += 2; continue; }
-        /* find ": " */
-        int colon = -1;
-        for (int i = pos; i < line_end - 1; i++) {
-            if (raw[i]==':' && raw[i+1]==' ') { colon = i; break; }
-        }
-        /* build record {key: ..., value: ...} */
-        spush(val_sym(sym_intern("key")));
-        if (colon >= 0) push_byte_list(raw + pos, colon - pos);
-        else push_byte_list(raw + pos, line_end - pos);
-        spush(val_sym(sym_intern("value")));
-        if (colon >= 0) push_byte_list(raw + colon + 2, line_end - colon - 2);
-        else push_byte_list((unsigned char*)"", 0);
-        spush(val_compound(VAL_RECORD, 2, sp - (sp - 2 - (int)stack[sp-1].as.compound.slots - 1 - (colon>=0?(colon-pos):(line_end-pos)) - 1) + 1));
-        /* simpler: just track slots manually */
-        hdr_count++;
-        pos = line_end + 2;
-    }
-    /* Rebuild: we pushed records onto stack, now wrap in list */
-    /* Actually let me redo this more carefully */
-    /* Reset and redo header parsing properly */
-    sp = hdr_base; /* restore to after status int */
-    hdr_count = 0;
+    /* parse headers into list of {key: ..., value: ...} records */
+    uint32_t key_sym = sym_intern("key");
+    uint32_t value_sym = sym_intern("value");
     int rec_base = sp;
-    pos = status_end + 2;
+    int hdr_count = 0;
+    int pos = status_end + 2; /* skip status-line \r\n */
     while (pos < split) {
         int line_end = split;
         for (int i = pos; i < split - 1; i++) {
@@ -3219,24 +3192,16 @@ static void prim_parse_http(Frame *e) {
         for (int i = pos; i < line_end - 1; i++) {
             if (raw[i]==':' && raw[i+1]==' ') { colon = i; break; }
         }
-        /* record: sym key, key-bytes..., list-hdr, sym value, val-bytes..., list-hdr, record-hdr */
-        uint32_t key_sym = sym_intern("key");
-        uint32_t val_sym2 = sym_intern("value");
+        int key_len = colon >= 0 ? colon - pos : line_end - pos;
+        int val_off = colon >= 0 ? colon + 2 : line_end;
+        int val_len = colon >= 0 ? line_end - colon - 2 : 0;
         spush(val_sym(key_sym));
-        if (colon >= 0) {
-            push_byte_list(raw + pos, colon - pos);
-        } else {
-            push_byte_list(raw + pos, line_end - pos);
-        }
-        int key_slots = 1 + (colon >= 0 ? (colon - pos + 1) : (line_end - pos + 1)); /* sym + list */
-        spush(val_sym(val_sym2));
-        if (colon >= 0) {
-            push_byte_list(raw + colon + 2, line_end - colon - 2);
-        } else {
-            push_byte_list((unsigned char*)"", 0);
-        }
-        int val_slots2 = 1 + (colon >= 0 ? (line_end - colon - 2 + 1) : 1); /* sym + list */
-        spush(val_compound(VAL_RECORD, 2, key_slots + val_slots2 + 1));
+        push_byte_list(raw + pos, key_len);
+        spush(val_sym(value_sym));
+        push_byte_list(raw + val_off, val_len);
+        /* record slots: sym + (list header + key_len bytes) + sym + (list header + val_len bytes) + record header */
+        int rec_slots = 1 + (key_len + 1) + 1 + (val_len + 1) + 1;
+        spush(val_compound(VAL_RECORD, 2, rec_slots));
         hdr_count++;
         pos = line_end + 2;
     }

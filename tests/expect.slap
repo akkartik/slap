@@ -1419,5 +1419,53 @@ buf 1023 get 255 eq assert
 entries "expect.slap" index-of -1 eq not assert
 entries "definitely_not_a_real_file.slap" index-of -1 eq assert
 
+-- ===== Adversarial coverage =====
+
+-- box clone then mutate only the top; original must be unchanged
+42 box clone
+  (1 plus) mutate
+  free                     -- discard the mutated copy
+  () lend 42 eq assert     -- original still 42
+  free
+
+-- record edit inside box mutate, repeated
+{'count 0} box
+  ('count (1 plus) edit) mutate
+  ('count (1 plus) edit) mutate
+  ('count (1 plus) edit) mutate
+  () lend 'count at 3 eq assert
+  free
+
+-- deeply nested records: 4 levels, at-chain to the leaf
+{'a {'b {'c {'d 10}}}} 'nest4 let
+nest4 'a at 'b at 'c at 'd at 10 eq assert
+
+-- stack combinator shapes: assert exact order after chained ops
+-- 1 2 3 4 over over over  ==>  1 2 3 4 3 4 3
+1 2 3 4 over over over
+3 eq assert  4 eq assert  3 eq assert
+4 eq assert  3 eq assert  2 eq assert  1 eq assert
+
+-- rot three times is identity on 3 elements
+1 2 3 rot rot rot
+3 eq assert  2 eq assert  1 eq assert
+
+-- untag with a default body that ITSELF produces a tag: default passes through non-ok
+42 'foo tag 99 default 99 eq assert
+
+-- default on 'ok payload keeps the payload
+42 ok 99 default 42 eq assert
+
+-- empty-list ops that are valid (not panics)
+[] reverse list eq assert
+[] sum 0 eq assert
+[] 0 take-n list eq assert
+[] 0 drop-n list eq assert
+[] dedup list eq assert
+[] sort list eq assert
+
+-- large-but-legal list: closed-form sum
+0 5000 range sum 12497500 eq assert
+
 -- ===== Done =====
 "All tests passed!" print

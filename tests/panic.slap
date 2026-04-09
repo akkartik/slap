@@ -268,3 +268,44 @@ tuck
 -- EXPECT-COL: 14
 [10 20 30] 5 get
 
+-- ===== Uncovered die() sites =====
+
+-- EXPECT: random: max must be positive
+0 random
+
+-- EXPECT: random: max must be positive
+-5 random
+
+-- EXPECT: dip: need body and value
+1 dip
+
+-- EXPECT: loop: expected tuple
+42 loop
+
+-- EXPECT: cond: expected tuple or record
+1 1 -1 cond
+
+-- EXPECT: match: expected tuple or record
+'x 1 -1 match
+
+-- EXPECT: untag: expected tuple or record
+1 'ok tag 1 -1 untag
+
+-- EXPECT: untag: need even number of clauses
+1 'ok tag {'ok} -1 untag
+
+-- EXPECT: at: key 'b' not found
+{'a 1} 'b at
+
+-- EXPECT: index 0 out of bounds
+[] first
+
+-- EXPECT: index -1 out of bounds
+[] last
+
+-- EXPECT: index 0 out of bounds
+[] max-of
+
+-- EXPECT: index 0 out of bounds
+[] min-of
+

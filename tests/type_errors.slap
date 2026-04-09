@@ -277,3 +277,27 @@
 -- EXPECT: expected num, got tagged
 -- TYPE ERROR: tagged value in mul
 42 ok 2 mul
+
+-- EXPECT: expected list
+-- TYPE ERROR: rise of non-list
+42 rise
+
+-- EXPECT: expected list
+-- TYPE ERROR: fall of non-list
+42 fall
+
+-- EXPECT: expected list
+-- TYPE ERROR: shape of non-list
+42 shape
+
+-- EXPECT: expected list
+-- TYPE ERROR: reverse of non-list
+42 reverse
+
+-- EXPECT: expected list
+-- TYPE ERROR: dedup of non-list
+42 dedup
+
+-- EXPECT: expected list
+-- TYPE ERROR: grab from tagged value
+1 'x tag grab
