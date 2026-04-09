@@ -312,9 +312,27 @@ static PrimFn prim_lookup(uint32_t sym) {
     return NULL;
 }
 
-static int64_t pop_int(void) { Value v = spop(); if (v.tag != VAL_INT) die("expected int, got %s", v.tag == VAL_FLOAT ? "float" : "non-int"); return v.as.i; }
-static double pop_float(void) { Value v = spop(); if (v.tag != VAL_FLOAT) die("expected float, got non-float"); return v.as.f; }
-static uint32_t pop_sym(void) { Value v = spop(); if (v.tag != VAL_SYM) die("expected symbol, got non-symbol"); return v.as.sym; }
+static int64_t pop_int(void) {
+    Value v = spop();
+    if (v.tag == VAL_INT) return v.as.i;
+    if (v.tag == VAL_FLOAT) die("expected int, got float %g", v.as.f);
+    if (v.tag == VAL_SYM) die("expected int, got symbol '%s", sym_name(v.as.sym));
+    die("expected int, got %s", valtag_name(v.tag));
+}
+static double pop_float(void) {
+    Value v = spop();
+    if (v.tag == VAL_FLOAT) return v.as.f;
+    if (v.tag == VAL_INT) die("expected float, got int %lld", (long long)v.as.i);
+    if (v.tag == VAL_SYM) die("expected float, got symbol '%s", sym_name(v.as.sym));
+    die("expected float, got %s", valtag_name(v.tag));
+}
+static uint32_t pop_sym(void) {
+    Value v = spop();
+    if (v.tag == VAL_SYM) return v.as.sym;
+    if (v.tag == VAL_INT) die("expected symbol, got int %lld", (long long)v.as.i);
+    if (v.tag == VAL_FLOAT) die("expected symbol, got float %g", v.as.f);
+    die("expected symbol, got %s", valtag_name(v.tag));
+}
 
 typedef struct { int base; int slots; } ElemRef;
 static ElemRef compound_elem(Value *data, int total_slots, int len, int index) {
@@ -336,8 +354,8 @@ static ElemRef record_field(Value *data, int total_slots, int len, uint32_t key,
         int lp = elem_end - 1; Value last = data[lp];
         int vsize = val_slots(last);
         int val_base = elem_end - vsize, key_pos = val_base - 1;
-        if (key_pos < 0) die("malformed record");
-        if (data[key_pos].tag != VAL_SYM) die("record key must be symbol");
+        if (key_pos < 0) die("malformed record (len=%d, total_slots=%d)", len, total_slots);
+        if (data[key_pos].tag != VAL_SYM) die("record key must be symbol, got %s", valtag_name(data[key_pos].tag));
         if (data[key_pos].as.sym == key) { ref.base = val_base; ref.slots = vsize; *found = 1; return ref; }
         elem_end = key_pos;
     }
@@ -454,12 +472,12 @@ static int val_equal(Value *a, int aslots, Value *b, int bslots) {
 
 static int val_less(Value *a, int aslots, Value *b, int bslots) {
     Value atop = a[aslots - 1], btop = b[bslots - 1];
-    if (atop.tag != btop.tag) die("lt: type mismatch");
+    if (atop.tag != btop.tag) die("lt: type mismatch, got %s and %s", valtag_name(atop.tag), valtag_name(btop.tag));
     switch (atop.tag) {
     case VAL_INT: return atop.as.i < btop.as.i;
     case VAL_FLOAT: return atop.as.f < btop.as.f;
     case VAL_SYM: return atop.as.sym < btop.as.sym;
-    default: die("lt: unsupported type"); return 0;
+    default: die("lt: unsupported type %s (only int/float/symbol are ordered)", valtag_name(atop.tag)); return 0;
     }
 }
 
@@ -1495,9 +1513,10 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     if (name##_s > LOCAL_MAX) die("value too large (%d slots, max %d)", name##_s, LOCAL_MAX); \
     if (name##_s > sp) die("stack underflow: need %d slots, have %d", name##_s, sp); \
     Value name##_buf[name##_s]; memcpy(name##_buf, &stack[sp-name##_s], name##_s*sizeof(Value)); sp -= name##_s
-#define POP_BODY(name, label) if (stack[sp-1].tag != VAL_TUPLE) die(label ": expected tuple"); POP_VAL(name)
+#define POP_BODY(name, label) if (sp<=0) die(label ": stack underflow"); if (stack[sp-1].tag != VAL_TUPLE) die(label ": expected tuple, got %s", valtag_name(stack[sp-1].tag)); POP_VAL(name)
 #define POP_LIST_BUF(name, label) \
-    if (stack[sp-1].tag != VAL_LIST) die(label ": expected list"); \
+    if (sp<=0) die(label ": stack underflow"); \
+    if (stack[sp-1].tag != VAL_LIST) die(label ": expected list, got %s", valtag_name(stack[sp-1].tag)); \
     Value name##_top = stack[sp-1]; int name##_s = val_slots(name##_top); \
     if (name##_s > LOCAL_MAX) die(label ": list too large (%d slots, max %d)", name##_s, LOCAL_MAX); \
     if (name##_s > sp) die(label ": stack underflow: need %d slots, have %d", name##_s, sp); \
@@ -1575,12 +1594,13 @@ static void prim_apply(Frame *env) { if(sp<=0) die("apply: stack underflow"); PO
 #define ARITH2(nm,iop,fop) static void prim_##nm(Frame *e){(void)e;Value b=spop(),a=spop(); \
     if(a.tag==VAL_INT&&b.tag==VAL_INT) spush(val_int(a.as.i iop b.as.i)); \
     else if(a.tag==VAL_FLOAT&&b.tag==VAL_FLOAT) spush(val_float(a.as.f fop b.as.f)); \
-    else die(#nm ": type mismatch");}
+    else die(#nm ": type mismatch, got %s and %s", valtag_name(a.tag), valtag_name(b.tag));}
 ARITH2(plus,+,+) ARITH2(sub,-,-) ARITH2(mul,*,*)
 
 static void prim_div(Frame *e) { (void)e; Value b=spop(),a=spop();
     if(a.tag==VAL_INT&&b.tag==VAL_INT){if(b.as.i==0)die("div: division by zero");spush(val_int(a.as.i/b.as.i));}
-    else if(a.tag==VAL_FLOAT&&b.tag==VAL_FLOAT)spush(val_float(a.as.f/b.as.f)); else die("div: type mismatch"); }
+    else if(a.tag==VAL_FLOAT&&b.tag==VAL_FLOAT)spush(val_float(a.as.f/b.as.f));
+    else die("div: type mismatch, got %s and %s", valtag_name(a.tag), valtag_name(b.tag)); }
 static void prim_mod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("mod: division by zero");spush(val_int(a%b));}
 static void prim_divmod(Frame *e){(void)e;int64_t b=pop_int(),a=pop_int();if(b==0)die("divmod: division by zero");spush(val_int(a%b));spush(val_int(a/b));}
 static void prim_wrap(Frame *e){(void)e;int64_t m=pop_int(),v=pop_int();if(m==0)die("wrap: modulus must be non-zero");spush(val_int(((v%m)+m)%m));}
@@ -1614,7 +1634,7 @@ static void eval_default(Value *buf, int s, Value top, Value *scrut, int scrut_s
 
 static void prim_if(Frame *env) {
     POP_VAL(el); POP_BODY(then,"if");
-    Value cond=spop(); if(cond.tag!=VAL_INT) die("if: condition must be int, got tag %d",cond.tag);
+    Value cond=spop(); if(cond.tag!=VAL_INT) die("if: condition must be int, got %s",valtag_name(cond.tag));
     if(cond.as.i) {
         int len=(int)then_buf[then_s-1].as.compound.len;
         if(then_s==len+1) {
@@ -1641,7 +1661,7 @@ static void prim_if(Frame *env) {
 static void prim_cond(Frame *env) {
     POP_VAL(def);
     Value clauses_top=stack[sp-1];
-    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("cond: expected tuple or record of clauses");
+    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("cond: expected tuple or record of clauses, got %s", valtag_name(clauses_top.tag));
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len;
     if(clauses_s>LOCAL_MAX) die("cond: clauses too large (%d slots, max %d)",clauses_s,LOCAL_MAX);
     Value clauses_buf[clauses_s]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
@@ -1660,11 +1680,11 @@ static void prim_cond(Frame *env) {
 static void prim_match(Frame *env) {
     POP_VAL(def);
     Value clauses_top=stack[sp-1];
-    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("match: expected tuple of clauses");
+    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("match: expected tuple or record of clauses, got %s", valtag_name(clauses_top.tag));
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len;
     if(clauses_s>LOCAL_MAX) die("match: clauses too large (%d slots, max %d)",clauses_s,LOCAL_MAX);
     Value clauses_buf[clauses_s]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
-    Value scrut=spop(); if(scrut.tag!=VAL_SYM) die("match: scrutinee must be a symbol");
+    Value scrut=spop(); if(scrut.tag!=VAL_SYM) die("match: scrutinee must be a symbol, got %s", valtag_name(scrut.tag));
     if(clauses_top.tag==VAL_RECORD){
         int found; ElemRef body_ref=record_field(clauses_buf,clauses_s,clauses_len,scrut.as.sym,&found);
         if(found){eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);return;}
@@ -1692,7 +1712,7 @@ static void prim_tag(Frame *e) {
 static void prim_untag(Frame *env) {
     POP_VAL(def);
     Value clauses_top=stack[sp-1];
-    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("untag: expected tuple or record of clauses");
+    if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die("untag: expected tuple or record of clauses, got %s", valtag_name(clauses_top.tag));
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len;
     if(clauses_s>LOCAL_MAX) die("untag: clauses too large (%d slots, max %d)",clauses_s,LOCAL_MAX);
     Value clauses_buf[clauses_s]; memcpy(clauses_buf,&stack[sp-clauses_s],clauses_s*sizeof(Value)); sp-=clauses_s;
@@ -1722,7 +1742,7 @@ static void prim_untag(Frame *env) {
 static void prim_then(Frame *env) {
     POP_BODY(body,"then");
     Value top=stack[sp-1];
-    if(top.tag!=VAL_TAGGED) die("then: expected tagged value");
+    if(top.tag!=VAL_TAGGED) die("then: expected tagged value, got %s", valtag_name(top.tag));
     if(top.as.compound.len==S_OK){
         sp--; /* remove header, payload stays */
         eval_body(body_buf,body_s,env);
@@ -1736,7 +1756,7 @@ static void prim_then(Frame *env) {
 static void prim_default(Frame *env) {
     POP_VAL(def);
     Value top=stack[sp-1];
-    if(top.tag!=VAL_TAGGED) die("default: expected tagged value");
+    if(top.tag!=VAL_TAGGED) die("default: expected tagged value, got %s", valtag_name(top.tag));
     int tagged_s=val_slots(top);
     if(top.as.compound.len==S_OK){
         sp--; /* remove header, payload stays */
@@ -1749,13 +1769,16 @@ static void prim_default(Frame *env) {
 static void prim_union(Frame *e) {
     (void)e;
     Value top=stack[sp-1];
-    if(!is_compound(top.tag)) die("union: expected record describing tag schema");
+    if(!is_compound(top.tag)) die("union: expected record describing tag schema, got %s", valtag_name(top.tag));
     sp-=val_slots(top);
 }
 
 static void prim_loop(Frame *env) {
-    if(stack[sp-1].tag!=VAL_TUPLE) die("loop: expected tuple");
-    int body_s=val_slots(stack[sp-1]); if(body_s>LOCAL_MAX) die("loop: body too large"); if(body_s>sp) die("loop: stack underflow");
+    if(sp<=0) die("loop: stack underflow (need a body tuple)");
+    if(stack[sp-1].tag!=VAL_TUPLE) die("loop: expected tuple, got %s", valtag_name(stack[sp-1].tag));
+    int body_s=val_slots(stack[sp-1]);
+    if(body_s>LOCAL_MAX) die("loop: body too large (%d slots, max %d)", body_s, LOCAL_MAX);
+    if(body_s>sp) die("loop: stack underflow (need %d slots, have %d)", body_s, sp);
     Value body_buf[body_s]; memcpy(body_buf,&stack[sp-body_s],body_s*sizeof(Value)); sp-=body_s;
     for(;;){eval_body(body_buf,body_s,env);if(!pop_int())break;}
 }
@@ -1803,11 +1826,17 @@ static inline void eval_prepared(PreparedBody *pb) {
 }
 
 static void prim_while(Frame *env) {
-    if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected tuple");
-    int body_s=val_slots(stack[sp-1]); if(body_s>LOCAL_MAX||body_s>sp) die("while: stack underflow");
+    if(sp<=0) die("while: stack underflow (need predicate and body tuples)");
+    if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected body tuple, got %s", valtag_name(stack[sp-1].tag));
+    int body_s=val_slots(stack[sp-1]);
+    if(body_s>LOCAL_MAX) die("while: body too large (%d slots, max %d)", body_s, LOCAL_MAX);
+    if(body_s>sp) die("while: stack underflow popping body (need %d slots, have %d)", body_s, sp);
     Value body_buf[body_s]; memcpy(body_buf,&stack[sp-body_s],body_s*sizeof(Value)); sp-=body_s;
-    if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected tuple");
-    int pred_s=val_slots(stack[sp-1]); if(pred_s>LOCAL_MAX||pred_s>sp) die("while: stack underflow");
+    if(sp<=0) die("while: stack underflow (need predicate tuple below body)");
+    if(stack[sp-1].tag!=VAL_TUPLE) die("while: expected predicate tuple, got %s", valtag_name(stack[sp-1].tag));
+    int pred_s=val_slots(stack[sp-1]);
+    if(pred_s>LOCAL_MAX) die("while: predicate too large (%d slots, max %d)", pred_s, LOCAL_MAX);
+    if(pred_s>sp) die("while: stack underflow popping predicate (need %d slots, have %d)", pred_s, sp);
     Value pred_buf[pred_s]; memcpy(pred_buf,&stack[sp-pred_s],pred_s*sizeof(Value)); sp-=pred_s;
     PreparedBody pp, pb;
     prepare_body(pred_buf, pred_s, env, &pp);
@@ -1831,15 +1860,15 @@ static void prim_stack(Frame *e){(void)e;spush(val_compound(VAL_TUPLE,0,1));}
 
 static void prim_size(Frame *e) {
     (void)e; Value top=speek();
-    if(top.tag==VAL_TAGGED) die("size: tagged values have no size");
-    if(!is_compound(top.tag)) die("size: expected compound");
+    if(top.tag==VAL_TAGGED) die("size: tagged values have no size (untag first)");
+    if(!is_compound(top.tag)) die("size: expected compound (tuple/list/record), got %s", valtag_name(top.tag));
     sp-=val_slots(top); spush(val_int((int)top.as.compound.len));
 }
 
 static void prim_push_op(Frame *e) {
     (void)e; POP_VAL(v); Value ct=stack[sp-1];
     if(ct.tag==VAL_TAGGED) die("push: cannot push onto tagged value");
-    if(!is_compound(ct.tag)) die("push: expected compound");
+    if(!is_compound(ct.tag)) die("push: expected compound (tuple/list/record), got %s", valtag_name(ct.tag));
     ValTag tag=ct.tag; int cs=val_slots(ct),cl=(int)ct.as.compound.len; sp--;
     memcpy(&stack[sp],v_buf,v_s*sizeof(Value)); sp+=v_s;
     spush(val_compound(tag,cl+1,cs+v_s));
@@ -1848,7 +1877,7 @@ static void prim_push_op(Frame *e) {
 static void prim_pop_impl(const char *label) {
     Value top=speek();
     if(top.tag==VAL_TAGGED) die("%s: cannot pop from tagged value", label);
-    if(!is_compound(top.tag)) die("%s: expected compound", label);
+    if(!is_compound(top.tag)) die("%s: expected compound (tuple/list/record), got %s", label, valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len;
     if(len==0) die("%s: empty %s", label, tag==VAL_LIST?"list":tag==VAL_TUPLE?"tuple":"record");
     int base=sp-s; ElemRef last=compound_elem(&stack[base],s,len,len-1);
@@ -1860,8 +1889,9 @@ static void prim_pop_op(Frame *e){(void)e;prim_pop_impl("pop");}
 
 static void prim_elem(int consume) {
     int64_t idx=pop_int(); Value top=speek();
-    if(top.tag==VAL_TAGGED) die(consume?"get: cannot index tagged value":"pull: cannot index tagged value");
-    if(!is_compound(top.tag)) die(consume?"get: expected compound":"pull: expected compound");
+    const char *label=consume?"get":"pull";
+    if(top.tag==VAL_TAGGED) die("%s: cannot index tagged value", label);
+    if(!is_compound(top.tag)) die("%s: expected compound (tuple/list/record), got %s", label, valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef ref=compound_elem(&stack[base],s,len,(int)idx);
     Value eb[LOCAL_MAX]; memcpy(eb,&stack[base+ref.base],ref.slots*sizeof(Value));
@@ -1872,7 +1902,7 @@ static void prim_elem(int consume) {
 static void prim_replace_at(Frame *e) {
     (void)e; POP_VAL(v); int64_t idx=pop_int(); Value top=speek();
     if(top.tag==VAL_TAGGED) die("put: cannot index tagged value");
-    if(!is_compound(top.tag)) die("put: expected compound");
+    if(!is_compound(top.tag)) die("put: expected compound (tuple/list/record), got %s", valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef old_ref=compound_elem(&stack[base],s,len,(int)idx);
     if(old_ref.slots==v_s) memcpy(&stack[base+old_ref.base],v_buf,v_s*sizeof(Value));
@@ -1891,10 +1921,10 @@ static void prim_replace_at(Frame *e) {
 static void prim_concat(Frame *e) {
     (void)e; Value top2=stack[sp-1];
     if(top2.tag==VAL_TAGGED) die("concat: cannot concat tagged values");
-    if(!is_compound(top2.tag)) die("concat: expected compound");
+    if(!is_compound(top2.tag)) die("concat: expected compound (tuple/list/record), got %s", valtag_name(top2.tag));
     ValTag tag=top2.tag; int s2=val_slots(top2),len2=(int)top2.as.compound.len,base2=sp-s2;
     Value below=stack[base2-1];
-    if(!is_compound(below.tag)) die("concat: expected compound");
+    if(!is_compound(below.tag)) die("concat: expected compound (tuple/list/record) below top, got %s", valtag_name(below.tag));
     int s1=val_slots(below),len1=(int)below.as.compound.len,base1=base2-s1;
     int new_elem_slots=(s1-1)+(s2-1);
     if(new_elem_slots>LOCAL_MAX) die("concat: result too large (%d slots, max %d)",new_elem_slots,LOCAL_MAX);
@@ -1913,16 +1943,18 @@ static void prim_nth(Frame *env) {
     int64_t idx=pop_int(); uint32_t sym=pop_sym();
     Lookup lu=frame_lookup(env,sym); if(!lu.bind) die("nth: unknown word: %s",sym_name(sym));
     Value *data=&lu.frame->vals[lu.bind->offset]; int s=lu.bind->slots;
-    Value top=data[s-1]; if(!is_compound(top.tag)) die("nth: expected compound");
+    Value top=data[s-1]; if(!is_compound(top.tag)) die("nth: expected compound (tuple/list/record) bound to '%s, got %s", sym_name(sym), valtag_name(top.tag));
     int len=(int)top.as.compound.len;
     ElemRef ref=compound_elem(data,s,len,(int)idx);
     memcpy(&stack[sp],&data[ref.base],ref.slots*sizeof(Value)); sp+=ref.slots;
 }
 
 static void prim_slice_n(int take) {
-    int64_t n=pop_int(); Value top=speek(); if(top.tag!=VAL_LIST) die(take?"take-n: expected list":"drop-n: expected list");
+    int64_t n=pop_int(); Value top=speek();
+    const char *label=take?"take-n":"drop-n";
+    if(top.tag!=VAL_LIST) die("%s: expected list, got %s", label, valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
-    if(n<0||n>len) die(take?"take-n: n out of range":"drop-n: n out of range");
+    if(n<0||n>len) die("%s: n=%lld out of range (list len %d)", label, (long long)n, len);
     Value tmp[LOCAL_MAX]; int tmp_sp=0;
     int start=take?0:(int)n, end_i=take?(int)n:len;
     for(int i=start;i<end_i;i++){ElemRef r=compound_elem(&stack[base],s,len,i);memcpy(&tmp[tmp_sp],&stack[base+r.base],r.slots*sizeof(Value));tmp_sp+=r.slots;}
@@ -1968,13 +2000,24 @@ static int sort_cmp(const void *a,const void *b) {
     const Value *va=(const Value*)a,*vb=(const Value*)b;
     if(va->tag==VAL_INT&&vb->tag==VAL_INT) return(va->as.i>vb->as.i)-(va->as.i<vb->as.i);
     if(va->tag==VAL_FLOAT&&vb->tag==VAL_FLOAT) return(va->as.f>vb->as.f)-(va->as.f<vb->as.f);
-    die("sort: unsupported element type"); return 0;
+    die("sort: mismatched or unsupported element types (got %s and %s; only all-int or all-float lists are sortable)", valtag_name(va->tag), valtag_name(vb->tag)); return 0;
 }
-static void prim_sort(Frame *e){(void)e;Value top=speek();if(top.tag!=VAL_LIST)die("sort: expected list");int s=val_slots(top),len=(int)top.as.compound.len;if(s!=len+1)die("sort: only single-slot elements (int/float) supported");qsort(&stack[sp-s],len,sizeof(Value),sort_cmp);}
+static void prim_sort(Frame *e){
+    (void)e; Value top=speek();
+    if(top.tag!=VAL_LIST) die("sort: expected list, got %s", valtag_name(top.tag));
+    int s=val_slots(top),len=(int)top.as.compound.len;
+    if(s!=len+1) {
+        /* find first multi-slot element to report */
+        ValTag bad=VAL_INT; int base=sp-s;
+        for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);if(r.slots>1){bad=stack[base+r.base+r.slots-1].tag;break;}}
+        die("sort: only lists of single-slot scalars (int/float) are sortable, found %s element", valtag_name(bad));
+    }
+    qsort(&stack[sp-s],len,sizeof(Value),sort_cmp);
+}
 
 static void prim_index_of(Frame *e) {
     (void)e; Value val=spop(); Value top=speek();
-    if(top.tag!=VAL_LIST) die("index-of: expected list");
+    if(top.tag!=VAL_LIST) die("index-of: expected list, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s,found=-1;
     for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);if(val_equal(&stack[base+r.base],r.slots,&val,1)){found=i;break;}}
     sp-=s; spush(val_int(found));
@@ -1996,7 +2039,7 @@ static void prim_scan(Frame *env) {
 static void prim_at(Frame *env) {
     (void)env; uint32_t key=pop_sym();
     if(sp<=0) die("at: stack underflow"); Value next=stack[sp-1];
-    if(next.tag!=VAL_RECORD) die("at: expected record, got tag %d",next.tag);
+    if(next.tag!=VAL_RECORD) die("at: expected record, got %s",valtag_name(next.tag));
     int s=val_slots(next),len=(int)next.as.compound.len,base=sp-s;
     int found; ElemRef ref=record_field(&stack[base],s,len,key,&found);
     if(!found) die("at: key '%s' not found in record",sym_name(key));
@@ -2007,7 +2050,7 @@ static void prim_at(Frame *env) {
 
 static void prim_into(Frame *e) {
     (void)e; uint32_t key=pop_sym(); POP_VAL(v);
-    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("into: expected record");
+    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("into: expected record, got %s", valtag_name(rec_top.tag));
     int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s;
     int found; ElemRef existing=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
     if(found&&existing.slots==v_s) memcpy(&stack[rec_base+existing.base],v_buf,v_s*sizeof(Value));
@@ -2029,7 +2072,7 @@ static void prim_into(Frame *e) {
 
 static void prim_edit(Frame *env) {
     POP_BODY(fn,"edit"); uint32_t key=pop_sym();
-    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("edit: expected record");
+    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("edit: expected record, got %s", valtag_name(rec_top.tag));
     int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s;
     int found; ElemRef ref=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
     if(!found) die("edit: key '%s' not found in record",sym_name(key));
@@ -2058,20 +2101,20 @@ static void prim_edit(Frame *env) {
 
 typedef struct BoxData { Value *data; int slots; } BoxData;
 static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;memcpy(bd->data,&stack[sp-s],s*sizeof(Value));sp-=s;Value v;v.tag=VAL_BOX;v.as.box=bd;spush(v);}
-static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box");BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
+static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box, got %s", valtag_name(v.tag));BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
 
 static void prim_lend(Frame *env) {
-    POP_BODY(fn,"lend"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("lend: expected box");
+    POP_BODY(fn,"lend"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("lend: expected box, got %s", valtag_name(box_val.tag));
     BoxData *bd=(BoxData*)box_val.as.box;
     memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots;
     int sp_before=sp-bd->slots; eval_body(fn_buf,fn_s,env);
-    int results_slots=sp-sp_before; if(results_slots>LOCAL_MAX) die("lend: result too large");
+    int results_slots=sp-sp_before; if(results_slots>LOCAL_MAX) die("lend: result too large (%d slots, max %d)", results_slots, LOCAL_MAX);
     Value results[results_slots]; memcpy(results,&stack[sp_before],results_slots*sizeof(Value)); sp=sp_before;
     spush(box_val); memcpy(&stack[sp],results,results_slots*sizeof(Value)); sp+=results_slots;
 }
 
 static void prim_mutate(Frame *env) {
-    POP_BODY(fn,"mutate"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("mutate: expected box");
+    POP_BODY(fn,"mutate"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("mutate: expected box, got %s", valtag_name(box_val.tag));
     BoxData *bd=(BoxData*)box_val.as.box;
     memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots;
     eval_body(fn_buf,fn_s,env);
@@ -2089,10 +2132,12 @@ static void deep_copy_values(Value *dst, const Value *src, int slots) {
     }
 }
 
-static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box");BoxData *orig=(BoxData*)v.as.box;BoxData *copy=malloc(sizeof(BoxData));copy->data=malloc(orig->slots*sizeof(Value));copy->slots=orig->slots;deep_copy_values(copy->data,orig->data,orig->slots);spush(v);Value v2;v2.tag=VAL_BOX;v2.as.box=copy;spush(v2);}
+static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box, got %s", valtag_name(v.tag));BoxData *orig=(BoxData*)v.as.box;BoxData *copy=malloc(sizeof(BoxData));copy->data=malloc(orig->slots*sizeof(Value));copy->slots=orig->slots;deep_copy_values(copy->data,orig->data,orig->slots);spush(v);Value v2;v2.tag=VAL_BOX;v2.as.box=copy;spush(v2);}
 
 static void prim_grade(Frame *e,int ascending) {
-    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die(ascending?"rise: expected list":"fall: expected list");
+    (void)e; Value top=speek();
+    const char *label=ascending?"rise":"fall";
+    if(top.tag!=VAL_LIST) die("%s: expected list, got %s", label, valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     typedef struct{int idx;Value val;} IV;
     IV *items=malloc(len*sizeof(IV));
@@ -2107,7 +2152,7 @@ static void prim_grade(Frame *e,int ascending) {
     spush(val_compound(VAL_LIST,len,len+1)); free(items);
 }
 static void prim_shape(Frame *e) {
-    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("shape: expected list");
+    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("shape: expected list, got %s", valtag_name(top.tag));
     int len=(int)top.as.compound.len,s=val_slots(top),base=sp-s;
     int dims[16],ndims=0; dims[ndims++]=len;
     if(len>0){ElemRef r0=compound_elem(&stack[base],s,len,0);Value e0=stack[base+r0.base+r0.slots-1];if(e0.tag==VAL_LIST)dims[ndims++]=(int)e0.as.compound.len;}
@@ -2130,7 +2175,7 @@ static void dispatch_word(uint32_t sym, Frame *env) {
 
 static void eval_body(Value *body, int slots, Frame *env) {
     if(++eval_depth > EVAL_DEPTH_MAX) die("recursion depth exceeded (%d levels)", EVAL_DEPTH_MAX);
-    Value hdr=body[slots-1]; if(hdr.tag!=VAL_TUPLE) die("eval_body: expected tuple");
+    Value hdr=body[slots-1]; if(hdr.tag!=VAL_TUPLE) die("eval_body: expected tuple, got %s (internal: evaluator received non-tuple header)", valtag_name(hdr.tag));
     int len=(int)hdr.as.compound.len;
     Frame *exec_env=hdr.as.compound.env?hdr.as.compound.env:env;
     int saved_bc=exec_env->bind_count,saved_vu=exec_env->vals_used;
@@ -2181,7 +2226,7 @@ static void build_tuple(Token *toks, int start, int end, int total_count, Frame 
         case TOK_FLOAT: spush(val_float(tt->as.f)); elem_count++; break;
         case TOK_SYM: spush(val_sym(tt->as.sym)); elem_count++; break;
         case TOK_WORD:
-            if(tt->as.sym==S_CHECK){if(elem_count>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;elem_count--;}else die("check: expected preceding type word");}
+            if(tt->as.sym==S_CHECK){if(elem_count>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;elem_count--;}else die("check: expected preceding type word, got %s", elem_count>0?valtag_name(stack[sp-1].tag):"empty stack");}
             else{PrimFn xt_fn=prim_lookup(tt->as.sym);if(xt_fn)spush(val_xt(tt->as.sym,xt_fn));else spush(val_word(tt->as.sym));elem_count++;}
             break;
         case TOK_STRING:
@@ -2574,9 +2619,9 @@ static const char *PRELUDE =
 ;
 
 static void prim_reverse(Frame *e) {
-    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("reverse: expected list");
+    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("reverse: expected list, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
-    if(s>LOCAL_MAX) die("reverse: list too large");
+    if(s>LOCAL_MAX) die("reverse: list too large (%d slots, max %d)", s, LOCAL_MAX);
     Value buf[LOCAL_MAX]; memcpy(buf,&stack[base],s*sizeof(Value)); sp=base;
     int offsets[LOCAL_MAX],sizes[LOCAL_MAX]; compute_offsets(buf,s,len,offsets,sizes);
     int rb=sp;
@@ -2585,10 +2630,10 @@ static void prim_reverse(Frame *e) {
 }
 
 static void prim_dedup(Frame *e) {
-    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("dedup: expected list");
+    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("dedup: expected list, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     Value buf[LOCAL_MAX]; memcpy(buf,&stack[base],s*sizeof(Value)); sp=base;
-    if(len>LOCAL_MAX) die("dedup: list too large");
+    if(len>LOCAL_MAX) die("dedup: list too large (%d elements, max %d)", len, LOCAL_MAX);
     int offsets[LOCAL_MAX],sizes2[LOCAL_MAX]; compute_offsets(buf,s,len,offsets,sizes2);
     int rb=sp,rc=0;
     for(int i=0;i<len;i++){
@@ -2644,7 +2689,7 @@ static void prim_pixel(Frame *e){(void)e;int64_t color=pop_int(),y=pop_int(),x=p
 static void prim_fill_rect(Frame *e){(void)e;int64_t c=pop_int(),h=pop_int(),w=pop_int(),y0=pop_int(),x0=pop_int();uint8_t cv=(uint8_t)(c&3);for(int dy=0;dy<h;dy++)for(int dx=0;dx<w;dx++){int x=x0+dx,y=y0+dy;if(x>=0&&x<CANVAS_W&&y>=0&&y<CANVAS_H)canvas[y*CANVAS_W+x]=cv;}}
 static void prim_millis(Frame *e){(void)e;spush(val_int((int64_t)SDL_GetTicks()));}
 static void prim_on(Frame *e) {
-    (void)e; Value fn_top=stack[sp-1]; if(fn_top.tag!=VAL_TUPLE) die("on: expected tuple handler");
+    (void)e; Value fn_top=stack[sp-1]; if(fn_top.tag!=VAL_TUPLE) die("on: expected tuple handler, got %s", valtag_name(fn_top.tag));
     int fn_s=val_slots(fn_top); if(handler_count>=MAX_HANDLERS) die("on: too many event handlers");
     memcpy(event_handlers[handler_count].handler_body,&stack[sp-fn_s],fn_s*sizeof(Value));
     event_handlers[handler_count].handler_slots=fn_s; sp-=fn_s;
@@ -2683,7 +2728,7 @@ static void show_one_frame(void) {
 }
 #endif
 static void prim_show(Frame *env) {
-    Value fn_top=stack[sp-1]; if(fn_top.tag!=VAL_TUPLE) die("show: expected tuple render function");
+    Value fn_top=stack[sp-1]; if(fn_top.tag!=VAL_TUPLE) die("show: expected tuple render function, got %s", valtag_name(fn_top.tag));
     render_slots=val_slots(fn_top); memcpy(render_body,&stack[sp-render_slots],render_slots*sizeof(Value)); sp-=render_slots;
     show_intern_syms();
     if(headless_mode){
@@ -2717,7 +2762,7 @@ static void prim_show(Frame *env) {
 
 static char *pop_string_path(const char *who) {
     Value top = spop();
-    if (top.tag != VAL_LIST) die("%s: expected list (string), got non-list", who);
+    if (top.tag != VAL_LIST) die("%s: expected list (string), got %s", who, valtag_name(top.tag));
     int len = (int)top.as.compound.len;
     int slots = (int)top.as.compound.slots - 1;
     if (slots != len) die("%s: path list elements must all be single-slot (ints)", who);
@@ -2757,7 +2802,7 @@ static void prim_read(Frame *e) {
 static void prim_write(Frame *e) {
     (void)e;
     Value top = spop();
-    if (top.tag != VAL_LIST) die("write: expected list (bytes), got non-list");
+    if (top.tag != VAL_LIST) die("write: expected list (bytes), got %s", valtag_name(top.tag));
     int len = (int)top.as.compound.len;
     int slots = (int)top.as.compound.slots - 1;
     if (slots != len) die("write: byte list elements must all be single-slot (ints)");
@@ -2801,7 +2846,7 @@ static void prim_ls(Frame *e) {
 static void prim_utf8_encode(Frame *e) {
     (void)e;
     Value top = spop();
-    if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints");
+    if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints, got %s", valtag_name(top.tag));
     int len = (int)top.as.compound.len;
     int slots = (int)top.as.compound.slots - 1;
     if (slots != len) die("utf8-encode: elements must all be ints");
@@ -2842,7 +2887,7 @@ static void prim_utf8_encode(Frame *e) {
 static void prim_utf8_decode(Frame *e) {
     (void)e;
     Value top = spop();
-    if (top.tag != VAL_LIST) die("utf8-decode: expected list of bytes");
+    if (top.tag != VAL_LIST) die("utf8-decode: expected list of bytes, got %s", valtag_name(top.tag));
     int len = (int)top.as.compound.len;
     int slots = (int)top.as.compound.slots - 1;
     if (slots != len) die("utf8-decode: elements must all be ints");
@@ -2918,7 +2963,7 @@ static void prim_tcp_connect(Frame *e) {
 static void prim_tcp_send(Frame *e) {
     (void)e;
     Value top = spop();
-    if (top.tag != VAL_LIST) die("tcp-send: expected list (bytes)");
+    if (top.tag != VAL_LIST) die("tcp-send: expected list (bytes), got %s", valtag_name(top.tag));
     int len = (int)top.as.compound.len;
     int slots = (int)top.as.compound.slots - 1;
     if (slots != len) die("tcp-send: byte list elements must all be single-slot (ints)");
@@ -2958,7 +3003,7 @@ static void prim_tcp_recv(Frame *e) {
 static void prim_tcp_close(Frame *e) {
     (void)e;
     Value v = spop();
-    if (v.tag != VAL_BOX) die("tcp-close: expected socket (box)");
+    if (v.tag != VAL_BOX) die("tcp-close: expected socket (box), got %s", valtag_name(v.tag));
     BoxData *bd = (BoxData*)v.as.box;
     if (bd->slots != 1 || bd->data[0].tag != VAL_INT) die("tcp-close: socket box must contain a single int");
     close((int)bd->data[0].as.i);

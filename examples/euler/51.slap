@@ -1,0 +1,89 @@
+-- Project Euler #51: Prime Digit Replacements
+-- Find the smallest prime that, by replacing all occurrences of a repeated
+-- digit with the same other digit, is part of an 8-prime value family.
+-- Answer: 121313 (replacing the three 1s with d=0..9 yields 8 primes).
+-- Simplification: we only replace *all* instances of a digit, not arbitrary
+-- subsets — this is sufficient to find 121313.
+
+'is-prime (
+  'ip-n let
+  ip-n 2 lt (0) (
+    ip-n 2 eq (1) (
+      ip-n 2 mod 0 eq (0) (
+        3 1
+        (over dup mul ip-n le over and)
+        (swap ip-n over mod 0 eq (nip 0 swap) () if 2 plus swap)
+        while
+        nip
+      ) if
+    ) if
+  ) if
+) def
+
+'pow-10 ('p let 1 p (10 mul) repeat) def
+
+-- family-count: n mult orig → number of primes in {base + d*mult | d in 0..9}
+--                that have the same digit count as n (no leading zero).
+'family-count (
+  'fc-orig let 'fc-mult let 'fc-n let
+  fc-n int-str len 'fc-dl let
+  fc-n fc-orig fc-mult mul sub 'fc-base let
+  0 0
+  (dup 10 lt)
+  (
+    dup fc-mult mul fc-base plus
+    dup int-str len fc-dl eq over is-prime and
+    (drop swap 1 plus swap) (drop) if
+    1 plus
+  ) while
+  drop
+) def
+
+-- compute-mult-loop: digits d i → sum of 10^(L-1-i) for i where digits[i]=d
+'compute-mult-loop recur (
+  'cml-i let 'cml-d let 'cml-digs let
+  cml-i cml-digs len ge (0) (
+    cml-digs cml-i get cml-d eq (
+      cml-digs len 1 sub cml-i sub pow-10
+      cml-digs cml-d cml-i 1 plus compute-mult-loop plus
+    ) (
+      cml-digs cml-d cml-i 1 plus compute-mult-loop
+    ) if
+  ) if
+) def
+
+-- compute-mult: n d → sum of 10^pos where n has digit d (pos LSB=0)
+'compute-mult (
+  'cm-d let 'cm-n let
+  cm-n int-str (48 sub) map cm-d 0 compute-mult-loop
+) def
+
+-- try-digit: p d → 1 if some digit d..9 gives an 8-family, else 0
+'try-digit recur (
+  'td-d let 'td-p let
+  td-d 10 ge (0) (
+    td-p td-d compute-mult 'td-mult let
+    td-mult 0 gt (
+      td-p td-mult td-d family-count 8 eq
+        (1)
+        (td-p td-d 1 plus try-digit)
+      if
+    ) (
+      td-p td-d 1 plus try-digit
+    ) if
+  ) if
+) def
+
+-- iterative search: stack holds (p found-flag); exit when found-flag=1
+2 0
+(dup 0 eq)
+(
+  drop
+  dup is-prime (
+    dup 0 try-digit
+    (1) (1 plus 0) if
+  ) (
+    1 plus 0
+  ) if
+) while
+drop print

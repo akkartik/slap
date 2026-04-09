@@ -8,7 +8,7 @@
 
 # slap
 
-A stack-based programming language with static type inference and linear types. Single-file C99 interpreter (~2100 lines).
+A stack-based programming language with static type inference and linear types. Single-file C99 interpreter (~3300 lines).
 
 ## install
 
@@ -357,7 +357,7 @@ Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ow
 
 ## prelude
 
-~65 definitions in slap itself, loaded at startup.
+~95 definitions in slap itself, loaded at startup.
 
 ### stack
 
@@ -367,6 +367,7 @@ Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ow
 | `peek` | alias of `over` | `1 2 peek` → `1 2 1` |
 | `nip` | a b → b | `1 2 nip` → `2` |
 | `rot` | a b c → b c a | `1 2 3 rot` → `2 3 1` |
+| `tuck` | a b → b a b | `1 2 tuck` → `2 1 2` |
 | `not` | n → n==0 | `1 not` → `0` |
 | `bi` | x f g → f(x) g(x) | `3 (2 plus) (3 mul) bi` → `9 5` |
 | `keep` | x f → f(x) x | `5 (sqr) keep` → `25 5` |
@@ -430,6 +431,7 @@ Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ow
 | `isany` | list → any nonzero? | `[0 0 1] isany` → `1` |
 | `isall` | list → all nonzero? | `[1 1 0] isall` → `0` |
 | `keep-mask` | list mask → filtered | `[10 20 30] [1 0 1] keep-mask` → `[10 30]` |
+| `pick` | alias of `select` | `[10 20 30] [0 2] pick` → `[10 30]` |
 
 ### structural utilities
 
@@ -473,6 +475,55 @@ Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ow
 | `pi` | 3.14159265... |
 | `tau` | 6.28318530... |
 | `e` | 2.71828182... |
+
+### strings
+
+String primitives plus prelude helpers. Strings are lists of byte codes.
+
+| Word | Effect | Example |
+|------|--------|---------|
+| `str-find` | haystack needle → index (or -1) | `"hello world" "world" str-find` → `6` |
+| `str-split` | str delim → list of substrings | `"a,b,c" "," str-split` → `["a" "b" "c"]` |
+| `str-join` | parts sep → joined | `["a" "b" "c"] "," str-join` → `"a,b,c"` |
+| `int-str` | n → decimal string | `42 int-str` → `"42"` |
+| `utf8-encode` | codepoints → bytes | |
+| `utf8-decode` | bytes → codepoints | |
+| `crlf` | → `"\r\n"` as byte list | |
+| `space` | → `32` | |
+
+### bitwise and byte utilities
+
+| Word | Effect | Example |
+|------|--------|---------|
+| `byte-mask` | n → n & 0xFF | `300 byte-mask` → `44` |
+| `byte-bits` | byte → 8-bit list | `5 byte-bits` → `[0 0 0 0 0 1 0 1]` |
+| `bits-byte` | 8-bit list → byte | `[0 0 0 0 0 1 0 1] bits-byte` → `5` |
+| `chunks` | list n → sublists of size n | `[1 2 3 4 5 6] 2 chunks` → `[[1 2] [3 4] [5 6]]` |
+
+### binary format codecs
+
+Decoders/encoders for compact binary formats. Each pairs a `*-decode`/`*-encode` that round-trip with the corresponding byte layout. Useful for tile graphics, tilemaps, fonts, and lightweight compression.
+
+| Format | Purpose |
+|--------|---------|
+| `icn-*` | 1-bit 8×8 tiles |
+| `chr-*` | 2-bit 8×8 tiles (two planes) |
+| `nmt-*` | Nametable cells (addr + color per 3 bytes) |
+| `tga-*` | Uncompressed true-color TGA images |
+| `gly-*` | ASCII-inline 1-bit glyphs |
+| `ufx-*` | Proportional bitmap fonts |
+| `ulz-decode` | LZ-compressed byte stream |
+
+### networking / http
+
+Built on `tcp-connect`/`tcp-send`/`tcp-recv`/`tcp-close` primitives plus `parse-http`.
+
+| Word | Effect |
+|------|--------|
+| `http-request` | `method host path headers body → request-bytes` |
+| `http-get` | `host port path → parsed-response` |
+| `http-post` | `host port path content-type body → parsed-response` |
+| `parse-http` | raw bytes → `status headers body` |
 
 ## SDL graphics
 

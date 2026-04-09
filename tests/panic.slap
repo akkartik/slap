@@ -87,7 +87,7 @@ stack pop
 -- EXPECT: check: expected preceding type word
 (check)
 
--- EXPECT: sort: only single-slot
+-- EXPECT: sort: only lists of single-slot
 [[1 2] [3 4]] sort
 
 -- EXPECT: condition must be int
@@ -179,3 +179,62 @@ tuck
 
 -- EXPECT: parse-http: no header/body separator
 "garbage" parse-http
+
+-- ===== Error message detail: "got X" wording =====
+-- These verify that type errors (whether caught at type-check or at runtime)
+-- name the actual type that tripped the check, not just that a check tripped.
+-- The substring "got X" must appear consistently across both paths.
+
+-- EXPECT: got int
+1 2.0 plus
+
+-- EXPECT: got sym
+'x 1 sub
+
+-- EXPECT: got list
+[1 2] 3 mul
+
+-- EXPECT: got sym
+'x (1) (2) if
+
+-- EXPECT: got list
+[1 2 3] 'x at
+
+-- EXPECT: got int
+42 1 'x into
+
+-- EXPECT: got list
+[1 2 3] 'x (1 plus) edit
+
+-- EXPECT: got int
+42 free
+
+-- EXPECT: got int
+42 () lend
+
+-- EXPECT: got int
+42 () mutate
+
+-- EXPECT: got int
+42 clone
+
+-- EXPECT: got int
+42 () then
+
+-- EXPECT: got int
+42 0 default
+
+-- EXPECT: got int
+42 sort
+
+-- EXPECT: got int
+42 dedup
+
+-- EXPECT: got int
+42 loop
+
+-- EXPECT: got int
+1 42 while
+
+-- EXPECT: lt: type mismatch, got int and float
+1 2.0 lt
