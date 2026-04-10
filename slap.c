@@ -204,29 +204,19 @@ static Frame *frame_new(Frame *parent) {
 }
 static void frame_free(Frame *f) { free(f); }
 static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind kind, int recur) {
-    uint32_t h = sym % FRAME_HASH_SIZE;
-    Binding *b = NULL;
-    for (int i = 0; i < FRAME_HASH_SIZE; i++) {
-        uint32_t slot = (h + i) % FRAME_HASH_SIZE;
-        if (f->hash[slot] == 0) break;
-        int idx = f->hash[slot] - 1;
-        if (idx < f->bind_count && f->bindings[idx].sym == sym) { b = &f->bindings[idx]; break; }
-    }
+    uint32_t h = sym % FRAME_HASH_SIZE; Binding *b = NULL;
+    for (int i = 0; i < FRAME_HASH_SIZE; i++) { uint32_t s = (h + i) % FRAME_HASH_SIZE;
+        if (f->hash[s] == 0) break; int idx = f->hash[s] - 1;
+        if (idx < f->bind_count && f->bindings[idx].sym == sym) { b = &f->bindings[idx]; break; } }
     if (!b) {
         if (f->bind_count >= FRAME_MAX) die("too many bindings in frame");
         int idx = f->bind_count++; b = &f->bindings[idx]; b->sym = sym; b->allocated = 0;
-        for (int i = 0; i < FRAME_HASH_SIZE; i++) {
-            uint32_t slot = (h + i) % FRAME_HASH_SIZE;
-            if (f->hash[slot] == 0 || f->bindings[f->hash[slot]-1].sym == sym) { f->hash[slot] = (int16_t)(idx + 1); break; }
-        }
+        for (int i = 0; i < FRAME_HASH_SIZE; i++) { uint32_t s = (h + i) % FRAME_HASH_SIZE;
+            if (f->hash[s] == 0 || f->bindings[f->hash[s]-1].sym == sym) { f->hash[s] = (int16_t)(idx + 1); break; } }
     }
     if (slots <= b->allocated) memcpy(&f->vals[b->offset], vals, slots * sizeof(Value));
-    else {
-        int off = f->vals_used;
-        if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
-        memcpy(&f->vals[off], vals, slots * sizeof(Value));
-        f->vals_used += slots; b->offset = off; b->allocated = slots;
-    }
+    else { int off = f->vals_used; if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
+        memcpy(&f->vals[off], vals, slots * sizeof(Value)); f->vals_used += slots; b->offset = off; b->allocated = slots; }
     b->slots = slots; b->kind = kind; b->recur = recur;
 }
 typedef struct { Binding *bind; Frame *frame; } Lookup;
@@ -312,36 +302,27 @@ static void val_print(Value *data, int slots, FILE *out) {
     case VAL_INT: fprintf(out, "%lld", (long long)top.as.i); break;
     case VAL_FLOAT: fprintf(out, "%g", top.as.f); break;
     case VAL_SYM: fprintf(out, "'%s", sym_name(top.as.sym)); break;
-    case VAL_WORD: fprintf(out, "%s", sym_name(top.as.sym)); break;
-    case VAL_XT: fprintf(out, "%s", sym_name(top.as.xt.sym)); break;
+    case VAL_WORD: case VAL_XT: fprintf(out, "%s", sym_name(top.tag==VAL_XT?top.as.xt.sym:top.as.sym)); break;
     case VAL_LIST: {
         int len=(int)top.as.compound.len, is_str=len>0;
         for(int i=0;is_str&&i<len;i++){Value v=data[i];if(v.tag!=VAL_INT||v.as.i<32||v.as.i>126)is_str=0;}
         if(is_str&&slots==len+1){fprintf(out,"\"");for(int i=0;i<len;i++)fputc((char)data[i].as.i,out);fprintf(out,"\"");break;}
     } /* fall through */
     case VAL_TUPLE: {
-        int len=(int)top.as.compound.len;
-        char open=top.tag==VAL_LIST?'[':'(',close=top.tag==VAL_LIST?']':')';
-        fprintf(out,"%c",open);
-        if(len>LOCAL_MAX){fprintf(out,"...%d elements%c",len,close);break;}
-        int offsets[LOCAL_MAX],sizes[LOCAL_MAX]; compute_offsets(data,slots,len,offsets,sizes);
-        for(int i=0;i<len;i++){if(i>0)fprintf(out," ");val_print(&data[offsets[i]],sizes[i],out);}
-        fprintf(out,"%c",close); break;
+        int len=(int)top.as.compound.len; char o=top.tag==VAL_LIST?'[':'(',c=top.tag==VAL_LIST?']':')';
+        fprintf(out,"%c",o); if(len>LOCAL_MAX){fprintf(out,"...%d elements%c",len,c);break;}
+        int of[LOCAL_MAX],sz[LOCAL_MAX]; compute_offsets(data,slots,len,of,sz);
+        for(int i=0;i<len;i++){if(i>0)fprintf(out," ");val_print(&data[of[i]],sz[i],out);}
+        fprintf(out,"%c",c); break;
     }
     case VAL_RECORD: {
-        int len=(int)top.as.compound.len; fprintf(out,"{");
-        if(len>LOCAL_MAX){fprintf(out,"...%d fields}",len);break;}
+        int len=(int)top.as.compound.len; fprintf(out,"{"); if(len>LOCAL_MAX){fprintf(out,"...%d fields}",len);break;}
         int kp[LOCAL_MAX],vo[LOCAL_MAX],vs[LOCAL_MAX]; record_offsets(data,slots,len,kp,vo,vs);
         for(int i=0;i<len;i++){if(i>0)fprintf(out," ");fprintf(out,"'%s ",sym_name(data[kp[i]].as.sym));val_print(&data[vo[i]],vs[i],out);}
         fprintf(out,"}"); break;
     }
     case VAL_BOX: fprintf(out, "<box>"); break;
-    case VAL_TAGGED: {
-        int payload_s = (int)top.as.compound.slots - 1;
-        val_print(data, payload_s, out);
-        fprintf(out, " '%s tagged", sym_name(top.as.compound.len));
-        break;
-    }
+    case VAL_TAGGED: val_print(data,(int)top.as.compound.slots-1,out); fprintf(out," '%s tagged",sym_name(top.as.compound.len)); break;
     }
 }
 static void print_stack_summary(FILE *out) {
@@ -383,7 +364,6 @@ static int eval_depth = 0;
 #define EVAL_DEPTH_MAX 10000
 static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_UNTAG, S_DEFAULT;
 static void syms_init(void);
-
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
 typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT } OwnMode;
@@ -631,11 +611,9 @@ static int tc_extract_brace_keys(Token *toks, int bs, int tc2, uint32_t *out_sym
 static void tc_push(TypeChecker *tc, TypeConstraint type, int line) {
     if (tc->sp >= ASTACK_MAX) return;
     AbstractType *at = &tc->data[tc->sp++]; memset(at, 0, sizeof(*at));
-    at->type = type; at->flags = (type == TC_BOX) ? AT_LINEAR : 0;
-    at->source_line = line; at->effect_idx = -1;
-    if (type == TC_LIST || type == TC_BOX || type == TC_TAGGED || type == TC_SEQ) {
-        at->tvar_id = tvar_fresh(tc); tc->tvars[at->tvar_id].bound = type;
-        int sub = tvar_fresh(tc);
+    at->type = type; at->flags = (type == TC_BOX) ? AT_LINEAR : 0; at->source_line = line; at->effect_idx = -1;
+    if (tc_is_container(type) || type == TC_SEQ) {
+        at->tvar_id = tvar_fresh(tc); tc->tvars[at->tvar_id].bound = type; int sub = tvar_fresh(tc);
         if (type == TC_LIST || type == TC_SEQ) tc->tvars[at->tvar_id].elem = sub;
         else if (type == TC_BOX) tc->tvars[at->tvar_id].box_c = sub;
         else tc->tvars[at->tvar_id].tag_p = sub;
@@ -662,60 +640,42 @@ static void tc_error(TypeChecker *tc, int line, int origin_line, const char *fmt
     fprintf(stderr, "\n");
 }
 #define EFF_CONSUME(vsp,consumed,need) do{if(vsp<(need)){consumed+=(need)-vsp;vsp=0;}else vsp-=(need);}while(0)
-static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int total_count,
+static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int tc2,
                             int *out_consumed, int *out_produced, TypeChecker *ctx) {
-    int vsp = 0, consumed = 0; TypeConstraint top_type = TC_NONE;
+    int vsp = 0, consumed = 0; TypeConstraint tt = TC_NONE;
     for (int i = start; i < end; i++) {
-        Token *t = &toks[i];
-        switch (t->tag) {
-        case TOK_INT: vsp++; top_type = TC_INT; break;
-        case TOK_FLOAT: vsp++; top_type = TC_FLOAT; break;
-        case TOK_SYM: vsp++; top_type = TC_SYM; break;
-        case TOK_STRING: vsp++; top_type = TC_LIST; break;
-        case TOK_LPAREN: { int close = find_matching(toks, i+1, total_count, TOK_LPAREN, TOK_RPAREN); vsp++; top_type = TC_TUPLE; i = close; break; }
-        case TOK_LBRACKET: { int close = find_matching(toks, i+1, total_count, TOK_LBRACKET, TOK_RBRACKET); vsp++; top_type = TC_LIST; i = close; break; }
-        case TOK_LBRACE: { int close = find_matching(toks, i+1, total_count, TOK_LBRACE, TOK_RBRACE); vsp++; top_type = TC_REC; i = close; break; }
+        switch (toks[i].tag) {
+        case TOK_INT: vsp++; tt = TC_INT; break;
+        case TOK_FLOAT: vsp++; tt = TC_FLOAT; break;
+        case TOK_SYM: vsp++; tt = TC_SYM; break;
+        case TOK_STRING: vsp++; tt = TC_LIST; break;
+        case TOK_LPAREN: i = find_matching(toks, i+1, tc2, TOK_LPAREN, TOK_RPAREN); vsp++; tt = TC_TUPLE; break;
+        case TOK_LBRACKET: i = find_matching(toks, i+1, tc2, TOK_LBRACKET, TOK_RBRACKET); vsp++; tt = TC_LIST; break;
+        case TOK_LBRACE: i = find_matching(toks, i+1, tc2, TOK_LBRACE, TOK_RBRACE); vsp++; tt = TC_REC; break;
         case TOK_WORD: {
-            uint32_t sym = t->as.sym;
-            if (sym == S_DEF || sym == S_LET) {
-                EFF_CONSUME(vsp,consumed,2);
-            } else if (sym == S_RECUR) {
-                EFF_CONSUME(vsp,consumed,1);
-            } else {
+            uint32_t sym = toks[i].as.sym;
+            if (sym == S_DEF || sym == S_LET) { EFF_CONSUME(vsp,consumed,2); }
+            else if (sym == S_RECUR) { EFF_CONSUME(vsp,consumed,1); }
+            else {
                 TypeSig *sig = typesig_find(sym);
                 if (sig) {
-                    int inputs = 0, outputs = 0; TypeConstraint last_out = TC_NONE;
-                    for (int j = 0; j < sig->slot_count; j++) {
-                        if (sig->slots[j].direction == DIR_IN) inputs++;
-                        else { outputs++; last_out = sig->slots[j].constraint; }
-                    }
-                    EFF_CONSUME(vsp,consumed,inputs);
-                    vsp += outputs; if (outputs > 0) top_type = last_out;
+                    int ni = 0, no = 0; TypeConstraint lo = TC_NONE;
+                    for (int j = 0; j < sig->slot_count; j++) { if (sig->slots[j].direction == DIR_IN) ni++; else { no++; lo = sig->slots[j].constraint; } }
+                    EFF_CONSUME(vsp,consumed,ni); vsp += no; if (no > 0) tt = lo;
                 } else {
                     HOEffect *ho = ho_ops_find(sym);
-                    if (ho) {
-                        int need = ho->need, out = ho->out;
-                        if (ctx && sym == S_IF && i >= start + 2) {
-                            int bp = i - 1, depth;
-                            if (bp >= start && toks[bp].tag == TOK_RPAREN) {
-                                int ep = bp; depth = 1;
-                                for (int k = bp-1; k >= start; k--) { if (toks[k].tag == TOK_RPAREN) depth++; else if (toks[k].tag == TOK_LPAREN && --depth == 0) { ep = k; break; } }
-                                int bc = 0, bprod = 0;
-                                tc_infer_effect_ctx(toks, ep+1, bp, total_count, &bc, &bprod, ctx);
-                                need = ho->need + bc;
-                                out = bprod;
-                            }
+                    if (ho) { int need = ho->need, out = ho->out;
+                        if (ctx && sym == S_IF && i >= start + 2 && i-1 >= start && toks[i-1].tag == TOK_RPAREN) {
+                            int bp = i-1, ep = bp, d = 1;
+                            for (int k = bp-1; k >= start; k--) { if (toks[k].tag == TOK_RPAREN) d++; else if (toks[k].tag == TOK_LPAREN && --d == 0) { ep = k; break; } }
+                            int bc = 0, bp2 = 0; tc_infer_effect_ctx(toks, ep+1, bp, tc2, &bc, &bp2, ctx); need = ho->need + bc; out = bp2;
                         }
-                        EFF_CONSUME(vsp,consumed,need);
-                        vsp += out; if (out > 0) top_type = ho->out_type;
+                        EFF_CONSUME(vsp,consumed,need); vsp += out; if (out > 0) tt = ho->out_type;
                     }
                 }
                 if (ctx && !sig && !ho_ops_find(sym)) { TCBinding *ub = tc_lookup(ctx, sym);
-                    if (ub && ub->is_def && ub->atype.effect_idx >= 0) {
-                        TupleEffect *e = &ctx->effects[ub->atype.effect_idx];
-                        EFF_CONSUME(vsp,consumed,e->consumed);
-                        vsp += e->produced; if (e->produced > 0) top_type = e->out_type;
-                    } else if (ub && !ub->is_def) { vsp++; top_type = ub->atype.type; }
+                    if (ub && ub->is_def && ub->atype.effect_idx >= 0) { TupleEffect *e = &ctx->effects[ub->atype.effect_idx]; EFF_CONSUME(vsp,consumed,e->consumed); vsp += e->produced; if (e->produced > 0) tt = e->out_type; }
+                    else if (ub && !ub->is_def) { vsp++; tt = ub->atype.type; }
                 }
             }
             break;
@@ -723,15 +683,11 @@ static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int t
         default: break;
         }
     }
-    *out_consumed = consumed; *out_produced = vsp; return top_type;
+    *out_consumed = consumed; *out_produced = vsp; return tt;
 }
 static void tc_apply_effect(TypeChecker *tc, int consumed, int produced, TypeConstraint out_type, int line) {
-    int avail = tc->sp - tc->sp_floor;
-    tc->sp -= (consumed <= avail) ? consumed : avail;
-    for (int i = 0; i < produced; i++) {
-        TypeConstraint t = (i == produced - 1) ? out_type : TC_NONE;
-        tc_push(tc, t, line);
-    }
+    int avail = tc->sp - tc->sp_floor; tc->sp -= (consumed <= avail) ? consumed : avail;
+    for (int i = 0; i < produced; i++) tc_push(tc, (i == produced - 1) ? out_type : TC_NONE, line);
 }
 static int tc_check_body_against_sig(Token *toks, int start, int end, int total_count, TypeSig *sig) {
     int errors = 0, n_in = 0, n_out = 0;
@@ -758,293 +714,215 @@ static void tc_bind(TypeChecker *tc, uint32_t sym, AbstractType *atype, int is_d
     }
 }
 static void tc_apply_scheme(TypeChecker *tc, TupleEffect *eff, int consumed, int produced,
-                            TypeConstraint body_out, const char *name, int line, int full_unify) {
+                            TypeConstraint body_out, const char *name, int line, int fu) {
     int map[64] = {0}, sc = eff->scheme_count; if (sc > 64) sc = 64;
     tvar_instantiate(tc, eff->scheme_base, sc, map);
     for (int j = 0; j < eff->in_count && j < tc->sp; j++) {
         int stv = eff->in_tvars[j] - eff->scheme_base;
-        if (stv >= 0 && stv < sc) {
-            int ftv = map[stv];
-            int idx = tc->sp - eff->in_count + j;
+        if (stv >= 0 && stv < sc) { int ftv = map[stv], idx = tc->sp - eff->in_count + j;
             if (idx < 0 || idx >= 256) continue;
-            AbstractType *input = &tc->data[idx];
-            if (tvar_unify_at(tc, ftv, input, line))
-                tc_error(tc, line, input->source_line, "'%s' input type mismatch: expected %s, got %s (value from line %d)", name, constraint_name(tvar_resolve(tc, ftv)), constraint_name(input->type != TC_NONE ? input->type : tvar_resolve(tc, input->tvar_id)), input->source_line);
-            if (full_unify && input->tvar_id > 0) {
-#define UNIFY_SUB(f) { int fa=tc->tvars[tvar_find(tc,ftv)].f, fb2=tc->tvars[tvar_find(tc,input->tvar_id)].f; if(fa>0&&fb2>0)tvar_unify(tc,fa,fb2,line); }
+            AbstractType *inp = &tc->data[idx];
+            if (tvar_unify_at(tc, ftv, inp, line))
+                tc_error(tc, line, inp->source_line, "'%s' input type mismatch: expected %s, got %s (value from line %d)", name, constraint_name(tvar_resolve(tc, ftv)), constraint_name(inp->type != TC_NONE ? inp->type : tvar_resolve(tc, inp->tvar_id)), inp->source_line);
+            if (fu && inp->tvar_id > 0) {
+#define UNIFY_SUB(f) { int fa=tc->tvars[tvar_find(tc,ftv)].f, fb=tc->tvars[tvar_find(tc,inp->tvar_id)].f; if(fa>0&&fb>0)tvar_unify(tc,fa,fb,line); }
                 UNIFY_SUB(elem) UNIFY_SUB(box_c) UNIFY_SUB(tag_p)
 #undef UNIFY_SUB
             }
         }
     }
-    int avail = tc->sp - tc->sp_floor;
-    tc->sp -= (consumed <= avail) ? consumed : avail;
+    int avail = tc->sp - tc->sp_floor; tc->sp -= (consumed <= avail) ? consumed : avail;
     for (int j = 0; j < eff->out_count; j++) {
-        int stv = eff->out_tvars[j] - eff->scheme_base;
-        int ftv = (stv >= 0 && stv < sc) ? map[stv] : 0;
-        if (ftv > 0) {
-            TypeConstraint resolved = tvar_resolve(tc, ftv);
-            if (tc_is_container(resolved)) {
-                tc_push(tc, resolved, line);
-                int fc = tvar_content(tc, ftv, resolved);
-                int oc = tvar_content(tc, tc->data[tc->sp-1].tvar_id, resolved);
+        int stv = eff->out_tvars[j] - eff->scheme_base, ftv = (stv >= 0 && stv < sc) ? map[stv] : 0;
+        if (ftv > 0) { TypeConstraint r = tvar_resolve(tc, ftv);
+            if (tc_is_container(r)) {
+                tc_push(tc, r, line);
+                int fc = tvar_content(tc, ftv, r), oc = tvar_content(tc, tc->data[tc->sp-1].tvar_id, r);
                 if (fc > 0 && oc > 0) tvar_unify(tc, oc, fc, line);
-                int fu = tc->tvars[tvar_find(tc, ftv)].union_id;
-                if (fu > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = fu;
+                int uid = tc->tvars[tvar_find(tc, ftv)].union_id;
+                if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid;
             } else {
-                tc_push(tc, TC_NONE, line);
-                if (resolved != TC_NONE) tc->data[tc->sp-1].type = resolved;
-                tc->data[tc->sp-1].tvar_id = ftv;
-                if (full_unify && resolved == TC_BOX) tc->data[tc->sp-1].flags |= AT_LINEAR;
+                tc_push(tc, TC_NONE, line); if (r != TC_NONE) tc->data[tc->sp-1].type = r;
+                tc->data[tc->sp-1].tvar_id = ftv; if (fu && r == TC_BOX) tc->data[tc->sp-1].flags |= AT_LINEAR;
             }
-        } else {
-            tc_push(tc, TC_NONE, line);
-        }
+        } else tc_push(tc, TC_NONE, line);
     }
-    for (int j = eff->out_count; j < produced; j++)
-        tc_push(tc, (j == produced - 1) ? body_out : TC_NONE, line);
+    for (int j = eff->out_count; j < produced; j++) tc_push(tc, (j == produced - 1) ? body_out : TC_NONE, line);
 }
 static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
-    int eff_c = 0, eff_p = 0, body_known = 0, body_out_eff = -1; TypeConstraint body_out = TC_NONE; TupleEffect *body_teff = NULL;
-    TypeConstraint branch_outs[8] = {0}; int branch_count = 0;
+    int eff_c = 0, eff_p = 0, bk = 0, boe = -1; TypeConstraint bo = TC_NONE; TupleEffect *bteff = NULL;
+    TypeConstraint bouts[8] = {0}; int bc = 0;
     AbstractType saved = {0}; int had_saved = 0;
     if (ho->flags & (HO_BOX_BORROW|HO_BOX_MUTATE)) {
         if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE) {
-            if (tc->data[tc->sp-1].effect_idx >= 0) {
-                TupleEffect *teff = &tc->effects[tc->data[tc->sp-1].effect_idx];
-                eff_c = teff->consumed; eff_p = teff->produced; body_out = teff->out_type; body_known = 1;
-            }
+            if (tc->data[tc->sp-1].effect_idx >= 0) { TupleEffect *te = &tc->effects[tc->data[tc->sp-1].effect_idx]; eff_c = te->consumed; eff_p = te->produced; bo = te->out_type; bk = 1; }
             tc->sp--;
         }
         if (tc->sp > 0 && tc->data[tc->sp-1].type != TC_BOX && tc->data[tc->sp-1].type != TC_NONE)
             tc_error(tc, line, 0, "'%s' expected box, got %s", ho->name, constraint_name(tc->data[tc->sp-1].type));
 #define TC_BOX_CONTENTS(tc) ({ TypeConstraint _c=TC_NONE; if((tc)->data[(tc)->sp-1].tvar_id>0){ int _bc=(tc)->tvars[tvar_find((tc),(tc)->data[(tc)->sp-1].tvar_id)].box_c; if(_bc>0)_c=tvar_resolve((tc),_bc); } _c; })
         if ((ho->flags & HO_BOX_BORROW) && tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
-            TypeConstraint contents = TC_BOX_CONTENTS(tc);
-            tc->data[tc->sp-1].borrowed++;
-            int results = body_known ? (1 - eff_c + eff_p) : 1; if (results < 0) results = 0;
-            for (int j = 0; j < results; j++) {
-                TypeConstraint rt = (j == results-1 && body_out != TC_NONE) ? body_out : (j == 0 && contents != TC_NONE) ? contents : TC_NONE;
-                tc_push(tc, rt, line);
-            }
-            int box_idx = tc->sp - results - 1;
-            if (box_idx >= 0) tc->data[box_idx].borrowed--;
+            TypeConstraint ct = TC_BOX_CONTENTS(tc); tc->data[tc->sp-1].borrowed++;
+            int r = bk ? (1 - eff_c + eff_p) : 1; if (r < 0) r = 0;
+            for (int j = 0; j < r; j++) tc_push(tc, (j==r-1&&bo!=TC_NONE)?bo:(j==0&&ct!=TC_NONE)?ct:TC_NONE, line);
+            int bi = tc->sp - r - 1; if (bi >= 0) tc->data[bi].borrowed--;
         } else if ((ho->flags & HO_BOX_MUTATE) && tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
-            TypeConstraint contents = TC_BOX_CONTENTS(tc);
-            if (contents != TC_NONE && body_out != TC_NONE && !tc_constraint_matches(contents, body_out) && !tc_constraint_matches(body_out, contents))
-                tc_error(tc, line, 0, "'mutate' body produces %s but box contains %s", constraint_name(body_out), constraint_name(contents));
+            TypeConstraint ct = TC_BOX_CONTENTS(tc);
+            if (ct != TC_NONE && bo != TC_NONE && !tc_constraint_matches(ct, bo) && !tc_constraint_matches(bo, ct))
+                tc_error(tc, line, 0, "'mutate' body produces %s but box contains %s", constraint_name(bo), constraint_name(ct));
         }
         return;
     }
-    TypeConstraint last_popped_type = TC_NONE; int tagged_payload_tvar = 0, last_popped_tvar = 0;
+    TypeConstraint lpt = TC_NONE; int tptv = 0, lptv = 0;
     for (int n = ho->need; n > 0 && tc->sp > tc->sp_floor; n--) {
         AbstractType *top = &tc->data[tc->sp - 1];
         if ((ho->flags & HO_SAVES_UNDER) && n == 1) { saved = *top; had_saved = 1; tc->sp--; continue; }
-        last_popped_type = top->type; last_popped_tvar = top->tvar_id;
-        if (top->type == TC_TAGGED && top->tvar_id > 0 && !tagged_payload_tvar)
-            tagged_payload_tvar = tvar_content(tc, top->tvar_id, TC_TAGGED);
-        int is_branch = (n > 1) && !((ho->flags & HO_SCRUTINEE_TAGGED) && n == ho->need);
-        if (top->type == TC_TUPLE) {
-            if (top->effect_idx >= 0) {
-                TupleEffect *teff = &tc->effects[top->effect_idx];
-                if (!body_known) { eff_c = teff->consumed; eff_p = teff->produced; body_out = teff->out_type; body_known = 1; body_out_eff = teff->out_effect; body_teff = teff; }
-                if (is_branch && branch_count < 8) branch_outs[branch_count++] = teff->out_type;
-            }
-        } else if (is_branch && top->type != TC_NONE) {
-            if (branch_count < 8) branch_outs[branch_count++] = top->type;
-        }
+        lpt = top->type; lptv = top->tvar_id;
+        if (top->type == TC_TAGGED && top->tvar_id > 0 && !tptv) tptv = tvar_content(tc, top->tvar_id, TC_TAGGED);
+        int ib = (n > 1) && !((ho->flags & HO_SCRUTINEE_TAGGED) && n == ho->need);
+        if (top->type == TC_TUPLE && top->effect_idx >= 0) {
+            TupleEffect *te = &tc->effects[top->effect_idx];
+            if (!bk) { eff_c = te->consumed; eff_p = te->produced; bo = te->out_type; bk = 1; boe = te->out_effect; bteff = te; }
+            if (ib && bc < 8) bouts[bc++] = te->out_type;
+        } else if (ib && top->type != TC_NONE && bc < 8) bouts[bc++] = top->type;
         tc->sp--;
     }
-    if ((ho->flags & HO_BODY_1TO1) && body_known && (eff_c != 1 || eff_p != 1) && (eff_c + eff_p > 0))
+    if ((ho->flags & HO_BODY_1TO1) && bk && (eff_c != 1 || eff_p != 1) && (eff_c + eff_p > 0))
         tc_error(tc, line, 0, "'%s' body must be 1->1, got %d->%d", ho->name, eff_c, eff_p);
-    if ((ho->flags & HO_BRANCHES_AGREE) && branch_count >= 2 && !tc->sp_floor) {
+    if ((ho->flags & HO_BRANCHES_AGREE) && bc >= 2 && !tc->sp_floor) {
         TypeConstraint ref = TC_NONE;
-        for (int i = 0; i < branch_count; i++) if (branch_outs[i] != TC_NONE) { ref = branch_outs[i]; break; }
-        for (int i = 0; i < branch_count; i++)
-            if (branch_outs[i] != TC_NONE && ref != TC_NONE && branch_outs[i] != ref)
-                if (!tc_constraint_matches(ref, branch_outs[i]) && !tc_constraint_matches(branch_outs[i], ref))
-                    tc_error(tc, line, 0, "'%s' branches produce different types: %s vs %s", ho->name, constraint_name(ref), constraint_name(branch_outs[i]));
+        for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { ref = bouts[i]; break; }
+        for (int i = 0; i < bc; i++)
+            if (bouts[i] != TC_NONE && ref != TC_NONE && bouts[i] != ref && !tc_constraint_matches(ref, bouts[i]) && !tc_constraint_matches(bouts[i], ref))
+                tc_error(tc, line, 0, "'%s' branches produce different types: %s vs %s", ho->name, constraint_name(ref), constraint_name(bouts[i]));
     }
-    if ((ho->flags & HO_SCRUTINEE_SYM) && last_popped_type != TC_SYM && last_popped_type != TC_NONE)
-        tc_error(tc, line, 0, "'match' scrutinee must be a symbol, got %s", constraint_name(last_popped_type));
-    if ((ho->flags & HO_SCRUTINEE_TAGGED) && last_popped_type != TC_TAGGED && last_popped_type != TC_NONE)
-        tc_error(tc, line, 0, "'%s' expected tagged value, got %s", ho->name, constraint_name(last_popped_type));
-    if ((ho->flags & HO_BODY_1TO1) && (ho->flags & HO_SCRUTINEE_TAGGED) && body_teff && body_teff->in_count > 0 && last_popped_tvar > 0) {
-        int uid = tc->tvars[tvar_find(tc, last_popped_tvar)].union_id;
-        if (uid > 0) {
-            UnionDef *ud = &tc->unions[uid-1]; TypeConstraint ok_t = TC_NONE;
+    if ((ho->flags & HO_SCRUTINEE_SYM) && lpt != TC_SYM && lpt != TC_NONE)
+        tc_error(tc, line, 0, "'match' scrutinee must be a symbol, got %s", constraint_name(lpt));
+    if ((ho->flags & HO_SCRUTINEE_TAGGED) && lpt != TC_TAGGED && lpt != TC_NONE)
+        tc_error(tc, line, 0, "'%s' expected tagged value, got %s", ho->name, constraint_name(lpt));
+    if ((ho->flags & HO_BODY_1TO1) && (ho->flags & HO_SCRUTINEE_TAGGED) && bteff && bteff->in_count > 0 && lptv > 0) {
+        int uid = tc->tvars[tvar_find(tc, lptv)].union_id;
+        if (uid > 0) { UnionDef *ud = &tc->unions[uid-1]; TypeConstraint ok_t = TC_NONE;
             for (int v=0;v<ud->count;v++) if(ud->syms[v]==S_OK){ok_t=ud->types[v];break;}
-            if (ok_t != TC_NONE) { int itv=body_teff->in_tvars[0]; TypeConstraint bi=itv>0?tvar_resolve(tc,itv):TC_NONE;
-                if(bi!=TC_NONE&&!tc_constraint_matches(bi,ok_t)&&!tc_constraint_matches(ok_t,bi)) tc_error(tc,line,0,"'then' body expects %s but 'ok variant has %s",constraint_name(bi),constraint_name(ok_t)); }
-        }
+            if (ok_t != TC_NONE) { int iv=bteff->in_tvars[0]; TypeConstraint bi=iv>0?tvar_resolve(tc,iv):TC_NONE;
+                if(bi!=TC_NONE&&!tc_constraint_matches(bi,ok_t)&&!tc_constraint_matches(ok_t,bi)) tc_error(tc,line,0,"'then' body expects %s but 'ok variant has %s",constraint_name(bi),constraint_name(ok_t)); } }
     }
     if (ho->flags & HO_APPLY_EFFECT) {
-        if (body_known) {
-            tc_apply_effect(tc, eff_c, eff_p, body_out, line);
-            if (body_out_eff >= 0 && tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE)
-                tc->data[tc->sp-1].effect_idx = body_out_eff;
-        }
+        if (bk) { tc_apply_effect(tc, eff_c, eff_p, bo, line); if (boe >= 0 && tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE) tc->data[tc->sp-1].effect_idx = boe; }
         if (had_saved && tc->sp < ASTACK_MAX) tc->data[tc->sp++] = saved;
         return;
     }
-    if (ho->sym == S_IF && body_known) {
-        if (body_teff && body_teff->scheme_count > 0 && body_teff->in_count > 0) tc_apply_scheme(tc, body_teff, eff_c, eff_p, body_out, "if", line, 0);
-        else tc_apply_effect(tc, eff_c, eff_p, body_out, line);
+    if (ho->sym == S_IF && bk) {
+        if (bteff && bteff->scheme_count > 0 && bteff->in_count > 0) tc_apply_scheme(tc, bteff, eff_c, eff_p, bo, "if", line, 0);
+        else tc_apply_effect(tc, eff_c, eff_p, bo, line);
         return;
     }
     TypeConstraint out = ho->out_type;
     if (out == TC_NONE && (ho->flags & HO_BRANCHES_AGREE))
-        for (int i = 0; i < branch_count; i++) if (branch_outs[i] != TC_NONE) { out = branch_outs[i]; break; }
+        for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { out = bouts[i]; break; }
     for (int j = 0; j < ho->out; j++) tc_push(tc, (j == ho->out - 1) ? out : TC_NONE, line);
-    /* then: output is TC_TAGGED, propagate body output type as payload + union_id */
     if ((ho->flags & HO_BODY_1TO1) && out == TC_TAGGED && tc->sp > 0 && tc->data[tc->sp-1].tvar_id > 0) {
-        int out_tp = tvar_content(tc, tc->data[tc->sp-1].tvar_id, TC_TAGGED);
-        if (out_tp > 0) {
-            if (body_out != TC_NONE) tvar_bind(tc, out_tp, body_out, line);
-            else if (tagged_payload_tvar > 0) tvar_unify(tc, out_tp, tagged_payload_tvar, line);
-        }
-        if (last_popped_tvar > 0) {
-            int uid = tc->tvars[tvar_find(tc, last_popped_tvar)].union_id;
-            if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid;
-        }
+        int otp = tvar_content(tc, tc->data[tc->sp-1].tvar_id, TC_TAGGED);
+        if (otp > 0) { if (bo != TC_NONE) tvar_bind(tc, otp, bo, line); else if (tptv > 0) tvar_unify(tc, otp, tptv, line); }
+        if (lptv > 0) { int uid = tc->tvars[tvar_find(tc, lptv)].union_id; if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid; }
     }
-    if ((ho->flags & HO_BRANCHES_AGREE) && (ho->flags & HO_SCRUTINEE_TAGGED) && tagged_payload_tvar > 0 && tc->sp > 0) {
-        TypeConstraint pt = tvar_resolve(tc, tagged_payload_tvar);
+    if ((ho->flags & HO_BRANCHES_AGREE) && (ho->flags & HO_SCRUTINEE_TAGGED) && tptv > 0 && tc->sp > 0) {
+        TypeConstraint pt = tvar_resolve(tc, tptv);
         if (out == TC_NONE && pt != TC_NONE) {
             AbstractType *o = &tc->data[tc->sp-1]; o->type = pt;
-            if (pt == TC_TAGGED) {
-                o->tvar_id=tvar_fresh(tc);tc->tvars[o->tvar_id].bound=TC_TAGGED;
-                int sub=tvar_fresh(tc);tc->tvars[o->tvar_id].tag_p=sub;
-                int inner=tc->tvars[tvar_find(tc,tagged_payload_tvar)].tag_p;
-                if(inner>0) tvar_unify(tc,sub,inner,line);
-            }
+            if (pt == TC_TAGGED) { o->tvar_id=tvar_fresh(tc);tc->tvars[o->tvar_id].bound=TC_TAGGED;
+                int sub=tvar_fresh(tc);tc->tvars[o->tvar_id].tag_p=sub;int inner=tc->tvars[tvar_find(tc,tptv)].tag_p;if(inner>0)tvar_unify(tc,sub,inner,line); }
         }
     }
 }
 static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
     TypeSig *sig = typesig_find(sym);
     if (sig) goto apply_sig;
-    { HOEffect *ho = ho_ops_find(sym);
-      if (ho) { tc_apply_ho(tc, ho, line); return; }
-    }
+    { HOEffect *ho = ho_ops_find(sym); if (ho) { tc_apply_ho(tc, ho, line); return; } }
     { TCBinding *b = tc_lookup(tc, sym);
       if (b) {
-        if (b->is_def && b->atype.type == TC_TUPLE) {
-            if (b->atype.effect_idx >= 0) {
-                TupleEffect *eff = &tc->effects[b->atype.effect_idx];
-                if (eff->scheme_count > 0)
-                    tc_apply_scheme(tc, eff, eff->consumed, eff->produced, eff->out_type, sym_name(sym), line, 1);
-                else tc_apply_effect(tc, eff->consumed, eff->produced, eff->out_type, line);
-                return;
-            }
+        if (b->is_def && b->atype.type == TC_TUPLE && b->atype.effect_idx >= 0) {
+            TupleEffect *eff = &tc->effects[b->atype.effect_idx];
+            if (eff->scheme_count > 0) tc_apply_scheme(tc, eff, eff->consumed, eff->produced, eff->out_type, sym_name(sym), line, 1);
+            else tc_apply_effect(tc, eff->consumed, eff->produced, eff->out_type, line);
+            return;
         } else { tc_push(tc, b->atype.type, line); if (b->atype.flags & AT_LINEAR) tc->data[tc->sp-1].flags |= AT_LINEAR; return; }
       }
     }
     if (tc->unknown_count < TC_UNKNOWN_MAX) { tc->unknowns[tc->unknown_count].sym = sym; tc->unknowns[tc->unknown_count].line = line; tc->unknown_count++; }
     return;
 apply_sig:;
-    int inputs = 0;
-    for (int i = 0; i < sig->slot_count; i++) if (sig->slots[i].direction == DIR_IN) inputs++;
-    if (tc->sp < inputs) {
-        tc_error(tc, line, 0, "'%s' needs %d input(s), stack has %d", sym_name(sym), inputs, tc->sp);
+    int ni = 0;
+    for (int i = 0; i < sig->slot_count; i++) if (sig->slots[i].direction == DIR_IN) ni++;
+    if (tc->sp < ni) {
+        tc_error(tc, line, 0, "'%s' needs %d input(s), stack has %d", sym_name(sym), ni, tc->sp);
         if (tc->sp > 0 && !tc->suppress_errors) { fprintf(stderr, "    stack (top first):"); for(int d=tc->sp-1;d>=0&&d>=tc->sp-5;d--) fprintf(stderr," %s",constraint_name(tc->data[d].type)); fprintf(stderr,"\n"); }
         return;
     }
     #define MAX_TVARS 16
-    struct { uint32_t var; int tvar; } tvar_map[MAX_TVARS]; int tvar_map_count = 0;
+    struct { uint32_t var; int tvar; } tm[MAX_TVARS]; int tmc = 0;
     for (int i = 0; i < sig->slot_count; i++) {
-        uint32_t tv = sig->slots[i].type_var;
-        if (!tv) continue;
-        int found = 0;
-        for (int j = 0; j < tvar_map_count; j++) if (tvar_map[j].var == tv) { found = 1; break; }
-        if (!found && tvar_map_count < MAX_TVARS) {
-            int id = tvar_fresh(tc);
-            TypeConstraint c = sig->slots[i].constraint;
+        uint32_t tv = sig->slots[i].type_var; if (!tv) continue;
+        int found = 0; for (int j = 0; j < tmc; j++) if (tm[j].var == tv) { found = 1; break; }
+        if (!found && tmc < MAX_TVARS) {
+            int id = tvar_fresh(tc); TypeConstraint c = sig->slots[i].constraint;
             if (!tc_is_container(c) && c != TC_NONE) tc->tvars[id].bound = c;
             if (tc_is_container(c) && sig->slots[i].elem_constraint != TC_NONE) tc->tvars[id].bound = sig->slots[i].elem_constraint;
-            tvar_map[tvar_map_count].var = tv; tvar_map[tvar_map_count].tvar = id; tvar_map_count++;
+            tm[tmc].var = tv; tm[tmc].tvar = id; tmc++;
         }
     }
-    #define FIND_TVAR(tv_name) ({ int _tv = 0; for (int _j = 0; _j < tvar_map_count; _j++) if (tvar_map[_j].var == (tv_name)) { _tv = tvar_map[_j].tvar; break; } _tv; })
-    int stack_pos = tc->sp - 1;
+    #define FIND_TVAR(tv_name) ({ int _tv = 0; for (int _j = 0; _j < tmc; _j++) if (tm[_j].var == (tv_name)) { _tv = tm[_j].tvar; break; } _tv; })
+    int sp2 = tc->sp - 1;
     for (int i = sig->slot_count - 1; i >= 0; i--) {
-        TypeSlot *slot = &sig->slots[i];
-        if (slot->direction != DIR_IN) continue;
-        if (stack_pos < 0) break;
-        AbstractType *at = &tc->data[stack_pos];
-        if (slot->ownership == OWN_COPY && !tc_is_copyable(at))
+        TypeSlot *s = &sig->slots[i]; if (s->direction != DIR_IN || sp2 < 0) { if (s->direction == DIR_IN) sp2--; continue; }
+        AbstractType *at = &tc->data[sp2];
+        if (s->ownership == OWN_COPY && !tc_is_copyable(at))
             tc_error(tc, line, at->source_line, "'%s' requires copyable value, got linear type (value from line %d)", sym_name(sym), at->source_line);
-        if (slot->ownership == OWN_OWN && at->borrowed > 0)
+        if (s->ownership == OWN_OWN && at->borrowed > 0)
             tc_error(tc, line, at->source_line, "'%s' cannot consume value that is currently borrowed (lent, value from line %d)", sym_name(sym), at->source_line);
-        if (slot->constraint != TC_NONE && at->type != TC_NONE && !tc_constraint_matches(slot->constraint, at->type))
-            tc_error(tc, line, at->source_line, "'%s' expected %s, got %s (value from line %d)", sym_name(sym), constraint_name(slot->constraint), constraint_name(at->type), at->source_line);
-        if (slot->constraint != TC_NONE && at->type == TC_NONE && at->tvar_id > 0)
-            tvar_bind(tc, at->tvar_id, slot->constraint, line);
-        if (slot->type_var) {
-            int tv = FIND_TVAR(slot->type_var);
-            if (tv > 0) {
-                if (tc_is_container(slot->constraint) && at->tvar_id > 0) {
-                    int ef = tvar_content(tc, at->tvar_id, slot->constraint);
-                    if (ef > 0 && tvar_unify(tc, tv, ef, line))
-                        tc_error(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(tvar_resolve(tc, ef)));
-                } else if (!tc_is_container(slot->constraint)) {
-                    int fail = at->tvar_id > 0 ? tvar_unify(tc, tv, at->tvar_id, line) : (at->type != TC_NONE ? tvar_bind(tc, tv, at->type, line) : 0);
-                    if (fail) tc_error(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(slot->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(at->type != TC_NONE ? at->type : tvar_resolve(tc, at->tvar_id)));
-                }
+        if (s->constraint != TC_NONE && at->type != TC_NONE && !tc_constraint_matches(s->constraint, at->type))
+            tc_error(tc, line, at->source_line, "'%s' expected %s, got %s (value from line %d)", sym_name(sym), constraint_name(s->constraint), constraint_name(at->type), at->source_line);
+        if (s->constraint != TC_NONE && at->type == TC_NONE && at->tvar_id > 0) tvar_bind(tc, at->tvar_id, s->constraint, line);
+        if (s->type_var) { int tv = FIND_TVAR(s->type_var); if (tv > 0) {
+            if (tc_is_container(s->constraint) && at->tvar_id > 0) {
+                int ef = tvar_content(tc, at->tvar_id, s->constraint);
+                if (ef > 0 && tvar_unify(tc, tv, ef, line))
+                    tc_error(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(s->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(tvar_resolve(tc, ef)));
+            } else if (!tc_is_container(s->constraint)) {
+                int fail = at->tvar_id > 0 ? tvar_unify(tc, tv, at->tvar_id, line) : (at->type != TC_NONE ? tvar_bind(tc, tv, at->type, line) : 0);
+                if (fail) tc_error(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(s->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(at->type != TC_NONE ? at->type : tvar_resolve(tc, at->tvar_id)));
             }
-        }
-        if ((at->flags & AT_LINEAR) && slot->ownership == OWN_OWN) at->flags |= AT_CONSUMED;
-        stack_pos--;
+        }}
+        if ((at->flags & AT_LINEAR) && s->ownership == OWN_OWN) at->flags |= AT_CONSUMED;
+        sp2--;
     }
-    tc->sp -= inputs; if (tc->sp < tc->sp_floor) tc->sp = tc->sp_floor;
+    tc->sp -= ni; if (tc->sp < tc->sp_floor) tc->sp = tc->sp_floor;
     for (int i = 0; i < sig->slot_count; i++) {
-        TypeSlot *slot = &sig->slots[i];
-        if (slot->direction != DIR_OUT) continue;
+        TypeSlot *s = &sig->slots[i]; if (s->direction != DIR_OUT) continue;
         if (tc->sp >= ASTACK_MAX) { tc->errors++; return; }
-        tc_push(tc, slot->constraint, line);
-        AbstractType *at = &tc->data[tc->sp - 1];
-        if (slot->type_var) {
-            int tv = FIND_TVAR(slot->type_var);
-            if (tv > 0) {
-                if (tc_is_container(slot->constraint) && at->tvar_id > 0) {
-                    int elem_field = tvar_content(tc, at->tvar_id, slot->constraint);
-                    if (elem_field > 0) tvar_unify(tc, elem_field, tv, line);
-                } else if (!tc_is_container(slot->constraint)) {
-                    TypeConstraint resolved = tvar_resolve(tc, tv);
-                    if (resolved != TC_NONE) at->type = resolved;
-                    at->tvar_id = tv;
-                    if (resolved == TC_BOX) at->flags |= AT_LINEAR;
-                }
-            }
-        }
-        if (tc_is_container(slot->constraint) && slot->elem_constraint != TC_NONE && at->tvar_id > 0) {
-            int ef = tvar_content(tc, at->tvar_id, slot->constraint);
-            if (ef > 0) tvar_bind(tc, ef, slot->elem_constraint, line);
-        }
+        tc_push(tc, s->constraint, line); AbstractType *at = &tc->data[tc->sp - 1];
+        if (s->type_var) { int tv = FIND_TVAR(s->type_var); if (tv > 0) {
+            if (tc_is_container(s->constraint) && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_unify(tc, ef, tv, line); }
+            else if (!tc_is_container(s->constraint)) { TypeConstraint r = tvar_resolve(tc, tv); if (r != TC_NONE) at->type = r; at->tvar_id = tv; if (r == TC_BOX) at->flags |= AT_LINEAR; }
+        }}
+        if (tc_is_container(s->constraint) && s->elem_constraint != TC_NONE && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_bind(tc, ef, s->elem_constraint, line); }
     }
     #undef MAX_TVARS
 }
-static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int start, int end, int total_count, int line) {
-    TypeConstraint elem_type = TC_NONE; int elem_count = 0;
-    for (int i = start; i < end; i++) {
-        TypeConstraint this_type = TC_NONE;
+static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int start, int end, int tc2, int line) {
+    TypeConstraint et = TC_NONE; int ec = 0;
+    for (int i = start; i < end; i++) { TypeConstraint tt = TC_NONE;
         switch (toks[i].tag) {
-        case TOK_INT: this_type = TC_INT; break; case TOK_FLOAT: this_type = TC_FLOAT; break;
-        case TOK_SYM: this_type = TC_SYM; break; case TOK_STRING: this_type = TC_LIST; break;
-        case TOK_LPAREN: this_type = TC_TUPLE; i = find_matching(toks, i+1, total_count, TOK_LPAREN, TOK_RPAREN); break;
-        case TOK_LBRACKET: this_type = TC_LIST; i = find_matching(toks, i+1, total_count, TOK_LBRACKET, TOK_RBRACKET); break;
-        case TOK_LBRACE: this_type = TC_REC; i = find_matching(toks, i+1, total_count, TOK_LBRACE, TOK_RBRACE); break;
-        case TOK_WORD: return TC_NONE;
-        default: continue;
-        }
-        if (this_type == TC_NONE) continue;
-        if (++elem_count == 1) elem_type = this_type;
-        else if (this_type != elem_type) {
-            tc_error(tc, line, 0, "list elements have inconsistent types: element 1 is %s, element %d is %s", constraint_name(elem_type), elem_count, constraint_name(this_type));
-            return TC_NONE;
-        }
+        case TOK_INT: tt=TC_INT; break; case TOK_FLOAT: tt=TC_FLOAT; break; case TOK_SYM: tt=TC_SYM; break; case TOK_STRING: tt=TC_LIST; break;
+        case TOK_LPAREN: tt=TC_TUPLE;i=find_matching(toks,i+1,tc2,TOK_LPAREN,TOK_RPAREN);break;
+        case TOK_LBRACKET: tt=TC_LIST;i=find_matching(toks,i+1,tc2,TOK_LBRACKET,TOK_RBRACKET);break;
+        case TOK_LBRACE: tt=TC_REC;i=find_matching(toks,i+1,tc2,TOK_LBRACE,TOK_RBRACE);break;
+        case TOK_WORD: return TC_NONE; default: continue; }
+        if (tt == TC_NONE) continue;
+        if (++ec == 1) et = tt;
+        else if (tt != et) { tc_error(tc, line, 0, "list elements have inconsistent types: element 1 is %s, element %d is %s", constraint_name(et), ec, constraint_name(tt)); return TC_NONE; }
     }
-    return elem_type;
+    return et;
 }
 static void tc_check_redef(TypeChecker *tc, uint32_t sym, int line) {
     int saved = tc->suppress_errors; tc->suppress_errors = 0;
@@ -1074,64 +952,40 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             TypeConstraint eff_out = tc_infer_effect_ctx(toks, i+1, close, total_count, &eff_c, &eff_p, tc);
             int is_simple = 1;
             for (int j = i+1; j < close; j++) if (toks[j].tag == TOK_LPAREN || toks[j].tag == TOK_LBRACKET || toks[j].tag == TOK_LBRACE) { is_simple = 0; break; }
-            int scheme_base = tc->tvar_count, in_count = 0, out_count = 0, out_eff = -1;
-            int in_tvars[8] = {0}, out_tvars[8] = {0}, scheme_count = 0;
+            int scheme_base = tc->tvar_count, ic = 0, oc = 0, out_eff = -1;
+            int itv[8] = {0}, otv[8] = {0}, sc = 0;
             { int _s[]={tc->sp,tc->bind_count,tc->unknown_count,tc->recur_pending,tc->suppress_errors,type_sig_count,tc->effect_count,tc->sp_floor};
-                int wide_effect = (eff_c > 8 || eff_p > 8);
-                int skip_body = (wide_effect && i < tc->user_start);
-                if (!is_simple) {
-                    tc->sp_floor = tc->sp;
-                    if (i < tc->user_start) tc->suppress_errors = 1;
+                int wide = (eff_c > 8 || eff_p > 8), skip = (wide && i < tc->user_start);
+                if (!is_simple) { tc->sp_floor = tc->sp; if (i < tc->user_start) tc->suppress_errors = 1; }
+                if (wide && !skip) tc->suppress_errors = 1;
+                ic = wide ? 0 : eff_c;
+                for (int j = 0; j < ic; j++) {
+                    itv[j] = tvar_fresh(tc); tc->tvars[itv[j]].elem = tvar_fresh(tc); tc->tvars[itv[j]].box_c = tvar_fresh(tc); tc->tvars[itv[j]].tag_p = tvar_fresh(tc);
+                    tc_push(tc, TC_NONE, t->line); tc->data[tc->sp-1].tvar_id = itv[j];
                 }
-                if (wide_effect && !skip_body) tc->suppress_errors = 1;
-                in_count = wide_effect ? 0 : eff_c;
-                for (int j = 0; j < in_count; j++) {
-                    in_tvars[j] = tvar_fresh(tc);
-                    tc->tvars[in_tvars[j]].elem = tvar_fresh(tc); tc->tvars[in_tvars[j]].box_c = tvar_fresh(tc); tc->tvars[in_tvars[j]].tag_p = tvar_fresh(tc);
-                    tc_push(tc, TC_NONE, t->line);
-                    tc->data[tc->sp-1].tvar_id = in_tvars[j];
-                }
-                if (wide_effect && !skip_body) {
-                    for (int j = 0; j < eff_c && tc->sp < ASTACK_MAX; j++)
-                        tc_push(tc, TC_NONE, t->line);
-                }
+                if (wide && !skip) for (int j = 0; j < eff_c && tc->sp < ASTACK_MAX; j++) tc_push(tc, TC_NONE, t->line);
                 if (tc->recur_pending && tc->recur_sym) {
-                    int pre_eidx = tc_alloc_effect(tc);
-                    TupleEffect *pre_eff = &tc->effects[pre_eidx];
-                    pre_eff->consumed = eff_c; pre_eff->produced = eff_p; pre_eff->out_type = eff_out;
-                    AbstractType pre_at = {0}; pre_at.type = TC_TUPLE; pre_at.effect_idx = pre_eidx;
-                    tc_bind(tc, tc->recur_sym, &pre_at, 1, t->line);
+                    int pe = tc_alloc_effect(tc); tc->effects[pe].consumed = eff_c; tc->effects[pe].produced = eff_p; tc->effects[pe].out_type = eff_out;
+                    AbstractType pa = {0}; pa.type = TC_TUPLE; pa.effect_idx = pe; tc_bind(tc, tc->recur_sym, &pa, 1, t->line);
                 }
-                if (!skip_body) {
-                    tc->body_depth++;
-                    tc_process_range(tc, toks, i+1, close, total_count);
-                    tc->body_depth--;
-                }
-                if (wide_effect) tc->suppress_errors = _s[4];
-                else if (!skip_body) {
-                    int ao = tc->sp - _s[0];
-                    out_count = ao > 8 ? 8 : (ao > 0 ? ao : 0);
-                    for (int j = 0; j < out_count; j++) {
-                        int idx = tc->sp - out_count + j; if (idx < 0) continue;
-                        out_tvars[j] = tc->data[idx].tvar_id;
-                        if (!out_tvars[j] && tc->data[idx].type != TC_NONE) { out_tvars[j] = tvar_fresh(tc); tc->tvars[out_tvars[j]].bound = tc->data[idx].type; }
-                        else if (!out_tvars[j]) out_tvars[j] = tvar_fresh(tc);
-                    }
-                    scheme_count = tc->tvar_count - scheme_base;
+                if (!skip) { tc->body_depth++; tc_process_range(tc, toks, i+1, close, total_count); tc->body_depth--; }
+                if (wide) tc->suppress_errors = _s[4];
+                else if (!skip) {
+                    int ao = tc->sp - _s[0]; oc = ao > 8 ? 8 : (ao > 0 ? ao : 0);
+                    for (int j = 0; j < oc; j++) { int idx = tc->sp - oc + j; if (idx < 0) continue;
+                        otv[j] = tc->data[idx].tvar_id;
+                        if (!otv[j]) { otv[j] = tvar_fresh(tc); if (tc->data[idx].type != TC_NONE) tc->tvars[otv[j]].bound = tc->data[idx].type; } }
+                    sc = tc->tvar_count - scheme_base;
                     if (ao == 1 && tc->data[tc->sp-1].type == TC_TUPLE && tc->data[tc->sp-1].effect_idx >= 0) out_eff = tc->data[tc->sp-1].effect_idx;
                 }
-                tc->sp=_s[0];tc->bind_count=_s[1];tc->unknown_count=_s[2];
-                tc->recur_pending=_s[3];tc->suppress_errors=_s[4];
-                type_sig_count=_s[5];tc->effect_count=_s[6];tc->sp_floor=_s[7];
+                tc->sp=_s[0];tc->bind_count=_s[1];tc->unknown_count=_s[2];tc->recur_pending=_s[3];tc->suppress_errors=_s[4];type_sig_count=_s[5];tc->effect_count=_s[6];tc->sp_floor=_s[7];
             }
             tc_push(tc, TC_TUPLE, t->line);
-            int eidx = tc_alloc_effect(tc);
-            TupleEffect *eff = &tc->effects[eidx];
+            int eidx = tc_alloc_effect(tc); TupleEffect *eff = &tc->effects[eidx];
             eff->consumed = eff_c; eff->produced = eff_p; eff->out_type = eff_out; eff->out_effect = out_eff;
-            eff->scheme_base = scheme_base; eff->scheme_count = scheme_count;
-            eff->in_count = in_count; eff->out_count = out_count;
-            for (int j = 0; j < in_count; j++) eff->in_tvars[j] = in_tvars[j];
-            for (int j = 0; j < out_count; j++) eff->out_tvars[j] = out_tvars[j];
+            eff->scheme_base = scheme_base; eff->scheme_count = sc; eff->in_count = ic; eff->out_count = oc;
+            for (int j = 0; j < ic; j++) eff->in_tvars[j] = itv[j];
+            for (int j = 0; j < oc; j++) eff->out_tvars[j] = otv[j];
             tc->data[tc->sp-1].effect_idx = eidx;
             i = close; break;
         }
@@ -1182,38 +1036,25 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             uint32_t sym = t->as.sym;
             if (sym == S_DEF) {
                 if (tc->recur_pending) {
-                    if (tc->sp >= 1) {
-                        AbstractType vt = tc->data[tc->sp-1]; tc->sp--;
-                        if (i >= tc->user_start) tc_check_redef(tc, tc->recur_sym, t->line);
-                        tc_bind(tc, tc->recur_sym, &vt, 1, t->line);
-                    }
+                    if (tc->sp >= 1) { AbstractType vt = tc->data[--tc->sp]; if (i >= tc->user_start) tc_check_redef(tc, tc->recur_sym, t->line); tc_bind(tc, tc->recur_sym, &vt, 1, t->line); }
                     tc->recur_pending = 0;
-                } else {
-                    if (tc->sp >= 2) {
-                        AbstractType vt = tc->data[tc->sp-1]; uint32_t name_sym = tc->data[tc->sp-2].sym_id;
-                        tc->sp -= 2;
-                        if (name_sym) {
-                            if (i >= tc->user_start) tc_check_redef(tc, name_sym, t->line);
-                            tc_bind(tc, name_sym, &vt, 1, t->line);
-                        }
-                    } else if (tc->sp_floor == 0) tc->sp = 0;
-                }
+                } else if (tc->sp >= 2) {
+                    AbstractType vt = tc->data[tc->sp-1]; uint32_t ns = tc->data[tc->sp-2].sym_id; tc->sp -= 2;
+                    if (ns) { if (i >= tc->user_start) tc_check_redef(tc, ns, t->line); tc_bind(tc, ns, &vt, 1, t->line); }
+                } else if (tc->sp_floor == 0) tc->sp = 0;
             } else if (sym == S_LET) {
                 if (tc->sp >= 2) {
-                    uint32_t name_sym = tc->data[tc->sp-1].sym_id; tc->sp--;
-                    AbstractType val_t = tc->data[tc->sp-1]; tc->sp--;
-                    if (name_sym) {
-                        if (i >= tc->user_start) {
-                            int ss=tc->suppress_errors; tc->suppress_errors=0;
-                            if(tc_is_builtin(name_sym,tc->prelude_sig_count)) tc_error(tc,t->line,0,"'%s' shadows existing definition",sym_name(name_sym));
-                            else{TCBinding *ex=tc_lookup(tc,name_sym);if(ex)tc_error(tc,t->line,0,"'%s' %s (line %d)",sym_name(name_sym),ex->is_def?"shadows existing definition":"is already bound",ex->def_line);}
-                            tc->suppress_errors=ss;
-                        }
-                        tc_bind(tc, name_sym, &val_t, 0, t->line);
+                    uint32_t ns = tc->data[tc->sp-1].sym_id; AbstractType val_t = tc->data[tc->sp-2]; tc->sp -= 2;
+                    if (ns) {
+                        if (i >= tc->user_start) { int ss=tc->suppress_errors; tc->suppress_errors=0;
+                            if(tc_is_builtin(ns,tc->prelude_sig_count)) tc_error(tc,t->line,0,"'%s' shadows existing definition",sym_name(ns));
+                            else{TCBinding *ex=tc_lookup(tc,ns);if(ex)tc_error(tc,t->line,0,"'%s' %s (line %d)",sym_name(ns),ex->is_def?"shadows existing definition":"is already bound",ex->def_line);}
+                            tc->suppress_errors=ss; }
+                        tc_bind(tc, ns, &val_t, 0, t->line);
                     }
                 } else if (tc->sp_floor == 0) tc->sp = 0;
             } else if (sym == S_RECUR) {
-                if (tc->sp >= 1) { uint32_t name_sym = tc->data[tc->sp-1].sym_id; tc->recur_pending = 1; tc->sp--; if (name_sym) tc->recur_sym = name_sym; }
+                if (tc->sp >= 1) { uint32_t ns = tc->data[tc->sp-1].sym_id; tc->recur_pending = 1; tc->sp--; if (ns) tc->recur_sym = ns; }
             } else if (sym == S_EFFECT) {
                 if (tc->sp > 0) tc->sp--;
                 int be = i - 1;
@@ -1224,10 +1065,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     if (tc->sp >= 1 && tc->data[tc->sp-1].type == TC_TUPLE) {
                         if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_SYM) typesig_register(tc->data[tc->sp-2].sym_id, &sig);
                         for (int b2 = i-2; b2 >= 0; b2--) if (toks[b2].tag == TOK_RPAREN) {
-                            int d2 = 1;
-                            for (int k = b2-1; k >= 0; k--) { if (toks[k].tag == TOK_RPAREN) d2++; else if (toks[k].tag == TOK_LPAREN && --d2 == 0) { tc->errors += tc_check_body_against_sig(toks, k+1, b2, total_count, &sig); break; } }
-                            break;
-                        }
+                            int d2=1; for(int k=b2-1;k>=0;k--){if(toks[k].tag==TOK_RPAREN)d2++;else if(toks[k].tag==TOK_LPAREN&&--d2==0){tc->errors+=tc_check_body_against_sig(toks,k+1,b2,total_count,&sig);break;}} break; }
                     } else if (tc->sp >= 1 && tc->data[tc->sp-1].type == TC_SYM) {
                         typesig_register(tc->data[tc->sp-1].sym_id, &sig);
                         if (!(i+1 < end && toks[i+1].tag == TOK_WORD && toks[i+1].as.sym == S_DEF)) tc->sp--;
@@ -1241,55 +1079,42 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     if (tc->unknown_count > 0 && tc->unknowns[tc->unknown_count-1].sym == toks[i-1].as.sym) tc->unknown_count--;
                 }
             } else if (sym == S_UNION) {
-                if (tc->sp > 0 && (tc->data[tc->sp-1].type == TC_REC || tc->data[tc->sp-1].type == TC_TUPLE))
-                    tc->sp--;
+                if (tc->sp > 0 && (tc->data[tc->sp-1].type == TC_REC || tc->data[tc->sp-1].type == TC_TUPLE)) tc->sp--;
                 if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TAGGED && tc->data[tc->sp-1].tvar_id > 0) {
                     int brace = tc_find_brace_before(toks, i);
                     if (brace >= 0 && tc->union_count < UNION_MAX) {
-                        int uid = ++tc->union_count;
-                        tc->unions[uid - 1].count = tc_extract_brace_keys(toks, brace, total_count,
-                            tc->unions[uid - 1].syms, tc->unions[uid - 1].types, UNION_VARIANTS_MAX);
+                        int uid = ++tc->union_count; UnionDef *ud = &tc->unions[uid-1];
+                        ud->count = tc_extract_brace_keys(toks, brace, total_count, ud->syms, ud->types, UNION_VARIANTS_MAX);
                         tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid;
                     }
                 }
             } else if (sym == S_UNTAG) {
-                int saved_union_id = 0;
+                int suid = 0;
                 if (tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED && tc->data[tc->sp-3].tvar_id > 0)
-                    saved_union_id = tc->tvars[tvar_find(tc, tc->data[tc->sp-3].tvar_id)].union_id;
+                    suid = tc->tvars[tvar_find(tc, tc->data[tc->sp-3].tvar_id)].union_id;
                 tc_check_word(tc, sym, t->line);
-                if (saved_union_id > 0 && i >= tc->user_start) {
-                    UnionDef *ud = &tc->unions[saved_union_id - 1];
-                    int brace = tc_find_brace_before(toks, i);
-                    if (brace >= 0) {
-                        uint32_t handled[UNION_VARIANTS_MAX]; int hcount = tc_extract_brace_keys(toks, brace, total_count, handled, NULL, UNION_VARIANTS_MAX);
-                        for (int v = 0; v < ud->count; v++) {
-                            int found = 0;
-                            for (int h = 0; h < hcount; h++) if (handled[h] == ud->syms[v]) { found = 1; break; }
-                            if (!found) tc_error(tc, t->line, 0, "'untag' missing variant '%s' declared by union", sym_name(ud->syms[v]));
-                        }
-                    }
+                if (suid > 0 && i >= tc->user_start) {
+                    UnionDef *ud = &tc->unions[suid-1]; int brace = tc_find_brace_before(toks, i);
+                    if (brace >= 0) { uint32_t handled[UNION_VARIANTS_MAX]; int hc = tc_extract_brace_keys(toks, brace, total_count, handled, NULL, UNION_VARIANTS_MAX);
+                        for (int v = 0; v < ud->count; v++) { int found = 0; for (int h = 0; h < hc; h++) if (handled[h] == ud->syms[v]) { found = 1; break; }
+                            if (!found) tc_error(tc, t->line, 0, "'untag' missing variant '%s' declared by union", sym_name(ud->syms[v])); } }
                 }
             } else if (sym == S_DEFAULT) {
-                TypeConstraint payload_type = TC_NONE;
-                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0) {
-                    int tp = tvar_content(tc, tc->data[tc->sp-2].tvar_id, TC_TAGGED);
-                    if (tp > 0) payload_type = tvar_resolve(tc, tp);
-                }
+                TypeConstraint pt = TC_NONE;
+                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0)
+                    { int tp = tvar_content(tc, tc->data[tc->sp-2].tvar_id, TC_TAGGED); if (tp > 0) pt = tvar_resolve(tc, tp); }
                 tc_check_word(tc, sym, t->line);
-                if (payload_type != TC_NONE && tc->sp > 0 && tc->data[tc->sp-1].type == TC_NONE)
-                    tc->data[tc->sp-1].type = payload_type;
+                if (pt != TC_NONE && tc->sp > 0 && tc->data[tc->sp-1].type == TC_NONE) tc->data[tc->sp-1].type = pt;
             } else tc_check_word(tc, sym, t->line);
             break;
         }
         default: break;
         }
         if (tc->body_depth == 0 && tc->effect_count > EFFECT_MAX/2) {
-            int max_live = 0;
-            for (int s = 0; s < tc->sp; s++)
-                if (tc->data[s].effect_idx >= max_live) max_live = tc->data[s].effect_idx + 1;
-            for (int b = 0; b < tc->bind_count; b++)
-                if (tc->bindings[b].atype.effect_idx >= max_live) max_live = tc->bindings[b].atype.effect_idx + 1;
-            if (max_live < tc->effect_count) tc->effect_count = max_live;
+            int ml = 0;
+            for (int s = 0; s < tc->sp; s++) if (tc->data[s].effect_idx >= ml) ml = tc->data[s].effect_idx + 1;
+            for (int b = 0; b < tc->bind_count; b++) if (tc->bindings[b].atype.effect_idx >= ml) ml = tc->bindings[b].atype.effect_idx + 1;
+            if (ml < tc->effect_count) tc->effect_count = ml;
         }
     }
 }
@@ -1306,7 +1131,6 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     }
     return tc.errors;
 }
-
 /* ---- PRIMITIVES ---- */
 #define POP_VAL(name) \
     Value name##_top = stack[sp-1]; int name##_s = val_slots(name##_top); \
@@ -1395,23 +1219,15 @@ static void prim_cond(Frame *env) {
     }
     eval_default(def_buf,def_s,def_top,scrut_buf,scrut_s,env);
 }
-static int dispatch_clauses(const char *who, Value *clauses_buf, int clauses_s, int clauses_len, ValTag clauses_tag,
-                            uint32_t match_sym, Value *pre_push, int pre_push_s, Frame *env) {
-    if(clauses_tag==VAL_RECORD){
-        int found; ElemRef body_ref=record_field(clauses_buf,clauses_s,clauses_len,match_sym,&found);
-        if(found){if(pre_push){memcpy(&stack[sp],pre_push,pre_push_s*sizeof(Value));sp+=pre_push_s;}eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);return 1;}
-    } else {
-        if(clauses_len%2!=0) die("%s: need even number of clauses", who);
-        for(int i=0;i<clauses_len;i+=2){
-            ElemRef pat_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i);
-            Value pat=clauses_buf[pat_ref.base];
-            if(pat.tag==VAL_SYM&&pat.as.sym==match_sym){
-                ElemRef body_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i+1);
-                if(pre_push){memcpy(&stack[sp],pre_push,pre_push_s*sizeof(Value));sp+=pre_push_s;}
-                eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);return 1;
-            }
-        }
-    }
+static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag ct,
+                            uint32_t ms, Value *pp, int pps, Frame *env) {
+#define DC_PUSH() if(pp){memcpy(&stack[sp],pp,pps*sizeof(Value));sp+=pps;}
+    if(ct==VAL_RECORD){ int found; ElemRef br=record_field(cb,cs,cl,ms,&found);
+        if(found){DC_PUSH();eval_body(&cb[br.base],br.slots,env);return 1;}
+    } else { if(cl%2!=0) die("%s: need even number of clauses", who);
+        for(int i=0;i<cl;i+=2){ElemRef pr=compound_elem(cb,cs,cl,i);Value pat=cb[pr.base];
+            if(pat.tag==VAL_SYM&&pat.as.sym==ms){ElemRef br=compound_elem(cb,cs,cl,i+1);DC_PUSH();eval_body(&cb[br.base],br.slots,env);return 1;}} }
+#undef DC_PUSH
     return 0;
 }
 static void prim_match(Frame *env) {
@@ -1493,39 +1309,34 @@ FLOAT1(ffloor,floor) FLOAT1(fceil,ceil) FLOAT1(fround,round) FLOAT1(fexp,exp) FL
 FLOAT2(fpow,pow) FLOAT2(fatan2,atan2)
 static void prim_stack(Frame *e){(void)e;spush(val_compound(VAL_TUPLE,0,1));}
 static void prim_size(Frame *e) {
-    (void)e; Value top=speek();
-    if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
-    if(!is_compound(top.tag)) die("len: expected compound, got %s", valtag_name(top.tag));
+    (void)e; Value top=speek(); if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
+    if(!is_compound(top.tag)) die("len: expected compound, got %s",valtag_name(top.tag));
     sp-=val_slots(top); spush(val_int((int)top.as.compound.len));
 }
 static void prim_push_op(Frame *e) {
-    (void)e; POP_VAL(v); Value ct=stack[sp-1];
-    if(ct.tag==VAL_TAGGED) die("push: cannot push onto tagged value");
-    if(!is_compound(ct.tag)) die("push: expected compound, got %s", valtag_name(ct.tag));
+    (void)e; POP_VAL(v); Value ct=stack[sp-1]; if(ct.tag==VAL_TAGGED) die("push: cannot push onto tagged value");
+    if(!is_compound(ct.tag)) die("push: expected compound, got %s",valtag_name(ct.tag));
     ValTag tag=ct.tag; int cs=val_slots(ct),cl=(int)ct.as.compound.len; sp--;
-    memcpy(&stack[sp],v_buf,v_s*sizeof(Value)); sp+=v_s;
-    spush(val_compound(tag,cl+1,cs+v_s));
+    memcpy(&stack[sp],v_buf,v_s*sizeof(Value)); sp+=v_s; spush(val_compound(tag,cl+1,cs+v_s));
 }
 static void prim_pop_op(Frame *e) {
-    (void)e; Value top=speek();
-    if(top.tag==VAL_TAGGED) die("pop: cannot pop from tagged value");
-    if(!is_compound(top.tag)) die("pop: expected compound, got %s", valtag_name(top.tag));
+    (void)e; Value top=speek(); if(top.tag==VAL_TAGGED) die("pop: cannot pop from tagged value");
+    if(!is_compound(top.tag)) die("pop: expected compound, got %s",valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len;
-    if(len==0) die("pop: empty %s", tag==VAL_LIST?"list":tag==VAL_TUPLE?"tuple":"record");
+    if(len==0) die("pop: empty %s",tag==VAL_LIST?"list":tag==VAL_TUPLE?"tuple":"record");
     int base=sp-s; ElemRef last=compound_elem(&stack[base],s,len,len-1);
-    Value elem_buf[LOCAL_MAX]; memcpy(elem_buf,&stack[base+last.base],last.slots*sizeof(Value));
+    Value eb[LOCAL_MAX]; memcpy(eb,&stack[base+last.base],last.slots*sizeof(Value));
     sp--; sp-=last.slots; spush(val_compound(tag,len-1,s-last.slots));
-    memcpy(&stack[sp],elem_buf,last.slots*sizeof(Value)); sp+=last.slots;
+    memcpy(&stack[sp],eb,last.slots*sizeof(Value)); sp+=last.slots;
 }
-static void prim_elem(void) {
-    int64_t idx=pop_int(); Value top=speek();
+static void prim_get(Frame *e) {
+    (void)e; int64_t idx=pop_int(); Value top=speek();
     if(top.tag==VAL_TAGGED) die("get: cannot index tagged value");
     if(!is_compound(top.tag)) die("get: expected compound, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef ref=compound_elem(&stack[base],s,len,(int)idx);
     Value eb[LOCAL_MAX]; memcpy(eb,&stack[base+ref.base],ref.slots*sizeof(Value));
-    sp-=s;
-    memcpy(&stack[sp],eb,ref.slots*sizeof(Value)); sp+=ref.slots;
+    sp-=s; memcpy(&stack[sp],eb,ref.slots*sizeof(Value)); sp+=ref.slots;
 }
 static void prim_replace_at(Frame *e) {
     (void)e; POP_VAL(v); int64_t idx=pop_int(); Value top=speek();
@@ -1533,27 +1344,18 @@ static void prim_replace_at(Frame *e) {
     if(!is_compound(top.tag)) die("set: expected compound, got %s", valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef old_ref=compound_elem(&stack[base],s,len,(int)idx);
-    if(old_ref.slots==v_s) memcpy(&stack[base+old_ref.base],v_buf,v_s*sizeof(Value));
-    else {
-        Value tmp[LOCAL_MAX]; int tmp_sp=0;
-        for(int i=0;i<len;i++){
-            ElemRef r=compound_elem(&stack[base],s,len,i);
-            if(i==(int)idx){memcpy(&tmp[tmp_sp],v_buf,v_s*sizeof(Value));tmp_sp+=v_s;}
-            else{memcpy(&tmp[tmp_sp],&stack[base+r.base],r.slots*sizeof(Value));tmp_sp+=r.slots;}
-        }
-        sp=base; memcpy(&stack[sp],tmp,tmp_sp*sizeof(Value)); sp+=tmp_sp;
-        spush(val_compound(tag,len,tmp_sp+1));
-    }
+    if(old_ref.slots==v_s){memcpy(&stack[base+old_ref.base],v_buf,v_s*sizeof(Value));return;}
+    Value tmp[LOCAL_MAX]; int ts=0;
+    for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);Value *src=i==(int)idx?v_buf:&stack[base+r.base];int sz=i==(int)idx?v_s:r.slots;memcpy(&tmp[ts],src,sz*sizeof(Value));ts+=sz;}
+    sp=base; memcpy(&stack[sp],tmp,ts*sizeof(Value)); sp+=ts; spush(val_compound(tag,len,ts+1));
 }
 static void prim_concat(Frame *e) {
-    (void)e; Value t2=stack[sp-1];
-    if(t2.tag==VAL_TAGGED)die("concat: cannot concat tagged values");
+    (void)e; Value t2=stack[sp-1]; if(t2.tag==VAL_TAGGED)die("concat: cannot concat tagged values");
     if(!is_compound(t2.tag))die("concat: expected compound, got %s",valtag_name(t2.tag));
     ValTag tag=t2.tag; int s2=val_slots(t2),l2=(int)t2.as.compound.len,b2=sp-s2;
     Value bel=stack[b2-1]; if(!is_compound(bel.tag))die("concat: expected compound below top, got %s",valtag_name(bel.tag));
-    int s1=val_slots(bel),l1=(int)bel.as.compound.len,b1=b2-s1,ns=(s1-1)+(s2-1);
-    if(ns>LOCAL_MAX)die("concat: result too large"); Value tmp[ns];
-    memcpy(tmp,&stack[b1],(s1-1)*sizeof(Value)); memcpy(&tmp[s1-1],&stack[b2],(s2-1)*sizeof(Value));
+    int s1=val_slots(bel),l1=(int)bel.as.compound.len,b1=b2-s1,ns=(s1-1)+(s2-1); if(ns>LOCAL_MAX)die("concat: result too large");
+    Value tmp[ns]; memcpy(tmp,&stack[b1],(s1-1)*sizeof(Value)); memcpy(&tmp[s1-1],&stack[b2],(s2-1)*sizeof(Value));
     sp=b1; memcpy(&stack[sp],tmp,ns*sizeof(Value)); sp+=ns; spush(val_compound(tag,l1+l2,ns+1));
 }
 static void prim_nth(Frame *env) {
@@ -1601,43 +1403,32 @@ static void prim_each(Frame *env) {
     LIST_ITER("each");
     for(int i=0;i<list_len;i++){PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);}
 }
-static int sort_cmp(const void *a,const void *b) {
-    const Value *va=(const Value*)a,*vb=(const Value*)b;
+static int val_cmp(const Value *va, const Value *vb) {
     if(va->tag==VAL_INT&&vb->tag==VAL_INT) return(va->as.i>vb->as.i)-(va->as.i<vb->as.i);
     if(va->tag==VAL_FLOAT&&vb->tag==VAL_FLOAT) return(va->as.f>vb->as.f)-(va->as.f<vb->as.f);
     if(va->tag==VAL_SYM&&vb->tag==VAL_SYM) return strcmp(sym_name(va->as.sym),sym_name(vb->as.sym));
     die("sort: mismatched or unsupported element types (got %s and %s)", valtag_name(va->tag), valtag_name(vb->tag)); return 0;
 }
+static int sort_cmp(const void *a,const void *b) { return val_cmp((const Value*)a,(const Value*)b); }
 static void prim_sort(Frame *e){
-    (void)e; Value top=speek();
-    if(top.tag!=VAL_LIST) die("sort: expected list, got %s", valtag_name(top.tag));
-    int s=val_slots(top),len=(int)top.as.compound.len;
-    if(s!=len+1) {
-        /* find first multi-slot element to report */
-        ValTag bad=VAL_INT; int base=sp-s;
-        for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);if(r.slots>1){bad=stack[base+r.base+r.slots-1].tag;break;}}
-        die("sort: elements must be orderable (int, float, or symbol), got %s", valtag_name(bad));
-    }
-    qsort(&stack[sp-s],len,sizeof(Value),sort_cmp);
+    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("sort: expected list, got %s",valtag_name(top.tag));
+    int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
+    if(s!=len+1){ValTag bad=VAL_INT;for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);if(r.slots>1){bad=stack[base+r.base+r.slots-1].tag;break;}}
+        die("sort: elements must be orderable (int, float, or symbol), got %s",valtag_name(bad));}
+    qsort(&stack[base],len,sizeof(Value),sort_cmp);
 }
 static void prim_index_of(Frame *e) {
-    (void)e; POP_VAL(val); Value top=speek();
-    if(top.tag!=VAL_LIST) die("index-of: expected list, got %s", valtag_name(top.tag));
-    int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s,found=-1;
-    for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);if(val_equal(&stack[base+r.base],r.slots,val_buf,val_s)){found=i;break;}}
-    sp-=s; spush(val_int(found));
+    (void)e; POP_VAL(val); Value top=speek(); if(top.tag!=VAL_LIST) die("index-of: expected list, got %s",valtag_name(top.tag));
+    int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s,r=-1;
+    for(int i=0;i<len&&r<0;i++){ElemRef ref=compound_elem(&stack[base],s,len,i);if(val_equal(&stack[base+ref.base],ref.slots,val_buf,val_s))r=i;}
+    sp-=s; spush(val_int(r));
 }
 static void prim_scan(Frame *env) {
     POP_BODY(fn,"scan"); POP_VAL(init); POP_LIST_BUF(list,"scan");
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
-    Value acc_buf[LOCAL_MAX]; int acc_s=init_s; memcpy(acc_buf,init_buf,init_s*sizeof(Value));
+    Value acc[LOCAL_MAX]; int as=init_s; memcpy(acc,init_buf,init_s*sizeof(Value));
     int rb=sp;
-    for(int i=0;i<list_len;i++){
-        memcpy(&stack[sp],acc_buf,acc_s*sizeof(Value));sp+=acc_s;
-        memcpy(&stack[sp],&list_buf[offs[i]],szs[i]*sizeof(Value));sp+=szs[i];
-        eval_body(fn_buf,fn_s,env);
-        Value new_acc_top=stack[sp-1]; acc_s=val_slots(new_acc_top); memcpy(acc_buf,&stack[sp-acc_s],acc_s*sizeof(Value));
-    }
+    for(int i=0;i<list_len;i++){memcpy(&stack[sp],acc,as*sizeof(Value));sp+=as;PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);as=val_slots(stack[sp-1]);memcpy(acc,&stack[sp-as],as*sizeof(Value));}
     spush(val_compound(VAL_LIST,list_len,sp-rb+1));
 }
 static void prim_at(Frame *env) {
@@ -1650,72 +1441,59 @@ static void prim_at(Frame *env) {
     Value vb[LOCAL_MAX]; memcpy(vb,&stack[base+ref.base],ref.slots*sizeof(Value));
     sp-=s; memcpy(&stack[sp],vb,ref.slots*sizeof(Value)); sp+=ref.slots;
 }
-static void rec_set_field(int rec_base, int rec_s, int rec_len, uint32_t key, Value *nv, int ns, int add) {
-    Value tmp[LOCAL_MAX]; int tmp_sp=0, replaced=0;
-    int kp[LOCAL_MAX],vo[LOCAL_MAX],vs[LOCAL_MAX];
-    record_offsets(&stack[rec_base],rec_s,rec_len,kp,vo,vs);
-    for(int i=0;i<rec_len;i++){
-        uint32_t k=stack[rec_base+kp[i]].as.sym;
-        if(k==key){tmp[tmp_sp++]=val_sym(key);memcpy(&tmp[tmp_sp],nv,ns*sizeof(Value));tmp_sp+=ns;replaced=1;}
-        else{tmp[tmp_sp++]=stack[rec_base+kp[i]];memcpy(&tmp[tmp_sp],&stack[rec_base+vo[i]],vs[i]*sizeof(Value));tmp_sp+=vs[i];}
-    }
-    if(add&&!replaced){tmp[tmp_sp++]=val_sym(key);memcpy(&tmp[tmp_sp],nv,ns*sizeof(Value));tmp_sp+=ns;}
-    sp=rec_base; memcpy(&stack[sp],tmp,tmp_sp*sizeof(Value)); sp+=tmp_sp;
-    spush(val_compound(VAL_RECORD,rec_len+(add&&!replaced),tmp_sp+1));
+static void rec_set_field(int rb, int rs, int rl, uint32_t key, Value *nv, int ns, int add) {
+    Value tmp[LOCAL_MAX]; int ts=0, replaced=0;
+    int kp[LOCAL_MAX],vo[LOCAL_MAX],vs[LOCAL_MAX]; record_offsets(&stack[rb],rs,rl,kp,vo,vs);
+    for(int i=0;i<rl;i++){uint32_t k=stack[rb+kp[i]].as.sym;tmp[ts++]=val_sym(k);
+        if(k==key){memcpy(&tmp[ts],nv,ns*sizeof(Value));ts+=ns;replaced=1;}
+        else{memcpy(&tmp[ts],&stack[rb+vo[i]],vs[i]*sizeof(Value));ts+=vs[i];}}
+    if(add&&!replaced){tmp[ts++]=val_sym(key);memcpy(&tmp[ts],nv,ns*sizeof(Value));ts+=ns;}
+    sp=rb; memcpy(&stack[sp],tmp,ts*sizeof(Value)); sp+=ts; spush(val_compound(VAL_RECORD,rl+(add&&!replaced),ts+1));
 }
+#define REC_PREAMBLE(who) Value rec_top=stack[sp-1];if(rec_top.tag!=VAL_RECORD)die(who ": expected record, got %s",valtag_name(rec_top.tag));int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s
 static void prim_into(Frame *e) {
-    (void)e; uint32_t key=pop_sym(); POP_VAL(v);
-    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("into: expected record, got %s", valtag_name(rec_top.tag));
-    int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s;
+    (void)e; uint32_t key=pop_sym(); POP_VAL(v); REC_PREAMBLE("into");
     int found; ElemRef existing=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
     if(found&&existing.slots==v_s) memcpy(&stack[rec_base+existing.base],v_buf,v_s*sizeof(Value));
     else rec_set_field(rec_base,rec_s,rec_len,key,v_buf,v_s,1);
 }
 static void prim_edit(Frame *env) {
-    POP_BODY(fn,"edit"); uint32_t key=pop_sym();
-    Value rec_top=stack[sp-1]; if(rec_top.tag!=VAL_RECORD) die("edit: expected record, got %s", valtag_name(rec_top.tag));
-    int rec_s=val_slots(rec_top),rec_len=(int)rec_top.as.compound.len,rec_base=sp-rec_s;
+    POP_BODY(fn,"edit"); uint32_t key=pop_sym(); REC_PREAMBLE("edit");
     int found; ElemRef ref=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
     if(!found) die("edit: key '%s' not found in record",sym_name(key));
-    Value field_buf[LOCAL_MAX]; memcpy(field_buf,&stack[rec_base+ref.base],ref.slots*sizeof(Value));
-    memcpy(&stack[sp],field_buf,ref.slots*sizeof(Value)); sp+=ref.slots;
+    memcpy(&stack[sp],&stack[rec_base+ref.base],ref.slots*sizeof(Value)); sp+=ref.slots;
     eval_body(fn_buf,fn_s,env);
-    Value new_top=stack[sp-1]; int new_s=val_slots(new_top);
-    if(new_s==ref.slots){memcpy(&stack[rec_base+ref.base],&stack[sp-new_s],new_s*sizeof(Value));sp-=new_s;}
-    else{Value nv[LOCAL_MAX];memcpy(nv,&stack[sp-new_s],new_s*sizeof(Value));sp-=new_s;rec_set_field(rec_base,rec_s,rec_len,key,nv,new_s,0);}
+    int ns=val_slots(stack[sp-1]);
+    if(ns==ref.slots){memcpy(&stack[rec_base+ref.base],&stack[sp-ns],ns*sizeof(Value));sp-=ns;}
+    else{Value nv[LOCAL_MAX];memcpy(nv,&stack[sp-ns],ns*sizeof(Value));sp-=ns;rec_set_field(rec_base,rec_s,rec_len,key,nv,ns,0);}
 }
 typedef struct BoxData { Value *data; int slots; } BoxData;
 static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;memcpy(bd->data,&stack[sp-s],s*sizeof(Value));sp-=s;Value v;v.tag=VAL_BOX;v.loc=0;v.as.box=bd;spush(v);}
 static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box, got %s", valtag_name(v.tag));BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
+#define BOX_UNPACK(who) POP_BODY(fn,who); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die(who ": expected box, got %s", valtag_name(box_val.tag)); BoxData *bd=(BoxData*)box_val.as.box; memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots
 static void prim_lend(Frame *env) {
-    POP_BODY(fn,"lend"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("lend: expected box, got %s", valtag_name(box_val.tag));
-    BoxData *bd=(BoxData*)box_val.as.box;
-    memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots;
-    int sp_before=sp-bd->slots; eval_body(fn_buf,fn_s,env);
-    int results_slots=sp-sp_before; if(results_slots>LOCAL_MAX) die("lend: result too large (%d slots, max %d)", results_slots, LOCAL_MAX);
-    Value results[results_slots]; memcpy(results,&stack[sp_before],results_slots*sizeof(Value)); sp=sp_before;
-    spush(box_val); memcpy(&stack[sp],results,results_slots*sizeof(Value)); sp+=results_slots;
+    BOX_UNPACK("lend"); int sp_before=sp-bd->slots; eval_body(fn_buf,fn_s,env);
+    int rs=sp-sp_before; Value results[rs]; memcpy(results,&stack[sp_before],rs*sizeof(Value)); sp=sp_before;
+    spush(box_val); memcpy(&stack[sp],results,rs*sizeof(Value)); sp+=rs;
 }
 static void prim_mutate(Frame *env) {
-    POP_BODY(fn,"mutate"); Value box_val=spop(); if(box_val.tag!=VAL_BOX) die("mutate: expected box, got %s", valtag_name(box_val.tag));
-    BoxData *bd=(BoxData*)box_val.as.box;
-    memcpy(&stack[sp],bd->data,bd->slots*sizeof(Value)); sp+=bd->slots;
-    eval_body(fn_buf,fn_s,env);
-    Value new_top=stack[sp-1]; int new_s=val_slots(new_top);
-    free(bd->data); bd->data=malloc(new_s*sizeof(Value)); bd->slots=new_s;
-    memcpy(bd->data,&stack[sp-new_s],new_s*sizeof(Value)); sp-=new_s; spush(box_val);
+    BOX_UNPACK("mutate"); eval_body(fn_buf,fn_s,env);
+    Value new_top=stack[sp-1]; int ns=val_slots(new_top);
+    free(bd->data); bd->data=malloc(ns*sizeof(Value)); bd->slots=ns;
+    memcpy(bd->data,&stack[sp-ns],ns*sizeof(Value)); sp-=ns; spush(box_val);
 }
 static void deep_copy_values(Value *dst, const Value *src, int slots) {
     memcpy(dst,src,slots*sizeof(Value));
     for(int i=0;i<slots;i++) if(dst[i].tag==VAL_BOX){
-        BoxData *orig=(BoxData*)dst[i].as.box; BoxData *copy=malloc(sizeof(BoxData));
-        copy->slots=orig->slots; copy->data=malloc(orig->slots*sizeof(Value));
-        deep_copy_values(copy->data,orig->data,orig->slots); dst[i].as.box=copy;
+        BoxData *o=(BoxData*)dst[i].as.box; BoxData *c=malloc(sizeof(BoxData));
+        c->slots=o->slots; c->data=malloc(o->slots*sizeof(Value));
+        deep_copy_values(c->data,o->data,o->slots); dst[i].as.box=c;
     }
 }
-static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box, got %s", valtag_name(v.tag));BoxData *orig=(BoxData*)v.as.box;BoxData *copy=malloc(sizeof(BoxData));copy->data=malloc(orig->slots*sizeof(Value));copy->slots=orig->slots;deep_copy_values(copy->data,orig->data,orig->slots);spush(v);Value v2;v2.tag=VAL_BOX;v2.loc=0;v2.as.box=copy;spush(v2);}
+static BoxData *box_clone(BoxData *orig) { BoxData *c=malloc(sizeof(BoxData));c->data=malloc(orig->slots*sizeof(Value));c->slots=orig->slots;deep_copy_values(c->data,orig->data,orig->slots);return c; }
+static void prim_clone(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("clone: expected box, got %s",valtag_name(v.tag));BoxData *c=box_clone((BoxData*)v.as.box);spush(v);Value v2={0};v2.tag=VAL_BOX;v2.as.box=c;spush(v2);}
 typedef struct{int idx;Value val;} GradeIV;
-static int grade_asc(const void *a,const void *b){const GradeIV *x=(const GradeIV*)a,*y=(const GradeIV*)b;if(x->val.tag==VAL_INT)return(x->val.as.i>y->val.as.i)-(x->val.as.i<y->val.as.i);return(x->val.as.f>y->val.as.f)-(x->val.as.f<y->val.as.f);}
+static int grade_asc(const void *a,const void *b){return val_cmp(&((const GradeIV*)a)->val,&((const GradeIV*)b)->val);}
 static int grade_desc(const void *a,const void *b){return grade_asc(b,a);}
 static void prim_grade(Frame *e,int ascending) {
     (void)e; Value top=speek();
@@ -1728,13 +1506,11 @@ static void prim_grade(Frame *e,int ascending) {
     spush(val_compound(VAL_LIST,len,len+1)); free(items);
 }
 static void prim_shape(Frame *e) {
-    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("shape: expected list, got %s", valtag_name(top.tag));
-    int len=(int)top.as.compound.len,s=val_slots(top),base=sp-s;
-    int dims[16],ndims=0; dims[ndims++]=len;
-    if(len>0){ElemRef r0=compound_elem(&stack[base],s,len,0);Value e0=stack[base+r0.base+r0.slots-1];if(e0.tag==VAL_LIST)dims[ndims++]=(int)e0.as.compound.len;}
-    sp-=s; for(int i=0;i<ndims;i++) spush(val_int(dims[i])); spush(val_compound(VAL_LIST,ndims,ndims+1));
+    (void)e; Value top=speek(); if(top.tag!=VAL_LIST) die("shape: expected list, got %s",valtag_name(top.tag));
+    int len=(int)top.as.compound.len,s=val_slots(top),base=sp-s,dims[16],nd=0; dims[nd++]=len;
+    if(len>0){ElemRef r0=compound_elem(&stack[base],s,len,0);Value e0=stack[base+r0.base+r0.slots-1];if(e0.tag==VAL_LIST)dims[nd++]=(int)e0.as.compound.len;}
+    sp-=s; for(int i=0;i<nd;i++) spush(val_int(dims[i])); spush(val_compound(VAL_LIST,nd,nd+1));
 }
-
 /* ---- EVAL ---- */
 static void dispatch_word(uint32_t sym, Frame *env) {
     Lookup lu=frame_lookup(env,sym);
@@ -1750,39 +1526,30 @@ static void dispatch_word(uint32_t sym, Frame *env) {
 static void eval_body(Value *body, int slots, Frame *env) {
     if(++eval_depth > EVAL_DEPTH_MAX) die("recursion depth exceeded (%d levels)", EVAL_DEPTH_MAX);
     Value hdr=body[slots-1]; if(hdr.tag!=VAL_TUPLE) die("eval_body: expected tuple, got %s (internal: evaluator received non-tuple header)", valtag_name(hdr.tag));
-    int len=(int)hdr.as.compound.len;
-    Frame *exec_env=hdr.as.compound.env?hdr.as.compound.env:env;
-    int saved_bc=exec_env->bind_count,saved_vu=exec_env->vals_used;
-    int all_scalar=(slots==len+1);
-    if(len>LOCAL_MAX) die("tuple body too large");
-    int offsets_buf[all_scalar?1:len], sizes_buf[all_scalar?1:len];
-    if(!all_scalar) {
-        compute_offsets(body,slots,len,offsets_buf,sizes_buf);
-    }
+    int len=(int)hdr.as.compound.len; if(len>LOCAL_MAX) die("tuple body too large");
+    Frame *ee=hdr.as.compound.env?hdr.as.compound.env:env;
+    int sbc=ee->bind_count,svu=ee->vals_used,asc=(slots==len+1);
+    int ob[asc?1:len], sb[asc?1:len];
+    if(!asc) compute_offsets(body,slots,len,ob,sb);
     for(int k=0;k<len;k++){
-        int eoff,esz; if(all_scalar){eoff=k;esz=1;}else{eoff=offsets_buf[k];esz=sizes_buf[k];}
-        Value elem=body[eoff+esz-1];
+        int eo=asc?k:ob[k],es=asc?1:sb[k]; Value elem=body[eo+es-1];
         if(elem.loc){current_fid=LOC_FID(elem.loc);current_line=LOC_LINE(elem.loc);current_col=LOC_COL(elem.loc);}
-        if(elem.tag==VAL_INT||elem.tag==VAL_FLOAT||elem.tag==VAL_SYM) stack[sp++]=elem;
+        if(elem.tag<=VAL_SYM) stack[sp++]=elem;
         else if(is_compound(elem.tag)){
-            memcpy(&stack[sp],&body[eoff],esz*sizeof(Value)); sp+=esz;
-            if(elem.tag==VAL_TUPLE){exec_env->refcount++;stack[sp-1].as.compound.env=exec_env;}
-        } else if(elem.tag==VAL_XT){
-            elem.as.xt.fn(exec_env);
-        } else if(elem.tag==VAL_WORD){
+            memcpy(&stack[sp],&body[eo],es*sizeof(Value)); sp+=es;
+            if(elem.tag==VAL_TUPLE){ee->refcount++;stack[sp-1].as.compound.env=ee;}
+        } else if(elem.tag==VAL_XT) elem.as.xt.fn(ee);
+        else if(elem.tag==VAL_WORD){
             uint32_t sym=elem.as.sym;
-            if(sym==S_DEF){
-                Value dv_top=stack[sp-1]; int dv_s=val_slots(dv_top); uint32_t name; int rec=0;
-                if(recur_pending){name=recur_sym;rec=1;recur_pending=0;frame_bind(exec_env,name,&stack[sp-dv_s],dv_s,BIND_DEF,rec);sp-=dv_s;}
-                else{Value dv_buf[dv_s];memcpy(dv_buf,&stack[sp-dv_s],dv_s*sizeof(Value));sp-=dv_s;name=pop_sym();frame_bind(exec_env,name,dv_buf,dv_s,BIND_DEF,rec);}
-            } else if(sym==S_LET){
-                uint32_t name=pop_sym(); Value lv_top=stack[sp-1]; int lv_s=val_slots(lv_top);
-                frame_bind(exec_env,name,&stack[sp-lv_s],lv_s,BIND_LET,0); sp-=lv_s;
+            if(sym==S_DEF){ int ds=val_slots(stack[sp-1]);
+                if(recur_pending){recur_pending=0;frame_bind(ee,recur_sym,&stack[sp-ds],ds,BIND_DEF,1);sp-=ds;}
+                else{Value db[ds];memcpy(db,&stack[sp-ds],ds*sizeof(Value));sp-=ds;frame_bind(ee,pop_sym(),db,ds,BIND_DEF,0);}
+            } else if(sym==S_LET){ uint32_t n=pop_sym(); int ls=val_slots(stack[sp-1]); frame_bind(ee,n,&stack[sp-ls],ls,BIND_LET,0); sp-=ls;
             } else if(sym==S_RECUR){recur_sym=pop_sym();recur_pending=1;}
-            else dispatch_word(sym,exec_env);
+            else dispatch_word(sym,ee);
         } else if(elem.tag==VAL_BOX) spush(elem);
     }
-    if(exec_env->refcount==0){exec_env->bind_count=saved_bc;exec_env->vals_used=saved_vu;}
+    if(ee->refcount==0){ee->bind_count=sbc;ee->vals_used=svu;}
     eval_depth--;
 }
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close) {
@@ -1790,49 +1557,42 @@ static int find_matching(Token *toks, int start, int count, TokTag open, TokTag 
     for(int i=start;i<count;i++){if(toks[i].tag==open)depth++;else if(toks[i].tag==close){depth--;if(depth==0)return i;}}
     die("unmatched bracket"); return -1;
 }
-static void build_tuple(Token *toks, int start, int end, int total_count, Frame *env) {
-    int elem_base=sp,elem_count=0;
-    Token *first_tok = (start < end) ? &toks[start] : NULL;
+static void build_tuple(Token *toks, int start, int end, int tc, Frame *env) {
+    int eb=sp,ec=0; Token *ft = (start < end) ? &toks[start] : NULL;
     for(int j=start;j<end;j++){
-        Token *tt=&toks[j];
-        current_fid=tt->fid; current_line=tt->line; current_col=tt->col;
+        Token *tt=&toks[j]; current_fid=tt->fid; current_line=tt->line; current_col=tt->col;
         switch(tt->tag){
-        case TOK_INT:   spush(with_tok(val_int(tt->as.i),   tt)); elem_count++; break;
-        case TOK_FLOAT: spush(with_tok(val_float(tt->as.f), tt)); elem_count++; break;
-        case TOK_SYM:   spush(with_tok(val_sym(tt->as.sym), tt)); elem_count++; break;
+        case TOK_INT: spush(with_tok(val_int(tt->as.i),tt)); ec++; break;
+        case TOK_FLOAT: spush(with_tok(val_float(tt->as.f),tt)); ec++; break;
+        case TOK_SYM: spush(with_tok(val_sym(tt->as.sym),tt)); ec++; break;
         case TOK_WORD:
-            if(tt->as.sym==S_CHECK){if(elem_count>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;elem_count--;}else die("check: expected preceding type word, got %s", elem_count>0?valtag_name(stack[sp-1].tag):"empty stack");}
-            else{PrimFn xt_fn=prim_lookup(tt->as.sym);if(xt_fn)spush(with_tok(val_xt(tt->as.sym,xt_fn),tt));else spush(with_tok(val_word(tt->as.sym),tt));elem_count++;}
+            if(tt->as.sym==S_CHECK){if(ec>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;ec--;}else die("check: expected preceding type word, got %s",ec>0?valtag_name(stack[sp-1].tag):"empty stack");}
+            else{PrimFn xf=prim_lookup(tt->as.sym);spush(with_tok(xf?val_xt(tt->as.sym,xf):val_word(tt->as.sym),tt));ec++;}
             break;
         case TOK_STRING:
-            for(int c=0;c<tt->as.str.len;c++) spush(with_tok(val_int(tt->as.str.codes[c]), tt));
-            spush(with_tok(val_compound(VAL_LIST,tt->as.str.len,tt->as.str.len+1), tt)); elem_count++; break;
-        case TOK_LPAREN:{int nc=find_matching(toks,j+1,total_count,TOK_LPAREN,TOK_RPAREN);build_tuple(toks,j+1,nc,total_count,env);stack[sp-1].loc=LOC_PACK(tt->fid,tt->line,tt->col);elem_count++;j=nc;break;}
+            for(int c=0;c<tt->as.str.len;c++) spush(with_tok(val_int(tt->as.str.codes[c]),tt));
+            spush(with_tok(val_compound(VAL_LIST,tt->as.str.len,tt->as.str.len+1),tt)); ec++; break;
+        case TOK_LPAREN:{int nc=find_matching(toks,j+1,tc,TOK_LPAREN,TOK_RPAREN);build_tuple(toks,j+1,nc,tc,env);stack[sp-1].loc=LOC_PACK(tt->fid,tt->line,tt->col);ec++;j=nc;break;}
         case TOK_LBRACKET:{
-            int bc=find_matching(toks,j+1,total_count,TOK_LBRACKET,TOK_RBRACKET);
-            if(bc+1<total_count&&toks[bc+1].tag==TOK_WORD&&toks[bc+1].as.sym==S_EFFECT){j=bc+1;break;}
-            int lb=sp; eval(toks+j+1,bc-j-1,env); int ls=sp-lb;
-            int ec2=0,pos=sp; while(pos>lb){pos-=val_slots(stack[pos-1]);ec2++;}
-            spush(with_tok(val_compound(VAL_LIST,ec2,ls+1), tt)); elem_count++; j=bc; break;
+            int bc=find_matching(toks,j+1,tc,TOK_LBRACKET,TOK_RBRACKET);
+            if(bc+1<tc&&toks[bc+1].tag==TOK_WORD&&toks[bc+1].as.sym==S_EFFECT){j=bc+1;break;}
+            int lb=sp; eval(toks+j+1,bc-j-1,env);
+            int n=0,p=sp; while(p>lb){p-=val_slots(stack[p-1]);n++;}
+            spush(with_tok(val_compound(VAL_LIST,n,sp-lb+1),tt)); ec++; j=bc; break;
         }
         case TOK_LBRACE:{
-            int bc=find_matching(toks,j+1,total_count,TOK_LBRACE,TOK_RBRACE);
-            int lb=sp; eval(toks+j+1,bc-j-1,env); int total_slots=sp-lb;
-            int nfields=0,is_record=1,pos=sp;
-            while(pos>lb){Value v=stack[pos-1];int vs=val_slots(v);pos-=vs;if(is_record&&pos>lb&&stack[pos-1].tag==VAL_SYM){pos--;nfields++;}else is_record=0;}
-            if(is_record&&nfields>0) spush(with_tok(val_compound(VAL_RECORD,nfields,total_slots+1), tt));
-            else{int ec2=0;pos=sp;while(pos>lb){pos-=val_slots(stack[pos-1]);ec2++;}spush(with_tok(val_compound(VAL_TUPLE,ec2,total_slots+1), tt));}
-            elem_count++; j=bc; break;
+            int bc=find_matching(toks,j+1,tc,TOK_LBRACE,TOK_RBRACE);
+            int lb=sp; eval(toks+j+1,bc-j-1,env); int ts=sp-lb,nf=0,ir=1,p=sp;
+            while(p>lb){int vs=val_slots(stack[p-1]);p-=vs;if(ir&&p>lb&&stack[p-1].tag==VAL_SYM){p--;nf++;}else ir=0;}
+            if(ir&&nf>0) spush(with_tok(val_compound(VAL_RECORD,nf,ts+1),tt));
+            else{int n=0;p=sp;while(p>lb){p-=val_slots(stack[p-1]);n++;}spush(with_tok(val_compound(VAL_TUPLE,n,ts+1),tt));}
+            ec++; j=bc; break;
         }
         default: break;
         }
     }
-    int total_elem_slots=sp-elem_base;
-    Value hdr = val_compound(VAL_TUPLE,elem_count,total_elem_slots+1);
-    if (first_tok) hdr.loc = LOC_PACK(first_tok->fid, first_tok->line, first_tok->col);
-    spush(hdr);
-    if(env) env->refcount++;
-    stack[sp-1].as.compound.env=env;
+    Value hdr=val_compound(VAL_TUPLE,ec,sp-eb+1); if(ft) hdr.loc=LOC_PACK(ft->fid,ft->line,ft->col);
+    spush(hdr); if(env) env->refcount++; stack[sp-1].as.compound.env=env;
 }
 static void eval(Token *toks, int count, Frame *env) {
     int base=sp; build_tuple(toks,0,count,count,env);
@@ -1895,14 +1655,10 @@ static const char *BUILTIN_TYPES =
     "'rotate" LNE "'windows" LNE "'zip ['a list own in  'a list own in  list" MO "'group" LDE "'reshape" LDE "'transpose [list own in  list" MO
     "'read [list own in  int list" MO "'write [list own in  int list own in] effect\n'ls [list own in  list" MO
     "'utf8-encode [int list own in  int list" MO "'utf8-decode [int list own in  int list" MO "'str-find [int list own in  int list own in  int" MO
-    "'str-split [int list own in  int list own in  list" MO "'parse-http [int list own in  int move out  list move out  int list" MO
-    "'args [list" MO "'isheadless [int" MO "'cwd [list" MO
+    "'str-split [int list own in  int list own in  list" MO "'parse-http [int list own in  int move out  list move out  int list" MO "'args [list" MO "'isheadless [int" MO "'cwd [list" MO
 #ifndef SLAP_WASM
-    "'tcp-connect [int list own in  int lent in  int box" MO
-    "'tcp-send [int box own in  int list own in  int box" MO
-    "'tcp-recv [int box own in  int lent in  int box move out  int list" MO
-    "'tcp-close [int box own in] effect\n'tcp-listen [int lent in  int box" MO
-    "'tcp-accept [int box own in  int box move out  int box" MO
+    "'tcp-connect [int list own in  int lent in  int box" MO "'tcp-send [int box own in  int list own in  int box" MO
+    "'tcp-recv [int box own in  int lent in  int box move out  int list" MO "'tcp-close [int box own in] effect\n'tcp-listen [int lent in  int box" MO "'tcp-accept [int box own in  int box move out  int box" MO
 #endif
     "'tag ['a own in  sym lent in  'a tagged" MO "'default [tagged own in  own in " MO
 ;
@@ -1916,7 +1672,6 @@ static const char *BUILTIN_TYPES =
 #undef LGE
 #undef LDE
 #undef MO
-
 static const char *PRELUDE =
     "'over (swap dup (swap) dip) def\n'peek (over) def\n'nip (swap drop) def\n'rot ((swap) dip swap) def\n'tuck (swap over) def\n"
     "'give (push) def\n'grab (pop) def\n'size (len) def\n'put (set) def\n"
@@ -1989,9 +1744,7 @@ static void prim_dedup(Frame *e) {
     }
     spush(val_compound(VAL_LIST,rc,sp-rb+1));
 }
-
 /* ---- SDL ---- */
-
 #ifdef SLAP_SDL
 #include <SDL.h>
 #include <SDL_syswm.h>
@@ -2147,40 +1900,30 @@ static void prim_ls(Frame *e) {
     closedir(d);spush(val_compound(VAL_LIST,count,sp-base+1));free(path);
 }
 static void prim_utf8_encode(Frame *e) {
-    (void)e;
-    Value top = spop();
-    if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints, got %s", valtag_name(top.tag));
-    int len = (int)top.as.compound.len, slots = (int)top.as.compound.slots - 1;
-    if (slots != len) die("utf8-encode: elements must all be ints");
+    (void)e; Value top = spop(); if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints, got %s", valtag_name(top.tag));
+    int len = (int)top.as.compound.len; if ((int)top.as.compound.slots - 1 != len) die("utf8-encode: elements must all be ints");
     int64_t *cps = malloc(len * sizeof(int64_t));
     for (int i = 0; i < len; i++) { Value v = stack[sp-len+i]; if (v.tag != VAL_INT) die("utf8-encode: element %d is not an int", i); cps[i] = v.as.i; }
     sp -= len; int base = sp, bc = 0;
 #define PB(x) spush(val_int(x))
-    for (int i = 0; i < len; i++) {
-        int64_t cp = cps[i];
+    for (int i = 0; i < len; i++) { int64_t cp = cps[i];
         if (cp < 0 || cp > 0x10FFFF) { free(cps); die("utf8-encode: codepoint %lld out of range", (long long)cp); }
-        if (cp<0x80) { PB(cp); bc++; }
-        else if (cp<0x800) { PB(0xC0|(cp>>6)); PB(0x80|(cp&0x3F)); bc+=2; }
+        if (cp<0x80) { PB(cp); bc++; } else if (cp<0x800) { PB(0xC0|(cp>>6)); PB(0x80|(cp&0x3F)); bc+=2; }
         else if (cp<0x10000) { PB(0xE0|(cp>>12)); PB(0x80|((cp>>6)&0x3F)); PB(0x80|(cp&0x3F)); bc+=3; }
-        else { PB(0xF0|(cp>>18)); PB(0x80|((cp>>12)&0x3F)); PB(0x80|((cp>>6)&0x3F)); PB(0x80|(cp&0x3F)); bc+=4; }
-    }
+        else { PB(0xF0|(cp>>18)); PB(0x80|((cp>>12)&0x3F)); PB(0x80|((cp>>6)&0x3F)); PB(0x80|(cp&0x3F)); bc+=4; } }
 #undef PB
     free(cps); spush(val_compound(VAL_LIST, bc, sp - base + 1));
 }
 static void prim_utf8_decode(Frame *e) {
-    (void)e;
-    int len; unsigned char *bytes = pop_byte_list_buf("utf8-decode", &len);
+    (void)e; int len; unsigned char *bytes = pop_byte_list_buf("utf8-decode", &len);
     int base = sp, nc = 0, i = 0;
-    while (i < len) {
-        int64_t cp; int ex; unsigned char b = bytes[i];
+    while (i < len) { int64_t cp; int ex; unsigned char b = bytes[i];
         if (b<0x80){cp=b;ex=0;}else if((b&0xE0)==0xC0){cp=b&0x1F;ex=1;}else if((b&0xF0)==0xE0){cp=b&0x0F;ex=2;}
         else if((b&0xF8)==0xF0){cp=b&0x07;ex=3;}else{free(bytes);die("utf8-decode: invalid lead byte 0x%02X at position %d",b,i);}
-        i++;
-        for(int j=0;j<ex;j++){if(i>=len){free(bytes);die("utf8-decode: truncated sequence at position %d",i);}
+        i++; for(int j=0;j<ex;j++){if(i>=len){free(bytes);die("utf8-decode: truncated sequence at position %d",i);}
             if((bytes[i]&0xC0)!=0x80){free(bytes);die("utf8-decode: invalid continuation byte 0x%02X at position %d",bytes[i],i);}
             cp=(cp<<6)|(bytes[i]&0x3F);i++;}
-        spush(val_int(cp)); nc++;
-    }
+        spush(val_int(cp)); nc++; }
     free(bytes); spush(val_compound(VAL_LIST, nc, sp - base + 1));
 }
 
@@ -2200,57 +1943,34 @@ static void prim_tcp_connect(Frame *e) {
     (void)e; int64_t port=pop_int(); char *host=pop_string_path("tcp-connect");
     struct addrinfo hints={0},*res; hints.ai_family=AF_UNSPEC; hints.ai_socktype=SOCK_STREAM;
     char ps[16]; snprintf(ps,sizeof(ps),"%lld",(long long)port);
-    int err=getaddrinfo(host,ps,&hints,&res);
-    if(err){free(host);die("tcp-connect: getaddrinfo failed for '%s': %s",host,gai_strerror(err));}
-    int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol);
-    if(fd<0){freeaddrinfo(res);free(host);die("tcp-connect: socket() failed");}
+    int err=getaddrinfo(host,ps,&hints,&res); if(err){free(host);die("tcp-connect: getaddrinfo failed for '%s': %s",host,gai_strerror(err));}
+    int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol); if(fd<0){freeaddrinfo(res);free(host);die("tcp-connect: socket() failed");}
     if(connect(fd,res->ai_addr,res->ai_addrlen)<0){close(fd);freeaddrinfo(res);free(host);die("tcp-connect: connect to '%s:%lld' failed",host,(long long)port);}
     freeaddrinfo(res);free(host);push_socket_box(fd);
 }
 static void prim_tcp_send(Frame *e) {
-    (void)e;
-    int len; unsigned char *buf = pop_byte_list_buf("tcp-send", &len);
-    int fd = pop_socket_fd("tcp-send");
-    /* re-push socket box before send so it's available even on error */
-    push_socket_box(fd);
-    size_t sent = 0;
-    while (sent < (size_t)len) {
-        ssize_t n = send(fd, buf + sent, len - sent, 0);
-        if (n <= 0) { free(buf); die("tcp-send: send() failed"); }
-        sent += n;
-    }
+    (void)e; int len; unsigned char *buf = pop_byte_list_buf("tcp-send", &len);
+    int fd = pop_socket_fd("tcp-send"); push_socket_box(fd);
+    size_t sent = 0; while (sent < (size_t)len) { ssize_t n = send(fd, buf + sent, len - sent, 0); if (n <= 0) { free(buf); die("tcp-send: send() failed"); } sent += n; }
     free(buf);
 }
 static void prim_tcp_recv(Frame *e) {
-    (void)e;
-    int64_t maxlen = pop_int();
-    if (maxlen <= 0) die("tcp-recv: max length must be positive (got %lld)", (long long)maxlen);
-    int fd = pop_socket_fd("tcp-recv");
-    push_socket_box(fd);
-    unsigned char *buf = malloc(maxlen);
-    ssize_t n = recv(fd, buf, maxlen, 0);
-    if (n < 0) { free(buf); die("tcp-recv: recv() failed"); }
-    push_byte_list(buf, n);
-    free(buf);
+    (void)e; int64_t maxlen = pop_int(); if (maxlen <= 0) die("tcp-recv: max length must be positive (got %lld)", (long long)maxlen);
+    int fd = pop_socket_fd("tcp-recv"); push_socket_box(fd);
+    unsigned char *buf = malloc(maxlen); ssize_t n = recv(fd, buf, maxlen, 0); if (n < 0) { free(buf); die("tcp-recv: recv() failed"); }
+    push_byte_list(buf, n); free(buf);
 }
-static void prim_tcp_close(Frame *e) {
-    (void)e; Value v=spop(); if(v.tag!=VAL_BOX)die("tcp-close: expected box");
-    BoxData *bd=(BoxData*)v.as.box; close((int)bd->data[0].as.i); free(bd->data); free(bd);
-}
+static void prim_tcp_close(Frame *e) { (void)e; Value v=spop(); if(v.tag!=VAL_BOX)die("tcp-close: expected box"); BoxData *bd=(BoxData*)v.as.box; close((int)bd->data[0].as.i); free(bd->data); free(bd); }
 static void prim_tcp_listen(Frame *e) {
-    (void)e; int64_t port=pop_int(); int fd=socket(AF_INET,SOCK_STREAM,0);
-    if(fd<0)die("tcp-listen: socket() failed");
+    (void)e; int64_t port=pop_int(); int fd=socket(AF_INET,SOCK_STREAM,0); if(fd<0)die("tcp-listen: socket() failed");
     int opt=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons((uint16_t)port);
     if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))<0){close(fd);die("tcp-listen: bind to port %lld failed",(long long)port);}
-    if(listen(fd,128)<0){close(fd);die("tcp-listen: listen() failed");}
-    push_socket_box(fd);
+    if(listen(fd,128)<0){close(fd);die("tcp-listen: listen() failed");} push_socket_box(fd);
 }
 static void prim_tcp_accept(Frame *e) {
-    (void)e; int sfd=pop_socket_fd("tcp-accept");
-    struct sockaddr_in ca; socklen_t al=sizeof(ca);
-    int cfd=accept(sfd,(struct sockaddr*)&ca,&al); if(cfd<0)die("tcp-accept: accept() failed");
-    push_socket_box(sfd); push_socket_box(cfd);
+    (void)e; int sfd=pop_socket_fd("tcp-accept"); struct sockaddr_in ca; socklen_t al=sizeof(ca);
+    int cfd=accept(sfd,(struct sockaddr*)&ca,&al); if(cfd<0)die("tcp-accept: accept() failed"); push_socket_box(sfd); push_socket_box(cfd);
 }
 #endif
 static void prim_str_find(Frame *e) {
@@ -2291,22 +2011,17 @@ static void prim_parse_http(Frame *e) {
     push_byte_list(raw+split+4,rlen-split-4);free(raw);
 }
 static void push_c_string(const char *s) {
-    int len=(int)strlen(s);
-    for(int i=0;i<len;i++) spush(val_int((unsigned char)s[i]));
-    spush(val_compound(VAL_LIST,len,len+1));
+    int len=(int)strlen(s); for(int i=0;i<len;i++) spush(val_int((unsigned char)s[i])); spush(val_compound(VAL_LIST,len,len+1));
 }
 static void prim_args(Frame *e) {
-    (void)e;
-    int total_slots=0;
-    for(int i=0;i<cli_argc;i++){push_c_string(cli_args[i]);total_slots+=(int)strlen(cli_args[i])+1;}
-    spush(val_compound(VAL_LIST,cli_argc,total_slots+1));
+    (void)e; int ts=0; for(int i=0;i<cli_argc;i++){push_c_string(cli_args[i]);ts+=(int)strlen(cli_args[i])+1;}
+    spush(val_compound(VAL_LIST,cli_argc,ts+1));
 }
 static void prim_isheadless(Frame *e){(void)e;spush(val_int(headless_mode));}
 static void prim_cwd(Frame *e){(void)e;char buf[4096];if(!getcwd(buf,sizeof(buf)))die("cwd: getcwd failed");push_c_string(buf);}
 #define PRIM(nm,body) static void prim_##nm(Frame *e){(void)e;body;}
 PRIM(list, spush(val_compound(VAL_LIST,0,1)))
 PRIM(rec, spush(val_compound(VAL_RECORD,0,1)))
-PRIM(get, prim_elem())
 PRIM(take_n, prim_slice_n(1)) PRIM(drop_n, prim_slice_n(0))
 PRIM(rise, prim_grade(e,1)) PRIM(fall, prim_grade(e,0))
 #undef PRIM
@@ -2322,7 +2037,7 @@ static void register_prims(void) {
         R(itof,itof),R(ftoi,ftoi),R(fsqrt,fsqrt),R(fsin,fsin),R(fcos,fcos),R(ftan,ftan),
         R(ffloor,ffloor),R(fceil,fceil),R(fround,fround),R(fexp,fexp),R(flog,flog),R(fpow,fpow),R(fatan2,fatan2),
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
-        R(get,get),R(nth,nth),R(set,replace_at),R(cat,concat),
+        {"get",prim_get},R(nth,nth),R(set,replace_at),R(cat,concat),
         {"take-n",prim_take_n},{"drop-n",prim_drop_n},R(range,range),
         R(map,map),R(filter,filter),R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
