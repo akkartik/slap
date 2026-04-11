@@ -238,6 +238,7 @@ static void eval(Token *toks, int count, Frame *env);
 static void eval_body(Value *body, int slots, Frame *env);
 static void dispatch_word(uint32_t sym, Frame *env);
 static void prim_strfind_must(Frame *e);
+static inline void eval_body_fast(Value *body, int slots, Frame *env);
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *exec_env);
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close);
 #define PRIM_HASH_SIZE 512
@@ -1253,8 +1254,8 @@ static void push_none(void) { spush(val_compound(VAL_TUPLE,0,1)); spush(val_comp
 static void prim_if(Frame *env) {
     POP_VAL(el); POP_BODY(then,"if");
     Value cond=spop(); if(cond.tag!=VAL_INT) die("if: condition must be int, got %s",valtag_name(cond.tag));
-    if(cond.as.i) eval_body(then_buf,then_s,env);
-    else if(el_top.tag==VAL_TUPLE) eval_body(el_buf,el_s,env);
+    if(cond.as.i) { if(then_s==(int)then_buf[then_s-1].as.compound.len+1) eval_body_fast(then_buf,then_s,env); else eval_body(then_buf,then_s,env); }
+    else if(el_top.tag==VAL_TUPLE) { if(el_s==(int)el_buf[el_s-1].as.compound.len+1) eval_body_fast(el_buf,el_s,env); else eval_body(el_buf,el_s,env); }
     else { SPUSH(el_buf,el_s); }
 }
 #define POP_CLAUSES(label) \
@@ -1390,9 +1391,36 @@ static void prim_loop(Frame *env) {
     Value body_buf[body_s]; VCPY(body_buf,&stack[sp-body_s],body_s); sp-=body_s;
     for(;;){eval_body(body_buf,body_s,env);if(!pop_int())break;}
 }
+static inline void eval_body_fast(Value *body, int slots, Frame *env) {
+    Value hdr=body[slots-1]; Frame *ee=hdr.as.compound.env?hdr.as.compound.env:env;
+    int len=(int)hdr.as.compound.len, sbc=ee->bind_count, svu=ee->vals_used;
+    eval_depth++;
+    for(int k=0;k<len;k++){
+        Value elem=body[k];
+        if(elem.tag<=VAL_SYM) stack[sp++]=elem;
+        else if(elem.tag==VAL_XT) elem.as.xt.fn(ee);
+        else if(elem.tag==VAL_WORD){
+            uint32_t sym=elem.as.sym;
+            if(sym==S_DEF){ int ds=val_slots(stack[sp-1]); Value db[ds]; VCPY(db,&stack[sp-ds],ds); sp-=ds; frame_bind(ee,pop_sym(),db,ds,BIND_DEF,0); }
+            else if(sym==S_LET){ uint32_t n=pop_sym(); int ls=val_slots(stack[sp-1]); frame_bind(ee,n,&stack[sp-ls],ls,BIND_LET,0); sp-=ls; }
+            else dispatch_word(sym,ee);
+        } else if(is_compound(elem.tag)){
+            SPUSH(&body[k-((int)elem.as.compound.slots-1)],val_slots(elem));
+            if(elem.tag==VAL_TUPLE){ee->refcount++;stack[sp-1].as.compound.env=ee;}
+        } else if(elem.tag==VAL_BOX) spush(elem);
+    }
+    if(ee->refcount==0){ee->bind_count=sbc;ee->vals_used=svu;}
+    eval_depth--;
+}
 static void prim_while(Frame *env) {
     POP_BODY(body,"while"); POP_BODY(pred,"while");
-    for(;;){eval_body(pred_buf,pred_s,env);if(!pop_int())break;eval_body(body_buf,body_s,env);}
+    int pred_asc=(pred_s==((int)pred_buf[pred_s-1].as.compound.len)+1);
+    int body_asc=(body_s==((int)body_buf[body_s-1].as.compound.len)+1);
+    if(pred_asc && body_asc) {
+        for(;;){eval_body_fast(pred_buf,pred_s,env);if(!pop_int())break;eval_body_fast(body_buf,body_s,env);}
+    } else {
+        for(;;){eval_body(pred_buf,pred_s,env);if(!pop_int())break;eval_body(body_buf,body_s,env);}
+    }
 }
 static void prim_itof(Frame *e){(void)e;spush(val_float((double)pop_int()));}
 static void prim_ftoi(Frame *e){(void)e;spush(val_int((int64_t)pop_float()));}
