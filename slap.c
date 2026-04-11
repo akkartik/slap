@@ -237,6 +237,7 @@ static Lookup frame_lookup(Frame *f, uint32_t sym) {
 static void eval(Token *toks, int count, Frame *env);
 static void eval_body(Value *body, int slots, Frame *env);
 static void dispatch_word(uint32_t sym, Frame *env);
+static void prim_strfind_must(Frame *e);
 static void build_tuple(Token *toks, int start, int end, int total_count, Frame *exec_env);
 static int find_matching(Token *toks, int start, int count, TokTag open, TokTag close);
 #define PRIM_HASH_SIZE 512
@@ -364,7 +365,9 @@ static uint32_t recur_sym = 0;
 static int recur_pending = 0;
 static int eval_depth = 0;
 #define EVAL_DEPTH_MAX 10000
-static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_UNTAG, S_DEFAULT;
+static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_UNTAG, S_DEFAULT, S_MUST;
+static uint32_t S_GET, S_POP, S_AT, S_NTH, S_SET, S_EDIT, S_INDEXOF, S_STRFIND;
+static uint32_t S_PLUS, S_SUB, S_EQ, S_SWAP, S_DROP;
 static void syms_init(void);
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
@@ -395,7 +398,10 @@ static void syms_init(void) {
     S_DEF=sym_intern("def"); S_LET=sym_intern("let"); S_RECUR=sym_intern("recur");
     S_IF=sym_intern("if"); S_EFFECT=sym_intern("effect"); S_CHECK=sym_intern("check");
     S_UNION=sym_intern("union"); S_OK=sym_intern("ok"); S_NO=sym_intern("no");
-    S_UNTAG=sym_intern("untag"); S_DEFAULT=sym_intern("default");
+    S_UNTAG=sym_intern("untag"); S_DEFAULT=sym_intern("default"); S_MUST=sym_intern("must");
+    S_GET=sym_intern("get"); S_POP=sym_intern("pop"); S_AT=sym_intern("at"); S_NTH=sym_intern("nth");
+    S_SET=sym_intern("set"); S_EDIT=sym_intern("edit"); S_INDEXOF=sym_intern("index-of"); S_STRFIND=sym_intern("str-find");
+    S_PLUS=sym_intern("plus"); S_SUB=sym_intern("sub"); S_EQ=sym_intern("eq"); S_SWAP=sym_intern("swap"); S_DROP=sym_intern("drop");
     for (int i = 0; i < HO_OP_COUNT; i++) ho_ops[i].sym = sym_intern(ho_ops[i].name);
 }
 typedef struct {
@@ -1343,6 +1349,32 @@ static void prim_must(Frame *e) {
     if(ps>0){fprintf(stderr,"    payload: ");val_print(&stack[sp-ps-1],ps,stderr);fprintf(stderr,"\n");}
     fprintf(stderr,"\n");exit(1);
 }
+static void prim_fused_inc(Frame *e) {
+    (void)e; Value *v=&stack[sp-1];
+    if(v->tag==VAL_INT) v->as.i++;
+    else if(v->tag==VAL_FLOAT) v->as.f+=1.0;
+    else die("plus: type mismatch, got %s and int",valtag_name(v->tag));
+}
+static void prim_fused_dec(Frame *e) {
+    (void)e; Value *v=&stack[sp-1];
+    if(v->tag==VAL_INT) v->as.i--;
+    else if(v->tag==VAL_FLOAT) v->as.f-=1.0;
+    else die("sub: type mismatch, got %s and int",valtag_name(v->tag));
+}
+static void prim_fused_iszero(Frame *e) {
+    (void)e; Value v=stack[sp-1];
+    if(v.tag==VAL_INT) stack[sp-1]=val_int(v.as.i==0?1:0);
+    else if(v.tag==VAL_FLOAT) stack[sp-1]=val_int(v.as.f==0.0?1:0);
+    else die("eq: type mismatch");
+}
+static void prim_fused_nip(Frame *e) {
+    (void)e; if(sp<2) die("nip: stack underflow");
+    Value top=stack[sp-1]; int ts=val_slots(top);
+    int below_top=sp-ts-1; if(below_top<0) die("nip: stack underflow");
+    int bs=val_slots(stack[below_top]);
+    Value tmp[ts]; VCPY(tmp,&stack[sp-ts],ts);
+    sp-=ts+bs; SPUSH(tmp,ts);
+}
 static void prim_union(Frame *e) {
     (void)e;
     Value top=stack[sp-1];
@@ -1381,38 +1413,44 @@ static void prim_push_op(Frame *e) {
     ValTag tag=ct.tag; int cs=val_slots(ct),cl=(int)ct.as.compound.len; sp--;
     SPUSH(v_buf,v_s); spush(val_compound(tag,cl+1,cs+v_s));
 }
-static void prim_pop_op(Frame *e) {
+static inline void prim_pop_impl(Frame *e, int tagged) {
     (void)e; Value top=speek(); if(top.tag==VAL_TAGGED) die("pop: cannot pop from tagged value");
     if(!is_compound(top.tag)) die("pop: expected compound, got %s",valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len;
-    if(len==0) { push_none(); return; }
+    if(len==0) { if(tagged) push_none(); else die("pop: empty %s",tag==VAL_LIST?"list":tag==VAL_TUPLE?"tuple":"record"); return; }
     int base=sp-s; ElemRef last=compound_elem(&stack[base],s,len,len-1);
     Value eb[LOCAL_MAX]; VCPY(eb,&stack[base+last.base],last.slots);
     sp--; sp-=last.slots; spush(val_compound(tag,len-1,s-last.slots));
-    SPUSH(eb,last.slots); push_ok();
+    SPUSH(eb,last.slots); if(tagged) push_ok();
 }
-static void prim_get(Frame *e) {
+static void prim_pop_op(Frame *e) { prim_pop_impl(e,1); }
+static void prim_pop_must(Frame *e) { prim_pop_impl(e,0); }
+static inline void prim_get_impl(Frame *e, int tagged) {
     (void)e; int64_t idx=pop_int(); Value top=speek();
     if(top.tag==VAL_TAGGED) die("get: cannot index tagged value");
     if(!is_compound(top.tag)) die("get: expected compound, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef ref=compound_elem(&stack[base],s,len,(int)idx);
-    if(ref.base<0) { sp-=s; push_none(); return; }
+    if(ref.base<0) { sp-=s; if(tagged) push_none(); else die("get: index %lld out of bounds (len %d)",(long long)idx,len); return; }
     Value eb[LOCAL_MAX]; VCPY(eb,&stack[base+ref.base],ref.slots);
-    sp-=s; SPUSH(eb,ref.slots); push_ok();
+    sp-=s; SPUSH(eb,ref.slots); if(tagged) push_ok();
 }
-static void prim_replace_at(Frame *e) {
+static void prim_get(Frame *e) { prim_get_impl(e,1); }
+static void prim_get_must(Frame *e) { prim_get_impl(e,0); }
+static inline void prim_set_impl(Frame *e, int tagged) {
     (void)e; POP_VAL(v); int64_t idx=pop_int(); Value top=speek();
     if(top.tag==VAL_TAGGED) die("set: cannot index tagged value");
     if(!is_compound(top.tag)) die("set: expected compound, got %s", valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef old_ref=compound_elem(&stack[base],s,len,(int)idx);
-    if(old_ref.base<0) { push_none(); return; }
-    if(old_ref.slots==v_s){VCPY(&stack[base+old_ref.base],v_buf,v_s);push_ok();return;}
+    if(old_ref.base<0) { if(tagged) push_none(); else die("set: index %lld out of bounds (len %d)",(long long)idx,len); return; }
+    if(old_ref.slots==v_s){VCPY(&stack[base+old_ref.base],v_buf,v_s);if(tagged)push_ok();return;}
     Value tmp[LOCAL_MAX]; int ts=0;
     for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);Value *src=i==(int)idx?v_buf:&stack[base+r.base];int sz=i==(int)idx?v_s:r.slots;VCPY(&tmp[ts],src,sz);ts+=sz;}
-    sp=base; SPUSH(tmp,ts); spush(val_compound(tag,len,ts+1)); push_ok();
+    sp=base; SPUSH(tmp,ts); spush(val_compound(tag,len,ts+1)); if(tagged) push_ok();
 }
+static void prim_replace_at(Frame *e) { prim_set_impl(e,1); }
+static void prim_set_must(Frame *e) { prim_set_impl(e,0); }
 static void prim_concat(Frame *e) {
     (void)e; Value t2=stack[sp-1]; if(t2.tag==VAL_TAGGED)die("concat: cannot concat tagged values");
     if(!is_compound(t2.tag))die("concat: expected compound, got %s",valtag_name(t2.tag));
@@ -1422,16 +1460,18 @@ static void prim_concat(Frame *e) {
     Value tmp[ns]; memcpy(tmp,&stack[b1],(s1-1)*sizeof(Value)); memcpy(&tmp[s1-1],&stack[b2],(s2-1)*sizeof(Value));
     sp=b1; SPUSH(tmp,ns); spush(val_compound(tag,l1+l2,ns+1));
 }
-static void prim_nth(Frame *env) {
+static inline void prim_nth_impl(Frame *env, int tagged) {
     int64_t idx=pop_int(); uint32_t sym=pop_sym();
     Lookup lu=frame_lookup(env,sym); if(!lu.bind) die("nth: unknown word: %s",sym_name(sym));
     Value *data=&lu.frame->vals[lu.bind->offset]; int s=lu.bind->slots;
     Value top=data[s-1]; if(!is_compound(top.tag)) die("nth: expected compound (tuple/list/record) bound to '%s, got %s", sym_name(sym), valtag_name(top.tag));
     int len=(int)top.as.compound.len;
     ElemRef ref=compound_elem(data,s,len,(int)idx);
-    if(ref.base<0) { push_none(); return; }
-    SPUSH(&data[ref.base],ref.slots); push_ok();
+    if(ref.base<0) { if(tagged) push_none(); else die("nth: index %lld out of bounds (len %d)",(long long)idx,len); return; }
+    SPUSH(&data[ref.base],ref.slots); if(tagged) push_ok();
 }
+static void prim_nth(Frame *e) { prim_nth_impl(e,1); }
+static void prim_nth_must(Frame *e) { prim_nth_impl(e,0); }
 static void prim_slice_n(int take) {
     int64_t n=pop_int(); Value top=speek();
     const char *label=take?"take-n":"drop-n";
@@ -1482,12 +1522,15 @@ static void prim_sort(Frame *e){
         die("sort: elements must be orderable (int, float, or symbol), got %s",valtag_name(bad));}
     qsort(&stack[base],len,sizeof(Value),sort_cmp);
 }
-static void prim_index_of(Frame *e) {
+static inline void prim_indexof_impl(Frame *e, int tagged) {
     (void)e; POP_VAL(val); Value top=speek(); if(top.tag!=VAL_LIST) die("index-of: expected list, got %s",valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s,r=-1;
     for(int i=0;i<len&&r<0;i++){ElemRef ref=compound_elem(&stack[base],s,len,i);if(val_equal(&stack[base+ref.base],ref.slots,val_buf,val_s))r=i;}
-    sp-=s; if(r<0) { push_none(); } else { spush(val_int(r)); push_ok(); }
+    sp-=s; if(r<0) { if(tagged) push_none(); else die("index-of: element not found"); }
+    else { spush(val_int(r)); if(tagged) push_ok(); }
 }
+static void prim_index_of(Frame *e) { prim_indexof_impl(e,1); }
+static void prim_indexof_must(Frame *e) { prim_indexof_impl(e,0); }
 static void prim_scan(Frame *env) {
     POP_BODY(fn,"scan"); POP_VAL(init); POP_LIST_BUF(list,"scan");
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
@@ -1496,16 +1539,18 @@ static void prim_scan(Frame *env) {
     for(int i=0;i<list_len;i++){SPUSH(acc,as);PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);as=val_slots(stack[sp-1]);VCPY(acc,&stack[sp-as],as);}
     spush(val_compound(VAL_LIST,list_len,sp-rb+1));
 }
-static void prim_at(Frame *env) {
+static inline void prim_at_impl(Frame *env, int tagged) {
     (void)env; uint32_t key=pop_sym();
     if(sp<=0) die("at: stack underflow"); Value next=stack[sp-1];
     if(next.tag!=VAL_RECORD) die("at: expected record, got %s",valtag_name(next.tag));
     int s=val_slots(next),len=(int)next.as.compound.len,base=sp-s;
     int found; ElemRef ref=record_field(&stack[base],s,len,key,&found);
-    if(!found) { sp-=s; push_none(); return; }
+    if(!found) { sp-=s; if(tagged) push_none(); else die("at: key '%s' not found in record",sym_name(key)); return; }
     Value vb[LOCAL_MAX]; VCPY(vb,&stack[base+ref.base],ref.slots);
-    sp-=s; SPUSH(vb,ref.slots); push_ok();
+    sp-=s; SPUSH(vb,ref.slots); if(tagged) push_ok();
 }
+static void prim_at(Frame *e) { prim_at_impl(e,1); }
+static void prim_at_must(Frame *e) { prim_at_impl(e,0); }
 static void rec_set_field(int rb, int rs, int rl, uint32_t key, Value *nv, int ns, int add) {
     Value tmp[LOCAL_MAX]; int ts=0, replaced=0;
     int kp[LOCAL_MAX],vo[LOCAL_MAX],vs[LOCAL_MAX]; record_offsets(&stack[rb],rs,rl,kp,vo,vs);
@@ -1522,17 +1567,19 @@ static void prim_into(Frame *e) {
     if(found&&existing.slots==v_s) VCPY(&stack[rec_base+existing.base],v_buf,v_s);
     else rec_set_field(rec_base,rec_s,rec_len,key,v_buf,v_s,1);
 }
-static void prim_edit(Frame *env) {
+static inline void prim_edit_impl(Frame *env, int tagged) {
     POP_BODY(fn,"edit"); uint32_t key=pop_sym(); REC_PREAMBLE("edit");
     int found; ElemRef ref=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
-    if(!found) { push_none(); return; }
+    if(!found) { if(tagged) push_none(); else die("edit: key '%s' not found in record",sym_name(key)); return; }
     SPUSH(&stack[rec_base+ref.base],ref.slots);
     eval_body(fn_buf,fn_s,env);
     int ns=val_slots(stack[sp-1]);
     if(ns==ref.slots){VCPY(&stack[rec_base+ref.base],&stack[sp-ns],ns);sp-=ns;}
     else{Value nv[LOCAL_MAX];VCPY(nv,&stack[sp-ns],ns);sp-=ns;rec_set_field(rec_base,rec_s,rec_len,key,nv,ns,0);}
-    push_ok();
+    if(tagged) push_ok();
 }
+static void prim_edit(Frame *e) { prim_edit_impl(e,1); }
+static void prim_edit_must(Frame *e) { prim_edit_impl(e,0); }
 typedef struct BoxData { Value *data; int slots; } BoxData;
 static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;VCPY(bd->data,&stack[sp-s],s);sp-=s;Value v;v.tag=VAL_BOX;v.loc=0;v.as.box=bd;spush(v);}
 static void prim_free(Frame *e){(void)e;Value v=spop();if(v.tag!=VAL_BOX)die("free: expected box, got %s", valtag_name(v.tag));BoxData *bd=(BoxData*)v.as.box;free(bd->data);free(bd);}
@@ -1628,12 +1675,33 @@ static void build_tuple(Token *toks, int start, int end, int tc, Frame *env) {
     for(int j=start;j<end;j++){
         Token *tt=&toks[j]; current_fid=tt->fid; current_line=tt->line; current_col=tt->col;
         switch(tt->tag){
-        case TOK_INT: spush(with_tok(val_int(tt->as.i),tt)); ec++; break;
+        case TOK_INT:
+            if(j+1<end && toks[j+1].tag==TOK_WORD) {
+                uint32_t ns=toks[j+1].as.sym; PrimFn fused=NULL;
+                if(tt->as.i==1 && ns==S_PLUS) fused=prim_fused_inc;
+                else if(tt->as.i==1 && ns==S_SUB) fused=prim_fused_dec;
+                else if(tt->as.i==0 && ns==S_EQ) fused=prim_fused_iszero;
+                if(fused){spush(with_tok(val_xt(ns,fused),tt));ec++;j++;break;}
+            }
+            spush(with_tok(val_int(tt->as.i),tt)); ec++; break;
         case TOK_FLOAT: spush(with_tok(val_float(tt->as.f),tt)); ec++; break;
         case TOK_SYM: spush(with_tok(val_sym(tt->as.sym),tt)); ec++; break;
         case TOK_WORD:
             if(tt->as.sym==S_CHECK){if(ec>0&&(stack[sp-1].tag==VAL_WORD||stack[sp-1].tag==VAL_XT)){sp--;ec--;}else die("check: expected preceding type word, got %s",ec>0?valtag_name(stack[sp-1].tag):"empty stack");}
-            else{PrimFn xf=prim_lookup(tt->as.sym);spush(with_tok(xf?val_xt(tt->as.sym,xf):val_word(tt->as.sym),tt));ec++;}
+            else{
+                PrimFn xf=prim_lookup(tt->as.sym);
+                if(xf && j+1<end && toks[j+1].tag==TOK_WORD && toks[j+1].as.sym==S_MUST) {
+                    PrimFn fused=NULL; uint32_t s=tt->as.sym;
+                    if(s==S_GET) fused=prim_get_must; else if(s==S_POP) fused=prim_pop_must;
+                    else if(s==S_AT) fused=prim_at_must; else if(s==S_NTH) fused=prim_nth_must;
+                    else if(s==S_SET) fused=prim_set_must; else if(s==S_EDIT) fused=prim_edit_must;
+                    else if(s==S_INDEXOF) fused=prim_indexof_must; else if(s==S_STRFIND) fused=prim_strfind_must;
+                    if(fused){spush(with_tok(val_xt(s,fused),tt));ec++;j++;break;}
+                }
+                if(xf && j+1<end && toks[j+1].tag==TOK_WORD && toks[j+1].as.sym==S_DROP && tt->as.sym==S_SWAP)
+                    {spush(with_tok(val_xt(tt->as.sym,prim_fused_nip),tt));ec++;j++;break;}
+                spush(with_tok(xf?val_xt(tt->as.sym,xf):val_word(tt->as.sym),tt));ec++;
+            }
             break;
         case TOK_STRING:
             for(int c=0;c<tt->as.str.len;c++) spush(with_tok(val_int(tt->as.str.codes[c]),tt));
@@ -2027,11 +2095,15 @@ static void prim_tcp_accept(Frame *e) {
     int cfd=accept(sfd,(struct sockaddr*)&ca,&al); if(cfd<0){push_socket_box(sfd);push_c_string("accept failed");push_no();return;} push_socket_box(sfd); push_socket_box(cfd); push_ok();
 }
 #endif
-static void prim_str_find(Frame *e) {
+static inline void prim_strfind_impl(Frame *e, int tagged) {
     (void)e; int nl,hl; unsigned char *needle=pop_byte_list_buf("str-find",&nl); unsigned char *hay=pop_byte_list_buf("str-find",&hl);
     int r=-1; for(int i=0;i<=hl-nl;i++) if(memcmp(hay+i,needle,nl)==0){r=i;break;}
-    free(needle);free(hay); if(r<0) { push_none(); } else { spush(val_int(r)); push_ok(); }
+    free(needle);free(hay);
+    if(r<0) { if(tagged) push_none(); else die("str-find: not found"); }
+    else { spush(val_int(r)); if(tagged) push_ok(); }
 }
+static void prim_str_find(Frame *e) { prim_strfind_impl(e,1); }
+static void prim_strfind_must(Frame *e) { prim_strfind_impl(e,0); }
 static void prim_str_split(Frame *e) {
     (void)e; int dl,sl; unsigned char *delim=pop_byte_list_buf("str-split",&dl); unsigned char *str=pop_byte_list_buf("str-split",&sl);
     int base=sp,count=0,pos=0;

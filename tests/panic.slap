@@ -42,10 +42,10 @@ false assert
 -- EXPECT: type variable
 1 2.0 plus
 
--- EXPECT: MUST FAILED
+-- EXPECT: index 5 out of bounds
 [1 2 3] 5 get must
 
--- EXPECT: MUST FAILED
+-- EXPECT: index -1 out of bounds
 [1 2 3] -1 get must
 
 -- EXPECT: expected sized
@@ -60,13 +60,13 @@ false assert
 -- EXPECT: MUST FAILED
 [] grab must
 
--- EXPECT: MUST FAILED
+-- EXPECT: index 0 out of bounds
 [] (plus) reduce must
 
 -- EXPECT: unknown word
 nonexistent_word_xyz
 
--- EXPECT: MUST FAILED
+-- EXPECT: index 5 out of bounds
 [1 2 3] 5 99 set must
 
 -- EXPECT: expected box
@@ -177,7 +177,7 @@ tuck
 -- EXPECT: edit: expected record
 1 'x (1 plus) edit
 
--- EXPECT: MUST FAILED
+-- EXPECT: key
 {'a 1} 'b (1 plus) edit must
 
 -- EXPECT: recursion depth exceeded
@@ -258,10 +258,10 @@ tuck
 -- EXPECT-COL: 5
 1 0 mod
 
--- EXPECT: MUST FAILED
+-- EXPECT: index 0 out of bounds
 [] 0 get must
 
--- EXPECT: MUST FAILED
+-- EXPECT: index 5 out of bounds
 [10 20 30] 5 get must
 
 -- ===== Uncovered die() sites =====
@@ -290,7 +290,7 @@ tuck
 -- EXPECT: untag: need even number of clauses
 1 'ok tag {'ok} untag
 
--- EXPECT: MUST FAILED
+-- EXPECT: key
 {'a 1} 'b at must
 
 -- EXPECT: MUST FAILED
