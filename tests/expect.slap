@@ -1528,45 +1528,54 @@ none () no eq assert
 
 -- ===== Parser combinators =====
 
--- parse-int basics
-"42" parse-int drop 42 eq assert
-"0" parse-int drop 0 eq assert
-"-7" parse-int drop -7 eq assert
-"123abc" parse-int "abc" eq assert 123 eq assert
-"1" parse-int drop 1 eq assert
-"-123" parse-int drop -123 eq assert
-"007" parse-int drop 7 eq assert
+-- parse-int (tagged API)
+"42" ok parse-int must drop 42 eq assert
+"0" ok parse-int must drop 0 eq assert
+"-7" ok parse-int must drop -7 eq assert
+"123abc" ok parse-int must "abc" eq assert 123 eq assert
+"-123" ok parse-int must drop -123 eq assert
 
--- parse-exact
-"=xyz" "=" parse-exact "xyz" eq assert
-"hello world" "hello" parse-exact " world" eq assert
-"abcabc" "abc" parse-exact "abc" eq assert
+-- parse-int failure returns no with default 0
+"abc" ok parse-int "fallback" default "fallback" eq assert 0 eq assert
 
--- parse-spaces
-"   abc" parse-spaces "abc" eq assert
-"abc" parse-spaces "abc" eq assert
-"" parse-spaces "" eq assert
+-- parse-exact (tagged API)
+"=xyz" ok "=" parse-exact must "xyz" eq assert
+"hello world" ok "hello" parse-exact must " world" eq assert
 
--- parse-while
-"abc123" (dup 97 ge swap 122 le and) parse-while swap "abc" eq assert "123" eq assert
-"123abc" (dup 48 ge swap 57 le and) parse-while swap "123" eq assert "abc" eq assert
-"xyz" (dup 97 ge swap 122 le and) parse-while swap "xyz" eq assert "" eq assert
-"" (dup 97 ge swap 122 le and) parse-while swap "" eq assert "" eq assert
+-- parse-spaces (tagged API)
+"   abc" ok parse-spaces must "abc" eq assert
+"abc" ok parse-spaces must "abc" eq assert
+"" ok parse-spaces must "" eq assert
 
--- parse-until
-"hello=world" "=" parse-until swap "hello" eq assert "world" eq assert
-"a::b::c" "::" parse-until swap "a" eq assert "b::c" eq assert
+-- parse-while (tagged API)
+"abc123" ok (dup 97 ge swap 122 le and) parse-while must "123" eq assert "abc" eq assert
+"" ok (dup 97 ge swap 122 le and) parse-while must "" eq assert "" eq assert
 
--- combined: parse "42=958"
-"42=958" parse-int "=" parse-exact parse-int
-drop 958 eq assert 42 eq assert
+-- parse-until (tagged API)
+"hello=world" ok "=" parse-until must "world" eq assert "hello" eq assert
+"a::b::c" ok "::" parse-until must "b::c" eq assert "a" eq assert
 
--- combined: parse "  123 + 456  "
-"  123 + 456  " parse-spaces parse-int parse-spaces "+" parse-exact parse-spaces parse-int
-drop 456 eq assert 123 eq assert
+-- parse-float (tagged API)
+"3.14" ok parse-float must drop 3.14 eq assert
+"0.5" ok parse-float must drop 0.5 eq assert
+"-2.0" ok parse-float must drop -2.0 eq assert
+"42.0rest" ok parse-float must "rest" eq assert 42.0 eq assert
+"100" ok parse-float must drop 100.0 eq assert
+
+-- combined pipeline: "42=958"
+"42=958" ok parse-int "=" parse-exact parse-int must drop
+958 eq assert 42 eq assert
+
+-- combined pipeline: "  123 + 456  "
+"  123 + 456  " ok parse-spaces parse-int parse-spaces "+" parse-exact parse-spaces parse-int must drop
+456 eq assert 123 eq assert
+
+-- parse failure short-circuits
+"42/foo" ok parse-int "/" parse-exact parse-int "err" default "err" eq assert
+0 eq assert 42 eq assert
 
 -- combined: parse key=value
-"name=alice" "=" parse-until swap "name" eq assert "alice" eq assert
+"name=alice" ok "=" parse-until must "alice" eq assert "name" eq assert
 
 -- ===== Done =====
 "All tests passed!" print

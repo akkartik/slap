@@ -222,14 +222,14 @@ static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind 
         for (int i = 0; i < FRAME_HASH_SIZE; i++) { uint32_t s = (h + i) % FRAME_HASH_SIZE;
             if (f->hash[s] == 0 || f->bindings[f->hash[s]-1].sym == sym) { f->hash[s] = (int16_t)(idx + 1); break; } }
     }
-    if (slots <= b->allocated) {
-        if(frame_save_active&&f==frame_save_target&&(b-f->bindings)<frame_save_sbc){
-            if(save_buf_sp+3+b->slots>SAVE_BUF_MAX) die("frame save buffer overflow (%d slots)",save_buf_sp+3+b->slots);
-            save_buf[save_buf_sp++]=val_int(b->offset);save_buf[save_buf_sp++]=val_int(b->slots);
-            save_buf[save_buf_sp++]=val_int((b->kind<<1)|b->recur);
-            VCPY(&save_buf[save_buf_sp],&f->vals[b->offset],b->slots);save_buf_sp+=b->slots;}
-        VCPY(&f->vals[b->offset],vals,slots);
-    } else { int off = f->vals_used; if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
+    if(frame_save_active&&f==frame_save_target&&(b-f->bindings)<frame_save_sbc){
+        if(save_buf_sp+4+b->slots>SAVE_BUF_MAX) die("frame save buffer overflow (%d slots)",save_buf_sp+4+b->slots);
+        save_buf[save_buf_sp++]=val_int((int)(b-f->bindings));
+        save_buf[save_buf_sp++]=val_int(b->offset|(b->allocated<<16));
+        save_buf[save_buf_sp++]=val_int(b->slots|((int)b->kind<<16)|(b->recur<<17));
+        VCPY(&save_buf[save_buf_sp],&f->vals[b->offset],b->slots);save_buf_sp+=b->slots;}
+    if (slots <= b->allocated) VCPY(&f->vals[b->offset],vals,slots);
+    else { int off = f->vals_used; if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
         VCPY(&f->vals[off],vals,slots ); f->vals_used += slots; b->offset = off; b->allocated = slots; }
     b->slots = slots; b->kind = kind; b->recur = recur;
 }
@@ -1393,6 +1393,25 @@ static void prim_must(Frame *e) {
     if(ps>0){fprintf(stderr,"    payload: ");val_print(&stack[sp-ps-1],ps,stderr);fprintf(stderr,"\n");}
     fprintf(stderr,"\n");exit(1);
 }
+static void prim_pthen(Frame *env) {
+    /* pthen: tagged default (body) pthen
+       If tagged is ok: pop default, unwrap ok, run body
+       If tagged is not ok: push default below the tagged value */
+    POP_BODY(body,"pthen");
+    Value def=spop();
+    Value top=stack[sp-1];
+    if(top.tag!=VAL_TAGGED) die("pthen: expected tagged, got %s",valtag_name(top.tag));
+    if(top.as.compound.len==S_OK){
+        sp--; /* remove ok header, payload stays */
+        eval_body(body_buf,body_s,env);
+    } else {
+        /* push default below the tagged value */
+        int ts=val_slots(top);
+        Value tbuf[ts]; VCPY(tbuf,&stack[sp-ts],ts); sp-=ts;
+        spush(def);
+        SPUSH(tbuf,ts);
+    }
+}
 static void prim_fused_inc(Frame *e) {
     (void)e; Value *v=&stack[sp-1];
     if(v->tag==VAL_INT) v->as.i++;
@@ -1734,10 +1753,13 @@ static void dispatch_word(uint32_t sym, Frame *env) {
                     i-=vs;}
             }
             if(save_buf_sp>sb0){
-                for(int p=sb0;p<save_buf_sp;){int off=(int)save_buf[p++].as.i;int sl=(int)save_buf[p++].as.i;
-                    int kr=(int)save_buf[p++].as.i;
+                for(int p=sb0;p<save_buf_sp;){
+                    int bi=(int)save_buf[p++].as.i;
+                    int oa=(int)save_buf[p++].as.i; int off=oa&0xFFFF,alloc=oa>>16;
+                    int skr=(int)save_buf[p++].as.i; int sl=skr&0xFFFF,kr=skr>>16;
                     VCPY(&ee->vals[off],&save_buf[p],sl);p+=sl;
-                    for(int bi=0;bi<ee->bind_count;bi++) if(ee->bindings[bi].offset==off){ee->bindings[bi].kind=kr>>1;ee->bindings[bi].recur=kr&1;break;}}
+                    ee->bindings[bi].offset=off;ee->bindings[bi].allocated=alloc;
+                    ee->bindings[bi].slots=sl;ee->bindings[bi].kind=kr>>1;ee->bindings[bi].recur=kr&1;}
                 save_buf_sp=sb0;
             }
             memcpy(ee->hash,saved_hash,sizeof(ee->hash));
@@ -1905,6 +1927,7 @@ static const char *BUILTIN_TYPES =
     "'tcp-recv [int box own in  int lent in  int box move out  {'ok list 'no list} either move out] effect\n'tcp-close [int box own in] effect\n'tcp-listen [int lent in  {'ok box 'no list} either move out] effect\n'tcp-accept [int box own in  int box move out  {'ok box 'no list} either move out] effect\n"
 #endif
     "'tag ['a own in  sym lent in  'a tagged" MO "'default [tagged own in  own in " MO "'must [tagged own in " MO
+    "'pthen [tagged own in  own in  tuple own in  move out  tagged" MO
 ;
 #undef A2E
 #undef I2E
@@ -1950,12 +1973,21 @@ static const char *PRELUDE =
     "'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) each 'glyphs let rec widths 'widths into glyphs 'glyphs into) def\n'ufx-encode (dup 'widths at must swap 'glyphs at must (icn-encode) each flatten cat) def\n"
     "'ulz-decode ('src let list 0 (dup src len lt) (dup src swap get must 'op let 1 plus op 128 band 0 eq (op 127 band 1 plus 'cnt let cnt (dup src swap get must swap (push) dip 1 plus) repeat) (op 64 band 0 eq (op 63 band 4 plus 'lng let dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) (op 63 band 8 shl (dup src swap get must) dip swap bor 4 plus 'lng let 1 plus dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) if) if) while drop) def\n"
     "'parse-int-acc recur ('acc let dup len 0 gt (dup 0 get must 'ch let ch 48 ge ch 57 le and (1 drop-n acc 10 mul ch 48 sub plus parse-int-acc) (acc swap) if) (acc swap) if) def\n"
-    "'parse-int (dup len 0 eq (\"parse-int: empty input\" no must) () if dup 0 get must 'first let first 45 eq (1 drop-n dup len 0 eq (\"parse-int: expected digit after '-'\" no must) () if dup 0 get must dup 48 ge swap 57 le and not (\"parse-int: expected digit after '-'\" no must) () if 0 parse-int-acc swap neg swap) (first 48 ge first 57 le and not (\"parse-int: expected digit\" no must) () if 0 parse-int-acc) if) def\n"
-    "'parse-exact ('lit let 'input let input len lit len lt (\"parse-exact: input too short\" no must) () if input lit len take-n lit eq not (\"parse-exact: mismatch\" no must) () if input lit len drop-n) def\n"
-    "'parse-spaces recur (dup len 0 gt (dup 0 get must 'ch let ch 32 eq ch 9 eq or ch 10 eq or ch 13 eq or (1 drop-n parse-spaces) () if) () if) def\n"
+    "'parse-int-core (dup len 0 eq (drop 0 \"parse-int: empty input\" no) (dup 0 get must 'first let first 45 eq (1 drop-n dup len 0 eq (drop 0 \"parse-int: expected digit after '-'\" no) (dup 0 get must dup 48 ge swap 57 le and not (drop 0 \"parse-int: expected digit after '-'\" no) (0 parse-int-acc swap neg swap ok) if) if) (first 48 ge first 57 le and not (drop 0 \"parse-int: expected digit\" no) (0 parse-int-acc ok) if) if) if) def\n"
+    "'parse-int (0 (parse-int-core) pthen) def\n"
+    "'parse-exact-core ('lit let 'input let input len lit len lt (\"parse-exact: input too short\" no) (input lit len take-n lit eq not (\"parse-exact: mismatch\" no) (input lit len drop-n ok) if) if) def\n"
+    "'parse-exact ('lit let (lit parse-exact-core) then) def\n"
+    "'parse-spaces-core recur (dup len 0 gt (dup 0 get must 'ch let ch 32 eq ch 9 eq or ch 10 eq or ch 13 eq or (1 drop-n parse-spaces-core) () if) () if) def\n"
+    "'parse-spaces ((parse-spaces-core ok) then) def\n"
     "'parse-while-acc recur ('pred let 'acc let dup len 0 gt (dup 0 get must 'ch let ch pred apply (1 drop-n acc ch push pred parse-while-acc) (acc swap) if) (acc swap) if) def\n"
-    "'parse-while ('pred let list pred parse-while-acc) def\n"
-    "'parse-until ('delim let dup delim str-find must 'pos let dup pos take-n swap pos delim len plus drop-n) def\n"
+    "'parse-while-core ('pred let list pred parse-while-acc) def\n"
+    "'parse-while ('pred let list (pred parse-while-core ok) pthen) def\n"
+    "'parse-until-core ('delim let dup delim str-find {'ok ('pos let dup pos take-n swap pos delim len plus drop-n ok) 'no (drop drop \"parse-until: delimiter not found\" no)} untag must) def\n"
+    "'parse-until ('delim let list (delim parse-until-core) pthen) def\n"
+    "'parse-float-int recur ('pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv 10.0 mul pfd 48 sub itof plus parse-float-int) (pfv swap) if) (pfv swap) if) def\n"
+    "'parse-float-frac recur ('pff let 'pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv pfd 48 sub itof pff div plus pff 10.0 mul parse-float-frac) (pfv swap) if) (pfv swap) if) def\n"
+    "'parse-float-core (dup len 0 eq (drop 0.0 \"parse-float: empty input\" no) (dup 0 get must 45 eq (1 drop-n 1) (0) if 'pfneg let 0.0 parse-float-int dup len 0 gt (dup 0 get must 46 eq) (0) if (1 drop-n 0.0 10.0 parse-float-frac (swap plus) dip) () if pfneg (swap fneg swap) () if ok) if) def\n"
+    "'parse-float (0.0 (parse-float-core) pthen) def\n"
 #ifndef SLAP_WASM
     "'crlf (list 13 push 10 push) def\n'int-str-digits recur ('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) def\n"
     "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first must (sep swap cat cat) fold) if) def\n"
@@ -2292,7 +2324,7 @@ static void register_prims(void) {
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
         R(rec,rec),R(into,into),R(edit,edit),R(reverse,reverse),R(dedup,dedup),R(where,where),R(find,find_elem),
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
-        R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),R(must,must),
+        R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
         R(read,read),R(write,write),R(ls,ls),
         {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},
         {"str-find",prim_str_find},{"str-split",prim_str_split},{"parse-http",prim_parse_http},

@@ -1,0 +1,123 @@
+-- json.slap: JSON parser using Slap's parser combinators
+-- Supports: strings, integers, booleans, null, arrays, objects
+-- All values tagged: 'int, 'str, 'arr, 'obj, 'bool, 'null
+-- Objects → list of [key-string, tagged-value] couples
+--
+-- Internal functions (jval, jstr, jarr-items, jobj-items) work on raw
+-- remaining strings. They use `ok ... must` to access the public
+-- parser API where possible.
+
+-- Parse string body between quotes (handles escapes)
+'jstr-body recur ('jchars let
+  dup len 0 eq ("json: unterminated string" no must) () if
+  dup 0 get must 'ch let
+  ch 34 eq (1 drop-n jchars swap) (
+  ch 92 eq (
+    1 drop-n dup len 0 eq ("json: unterminated escape" no must) () if
+    dup 0 get must 'esc let 1 drop-n
+    esc 110 eq (10) (esc 116 eq (9) (esc 34 eq (34) (esc 92 eq (92) (esc 47 eq (47) (
+      "json: unknown escape" no must
+    ) if) if) if) if) if
+    'byte let jchars byte push jstr-body
+  ) (
+    1 drop-n jchars ch push jstr-body
+  ) if) if
+) def
+
+'jstr (1 drop-n list jstr-body) def
+
+-- Parse array items: raw remaining → items-list remaining
+'jarr-items recur ('jitems let
+  jval swap 'jv let jitems jv push 'jitems2 let
+  ok parse-spaces must
+  dup 0 get must 44 eq (
+    1 drop-n ok parse-spaces must jitems2 jarr-items
+  ) (jitems2 swap) if
+) def
+
+-- Parse object items: raw remaining → entries-list remaining
+'jobj-items recur ('jentries let
+  jstr swap 'jk let
+  ok parse-spaces ":" parse-exact parse-spaces must
+  jval swap 'jv let
+  jentries jk jv couple push 'jentries2 let
+  ok parse-spaces must
+  dup 0 get must 44 eq (
+    1 drop-n ok parse-spaces must jentries2 jobj-items
+  ) (jentries2 swap) if
+) def
+
+-- Main value parser: raw remaining → tagged-json-value remaining
+'jval recur (
+  ok parse-spaces must
+  dup len 0 eq ("json: unexpected end of input" no must) () if
+  dup 0 get must 'ch let
+  ch 34 eq (jstr swap 'str tag swap) (
+  ch 91 eq (
+    1 drop-n ok parse-spaces must
+    dup len 0 gt (dup 0 get must 93 eq) (0) if
+    (1 drop-n list 'arr tag swap) (
+      list jarr-items swap 'arr tag swap ok "]" parse-exact must
+    ) if
+  ) (
+  ch 123 eq (
+    1 drop-n ok parse-spaces must
+    dup len 0 gt (dup 0 get must 125 eq) (0) if
+    (1 drop-n list 'obj tag swap) (
+      list jobj-items swap 'obj tag swap ok "}" parse-exact must
+    ) if
+  ) (
+  ch 116 eq (ok "true" parse-exact must 1 'bool tag swap) (
+  ch 102 eq (ok "false" parse-exact must 0 'bool tag swap) (
+  ch 110 eq (ok "null" parse-exact must () 'null tag swap) (
+    ok parse-int must swap 'int tag swap
+  ) if) if) if) if) if) if
+) def
+
+'json-parse (jval ok parse-spaces must dup len 0 gt ("json: trailing input" no must) () if drop) def
+
+-- Unwrap helpers
+'json->int ({'int ()} untag must) def
+'json->str ({'str ()} untag must) def
+'json->bool ({'bool ()} untag must) def
+'json->arr ({'arr ()} untag must) def
+'json->obj ({'obj ()} untag must) def
+
+-- ===== Tests =====
+
+"42" json-parse json->int 42 eq assert
+"-7" json-parse json->int -7 eq assert
+"0" json-parse json->int 0 eq assert
+"true" json-parse json->bool 1 eq assert
+"false" json-parse json->bool 0 eq assert
+"null" json-parse () 'null tag eq assert
+"\"hello\"" json-parse json->str "hello" eq assert
+"\"\"" json-parse json->str "" eq assert
+"\"a\\nb\"" json-parse json->str dup 1 get must 10 eq assert len 3 eq assert
+"[]" json-parse json->arr len 0 eq assert
+"[1]" json-parse json->arr 0 get must json->int 1 eq assert
+"[1, 2, 3]" json-parse json->arr
+  dup 0 get must json->int 1 eq assert
+  dup 1 get must json->int 2 eq assert
+  2 get must json->int 3 eq assert
+"[true, \"hi\"]" json-parse json->arr
+  dup 0 get must json->bool 1 eq assert
+  1 get must json->str "hi" eq assert
+"{}" json-parse json->obj len 0 eq assert
+"{\"a\": 1}" json-parse json->obj
+  0 get must dup 0 get must "a" eq assert 1 get must json->int 1 eq assert
+"{\"x\": [1, 2], \"y\": true}" json-parse json->obj
+  dup 0 get must dup 0 get must "x" eq assert 1 get must json->arr len 2 eq assert
+  1 get must dup 0 get must "y" eq assert 1 get must json->bool 1 eq assert
+"  42  " json-parse json->int 42 eq assert
+" [ 1 , 2 ] " json-parse json->arr len 2 eq assert
+"{\"data\": [{\"id\": 1, \"name\": \"alice\"}, {\"id\": 2, \"name\": \"bob\"}]}" json-parse json->obj
+  0 get must 1 get must json->arr
+  dup 0 get must json->obj
+    dup 0 get must 1 get must json->int 1 eq assert
+    1 get must 1 get must json->str "alice" eq assert
+  1 get must json->obj
+    dup 0 get must 1 get must json->int 2 eq assert
+    1 get must 1 get must json->str "bob" eq assert
+
+"All JSON tests passed!" print
