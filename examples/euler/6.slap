@@ -3,7 +3,7 @@
 -- Answer: 25164150
 
 1 101 range dup
-(sqr) map sum 'sum-of-sq let
+(sqr) each sum 'sum-of-sq let
 sum sqr 'sq-of-sum let
 
 sq-of-sum sum-of-sq sub print

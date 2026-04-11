@@ -48,7 +48,7 @@ false assert
 -- EXPECT: index -1 out of bounds
 [1 2 3] -1 get must
 
--- EXPECT: expected sized
+-- EXPECT: expected compound
 1 len
 
 -- EXPECT: expected seq
@@ -81,8 +81,8 @@ nonexistent_word_xyz
 -- EXPECT: expected seq
 stack pop
 
--- EXPECT: expected list
-42 (1 plus) map
+-- EXPECT: expected list or tagged
+42 (1 plus) each
 
 -- EXPECT: expected list
 42 (1 eq) filter
@@ -135,13 +135,13 @@ stack pop
 -- EXPECT: expected tagged value
 123 {'foo ()} untag
 
--- EXPECT: expected tagged value
+-- EXPECT: expected list or tagged
 123 (1 plus) then
 
 -- EXPECT: expected tagged
 123 -1 default
 
--- EXPECT: expected sized, got tagged
+-- EXPECT: tagged values have no length
 1 'ok tag size
 
 -- EXPECT: concat: result too large

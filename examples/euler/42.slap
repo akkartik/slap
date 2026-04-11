@@ -9,10 +9,10 @@
 'word-value (0 (64 sub plus) fold) def
 
 -- precompute triangle numbers up to 60 (covers any 2-3 letter word value)
-1 11 range (dup 1 plus mul 2 div) map 'tris let
+1 11 range (dup 1 plus mul 2 div) each 'tris let
 
 ["SKY" "RUG" "LOG" "A" "AT" "IS" "WE" "IF"
  "HAS" "FOG" "HELLO" "WORLD" "CODE" "MATH" "TEST"]
-  (word-value) map
+  (word-value) each
   (tris swap member) filter
   len print

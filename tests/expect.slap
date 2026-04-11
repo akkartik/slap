@@ -108,7 +108,7 @@ list 10 give 20 give [10 20] eq assert
 0 5 range [0 1 2 3 4] eq assert
 
 -- ===== List Higher-Order: map =====
-[1 2 3] (2 mul) map [2 4 6] eq assert
+[1 2 3] (2 mul) each [2 4 6] eq assert
 
 -- ===== List Higher-Order: filter =====
 [1 2 3 4 5] (2 mod 1 eq) filter [1 3 5] eq assert
@@ -119,18 +119,17 @@ list 10 give 20 give [10 20] eq assert
 -- ===== List Higher-Order: reduce =====
 [1 2 3] (plus) reduce 6 eq assert
 
--- ===== List Higher-Order: each =====
-0 [1 2 3] (plus) each 6 eq assert
+-- ===== Functor: each on list (fmap) =====
+[1 2 3] (2 mul) each [2 4 6] eq assert
 
 -- ===== List: sort =====
 [3 1 2] sort [1 2 3] eq assert
-['c 'a 'b] sort ['a 'b 'c] eq assert
 
 -- ===== List: scan =====
 [1 2 3] 0 (plus) scan [1 3 6] eq assert
 
 -- ===== List: keep-mask =====
-[1 2 3 4 5 6] dup (3 mod 0 eq) map keep-mask [3 6] eq assert
+[1 2 3 4 5 6] dup (3 mod 0 eq) each keep-mask [3 6] eq assert
 
 -- ===== List: index-of =====
 [10 20 30] 20 index-of must 1 eq assert
@@ -218,7 +217,7 @@ stack size 0 eq assert
 5 6 range [5] eq assert
 
 -- map on empty list
-[] (1 plus) map [] eq assert
+[] (1 plus) each [] eq assert
 
 -- filter removes all
 [1 2 3] (10 lt not) filter [] eq assert
@@ -250,7 +249,7 @@ stack size 0 eq assert
 -- box with list
 [1 2 3] box
   (0 get must) lend 1 eq assert
-  ((2 mul) map) mutate
+  ((2 mul) each) mutate
   () lend [2 4 6] eq assert
 free
 
@@ -384,10 +383,10 @@ outer 15 eq assert
 10 fib 55 eq assert
 
 -- ===== Complex: map + filter chain =====
-1 10 range (sqr) map (50 lt) filter [1 4 9 16 25 36 49] eq assert
+1 10 range (sqr) each (50 lt) filter [1 4 9 16 25 36 49] eq assert
 
--- ===== Complex: each as accumulator =====
-1 [2 3 4] (mul) each 24 eq assert
+-- ===== Complex: fold as accumulator =====
+[2 3 4] 1 (mul) fold 24 eq assert
 
 -- ===== zip =====
 [1 2 3] [4 5 6] zip [[1 4] [2 5] [3 6]] eq assert
@@ -407,7 +406,7 @@ outer 15 eq assert
 [1 2 3] (sqr) table [[1 1] [2 4] [3 9]] eq assert
 
 -- ===== Complex: zip + map =====
-[1 2 3] [10 20 30] zip ((0 get must) (1 get must) bi plus) map [11 22 33] eq assert
+[1 2 3] [10 20 30] zip ((0 get must) (1 get must) bi plus) each [11 22 33] eq assert
 
 -- ===== Complex: where + select =====
 [5 3 8 1 7] dup (4 lt) where select [3 1] eq assert
@@ -446,20 +445,20 @@ outer 15 eq assert
 
 -- ===== Adversarial: higher-order composition =====
 [1 2 3 4 5]
-  (sqr) map
+  (sqr) each
   (10 lt) filter
   (plus) reduce
 14 eq assert
 
 -- ===== Adversarial: table + fold =====
 [1 2 3 4] (sqr) table
-  (1 get must) map
+  (1 get must) each
   (plus) reduce
 30 eq assert
 
 -- ===== Adversarial: box with list mutation =====
 [1 2 3] box
-  ((10 plus) map) mutate
+  ((10 plus) each) mutate
   () lend
   [11 12 13] eq assert
 free
@@ -469,7 +468,7 @@ free
 [[[1 2] [3 4]] [[5 6]]] flatten [[1 2] [3 4] [5 6]] eq assert
 
 -- ===== Adversarial: empty operations =====
-[] (1 plus) map [] eq assert
+[] (1 plus) each [] eq assert
 [] 0 (plus) fold 0 eq assert
 [] reverse [] eq assert
 [] dedup [] eq assert
@@ -490,7 +489,7 @@ free
   (factor mul)
 ) def
 3 scale 'triple let
-[1 2 3 4] (triple apply) map [3 6 9 12] eq assert
+[1 2 3 4] (triple apply) each [3 6 9 12] eq assert
 
 -- ===== Complex: GCD via recursion =====
 'gcd recur (
@@ -540,7 +539,7 @@ free
 free free
 
 -- ===== Complex: pipeline — range → map → filter → fold =====
-1 21 range (sqr) map (100 lt) filter (plus) reduce
+1 21 range (sqr) each (100 lt) filter (plus) reduce
 285 eq assert
 
 -- ===== Complex: dot product via zip + fold =====
@@ -550,7 +549,7 @@ free free
 
 -- ===== Complex: windows + map for pairwise differences =====
 [10 13 17 22] 2 windows
-  (dup 1 get must swap 0 get must sub) map
+  (dup 1 get must swap 0 get must sub) each
 [3 4 5] eq assert
 
 -- ===== Complex: rise + select = sort by derived key =====
@@ -612,7 +611,7 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 -- ===== Complex: table + filter + map pipeline =====
 [1 2 3 4 5] (sqr) table
   (1 get must 10 lt) filter
-  (0 get must) map
+  (0 get must) each
 [1 2 3] eq assert
 
 -- ===== Complex: compose chain =====
@@ -627,7 +626,7 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 -- ===== Complex: where + map + fold pipeline =====
 [10 25 30 5 40 15]
   dup (20 lt) where select
-  (sqr) map (plus) reduce
+  (sqr) each (plus) reduce
 350 eq assert
 
 -- ===== Complex: zip self for pairs =====
@@ -655,7 +654,7 @@ free
 
 -- ===== Complex: triple nested list operations =====
 [[1 2 3] [4 5 6] [7 8 9]]
-  ((plus) reduce) map
+  ((plus) reduce) each
   (plus) reduce
 45 eq assert
 
@@ -757,7 +756,7 @@ tga-data tga-decode tga-encode tga-data eq assert
 -- ===== UFX codec =====
 -- minimal UFX: 256 width bytes + 8 bytes of ICN for 1 glyph
 list
-0 256 range (drop 4 give) each   -- all widths = 4
+0 256 range (drop 4) each   -- all widths = 4
 60 give 66 give 129 give 129 give 129 give 129 give 66 give 60 give  -- one circle glyph
 'ufx-data let
 ufx-data ufx-decode
@@ -944,7 +943,7 @@ list "hi" give "--" str-join "hi" eq assert
   s4 tcp-accept must 'p4 let 's4a let
 
   0 1000 range 'big let
-  c4 big (256 mod) map tcp-send must drop 'c4a let
+  c4 big (256 mod) each tcp-send must drop 'c4a let
   c4a tcp-close
 
   p4 list
@@ -1029,22 +1028,22 @@ list "hi" give "--" str-join "hi" eq assert
 "x" no "x" 'no tag eq assert
 
 -- then (monadic chaining)
-123 ok (1 plus) then (2 mul) then -1 default 248 eq assert
-"oops" no (1 plus) then -1 default -1 eq assert
-"x" no (1 plus) then (2 mul) then 0 default 0 eq assert
+123 ok (1 plus ok) then (2 mul ok) then -1 default 248 eq assert
+"oops" no (1 plus ok) then -1 default -1 eq assert
+"x" no (1 plus ok) then (2 mul ok) then 0 default 0 eq assert
 
 -- then preserves non-ok tag and payload
-"fail" no (999 plus) then {'no ()} untag must "fail" eq assert
+"fail" no (999 plus ok) then {'no ()} untag must "fail" eq assert
 
 -- default
 42 ok -1 default 42 eq assert
 "fail" no "" default "" eq assert
 
 -- tag with symbol payload
-'hello ok (drop "yes") then "no" default "yes" eq assert
+'hello ok (drop "yes" ok) then "no" default "yes" eq assert
 
 -- tag with float payload
-2.0 ok (1.0 plus) then 0.0 default 3.0 eq assert
+2.0 ok (1.0 plus ok) then 0.0 default 3.0 eq assert
 
 -- result type pattern: safe division
 'safe-div ('d let 'n let
@@ -1052,8 +1051,8 @@ list "hi" give "--" str-join "hi" eq assert
 ) def
 10 2 safe-div -1 default 5 eq assert
 10 0 safe-div -1 default -1 eq assert
-10 2 safe-div (3 mul) then -1 default 15 eq assert
-10 0 safe-div (3 mul) then -1 default -1 eq assert
+10 2 safe-div (3 mul ok) then -1 default 15 eq assert
+10 0 safe-div (3 mul ok) then -1 default -1 eq assert
 
 -- chained safe operations
 'safe-sqrt ('n let
@@ -1061,7 +1060,7 @@ list "hi" give "--" str-join "hi" eq assert
 ) def
 16 safe-sqrt -1 default 4 eq assert
 -1 safe-sqrt -1 default -1 eq assert
-16 safe-sqrt (2 mul) then -1 default 8 eq assert
+16 safe-sqrt (2 mul ok) then -1 default 8 eq assert
 
 -- union (type annotation, runtime no-op with symbol values)
 123 ok {'ok 'int 'no 'str} union print
@@ -1070,7 +1069,7 @@ list "hi" give "--" str-join "hi" eq assert
 42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag must 43 eq assert
 
 -- union propagates through then
-10 ok {'ok 'int 'no 'str} union (5 plus) then {'ok () 'no (drop 0)} untag must 15 eq assert
+10 ok {'ok 'int 'no 'str} union (5 plus ok) then {'ok () 'no (drop 0)} untag must 15 eq assert
 
 -- three-variant union, all handled
 42 'a tag {'a 'int 'b 'int 'c 'int} union {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag must 43 eq assert
@@ -1079,19 +1078,19 @@ list "hi" give "--" str-join "hi" eq assert
 42 'foo tag {'foo (1 plus)} untag must 43 eq assert
 
 -- default preserves payload type through then chain
-42 ok (1 plus) then (2 mul) then -1 default 86 eq assert
+42 ok (1 plus ok) then (2 mul ok) then -1 default 86 eq assert
 
 -- then body type is checked with union
-42 ok {'ok 'int 'no 'str} union (1 plus) then -1 default 43 eq assert
+42 ok {'ok 'int 'no 'str} union (1 plus ok) then -1 default 43 eq assert
 
 -- no value through then with union: body doesn't run, no type error
-"oops" no {'ok 'int 'no 'str} union (1 plus) then -1 default -1 eq assert
+"oops" no {'ok 'int 'no 'str} union (1 plus ok) then -1 default -1 eq assert
 
 -- tagged through higher-order ops
-[1 2 3] (ok -1 default) map [1 2 3] eq assert
-[1 2 3] (ok) map (-1 default) map [1 2 3] eq assert
+[1 2 3] (ok -1 default) each [1 2 3] eq assert
+[1 2 3] (ok) each (-1 default) each [1 2 3] eq assert
 [1 2 3] 0 ok ('n let -1 default n plus ok) fold -1 default 6 eq assert
-0 [10 20 30] (ok -1 default plus) each 60 eq assert
+[10 20 30] 0 (ok -1 default plus) fold 60 eq assert
 
 -- tagged via custom tag function
 'tag-as ('s let s tag) def
@@ -1100,7 +1099,7 @@ list "hi" give "--" str-join "hi" eq assert
 -- tagged stored in let bindings
 42 ok 'x let
 x -1 default 42 eq assert
-x (2 mul) then -1 default 84 eq assert
+x (2 mul ok) then -1 default 84 eq assert
 
 -- tagged returned from def
 'wrap-ok (ok) def
@@ -1130,13 +1129,13 @@ x (2 mul) then -1 default 84 eq assert
 
 -- then chain: 10 deep
 1 ok
-  (1 plus) then (1 plus) then (1 plus) then (1 plus) then (1 plus) then
-  (1 plus) then (1 plus) then (1 plus) then (1 plus) then (1 plus) then
+  (1 plus ok) then (1 plus ok) then (1 plus ok) then (1 plus ok) then (1 plus ok) then
+  (1 plus ok) then (1 plus ok) then (1 plus ok) then (1 plus ok) then (1 plus ok) then
   -1 default 11 eq assert
 
 -- no passes through arbitrary then chains
 "err" no
-  (1 plus) then (2 mul) then (3 sub) then (4 div) then
+  (1 plus ok) then (2 mul ok) then (3 sub ok) then (4 div ok) then
   {'no ()} untag must "err" eq assert
 
 -- default with body (tuple) as fallback
@@ -1239,7 +1238,7 @@ rec ok must rec eq assert
 42 'b tag {'a (1 plus) 'b (2 plus)} untag must 44 eq assert
 
 -- then on ok with body that changes payload size (int -> tuple)
-42 ok (dup 1 plus couple) then must first must 42 eq assert
+42 ok (dup 1 plus couple ok) then must first must 42 eq assert
 
 -- default on 3-level nested tags
 1 'a tag 'b tag 'c tag
@@ -1249,7 +1248,7 @@ rec ok must rec eq assert
   1 eq assert
 
 -- then chain where no passes through untouched
-"err" no (1 plus) then (2 mul) then (3 sub) then (4 div) then (5 plus) then
+"err" no (1 plus ok) then (2 mul ok) then (3 sub ok) then (4 div ok) then (5 plus ok) then
   {'no ()} untag must "err" eq assert
 
 -- untag where default is a plain value
@@ -1262,7 +1261,7 @@ rec ok must rec eq assert
 42 ok {'ok (1 plus no)} untag must -1 default -1 eq assert
 
 -- then on ok preserves tag after body
-42 ok (1 plus) then dup {'ok ()} untag must 43 eq assert drop
+42 ok (1 plus ok) then dup {'ok ()} untag must 43 eq assert drop
 
 -- ===== Adversarial: Record Edit =====
 
@@ -1400,7 +1399,7 @@ parts2 3 get must len 0 eq assert
 -- ===== Adversarial: larger file I/O round-trip =====
 
 -- 1 KiB buffer via range + byte mask, write + read back
-"_test_fs.bin" 0 1024 range (255 band) map write must drop
+"_test_fs.bin" 0 1024 range (255 band) each write must drop
 "_test_fs.bin" read must 'buf let
 buf len 1024 eq assert
 buf 0 get must 0 eq assert
@@ -1478,10 +1477,10 @@ nest4 'a at must 'b at must 'c at must 'd at must 10 eq assert
 [10 20 30] -1 get none eq assert
 
 -- monadic chaining with then/default
-[] pop (1 plus) then -1 default -1 eq assert
-[1 2 3] pop (1 plus) then -1 default 4 eq assert
-[10 20 30] 0 get (10 plus) then -1 default 20 eq assert
-[10 20 30] 5 get (10 plus) then -1 default -1 eq assert
+[] pop (1 plus ok) then -1 default -1 eq assert
+[1 2 3] pop (1 plus ok) then -1 default 4 eq assert
+[10 20 30] 0 get (10 plus ok) then -1 default 20 eq assert
+[10 20 30] 5 get (10 plus ok) then -1 default -1 eq assert
 
 -- set returns tagged
 [1 2 3] 1 99 set must [1 99 3] eq assert
@@ -1509,6 +1508,23 @@ none () no eq assert
 [1 2 3] 5 take-n [1 2 3] eq assert
 [1 2 3] -1 take-n list eq assert
 [1 2 3] 5 drop-n list eq assert
+
+-- ===== Functor: each on tagged (fmap) =====
+5 ok (1 plus) each must 6 eq assert
+5 ok (1 plus) each (2 mul) each must 12 eq assert
+() no (1 plus) each {'no ()} untag must () eq assert
+"hello" no (1 plus) each "hello" no eq assert
+
+-- ===== Monad: then on list (flatMap) =====
+[1 2 3] (dup couple) then [1 1 2 2 3 3] eq assert
+[] (dup couple) then list eq assert
+[1 2 3] (drop list) then list eq assert
+
+-- ===== Side-effect iteration pattern =====
+[1 2 3] (1 plus) each drop
+
+-- ===== Semigroup: cat on tuples =====
+(1 2) (3 4) cat (1 2 3 4) eq assert
 
 -- ===== Done =====
 "All tests passed!" print

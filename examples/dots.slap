@@ -5,13 +5,13 @@
 35 'N let
 
 -- Home positions: 7x5 grid
-0 N range (COLS mod 88 mul 36 plus) map 'hxs let
-0 N range (COLS div 90 mul 50 plus) map 'hys let
+0 N range (COLS mod 88 mul 36 plus) each 'hxs let
+0 N range (COLS div 90 mul 50 plus) each 'hys let
 
 -- State: rec with xs ys vxs vys mx my
 rec
   hxs dup 'xs0 let 'xs into
-  0 N range (COLS div 90 mul 50 plus) map dup 'ys0 let 'ys into
+  0 N range (COLS div 90 mul 50 plus) each dup 'ys0 let 'ys into
   list N (0 give) repeat 'vxs into
   list N (0 give) repeat 'vys into
   -1 'mx into  -1 'my into  0 'frame into

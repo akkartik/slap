@@ -88,7 +88,7 @@ These operations return `value ok` on success and `() no` (or `payload no`) on f
 | `match` | `result ok` | `none` | No symbol matched |
 | `untag` | `result ok` | `none` | No tag matched |
 
-Pattern: `[] pop (1 plus) then -1 default` → `-1` (empty list, default). `[1 2 3] pop (1 plus) then -1 default` → `4` (success path).
+Pattern: `[] pop (1 plus ok) then -1 default` → `-1` (empty list, default). `[1 2 3] pop (1 plus ok) then -1 default` → `4` (success path).
 
 `cond`, `match`, `untag` no longer take a default argument. Use `must`/`default`/`then` on the result.
 
@@ -104,17 +104,44 @@ Two categories of types:
 
 ### Protocols (built-in typeclasses)
 
-Protocol constraints in the type checker formalize which operations work on which types. Used in `[...] effect` annotations.
+Haskell-inspired protocol hierarchy. Constraints formalize which operations work on which types. Used in `[...] effect` annotations.
+
+```
+Eq                        -- eq
+├── Ord                   -- lt, sort
+├── Num                   -- plus, sub, mul, div
+│   └── Integral          -- mod, divmod, wrap, bitwise ops
+├── Semigroup             -- cat
+│   ├── Monoid            -- (type-checker only, no runtime method yet)
+│   └── Seq               -- push, pop, get, set
+└── Functor               -- each (fmap)
+    ├── Applicative       -- (type-checker only, no runtime method yet)
+    ├── Foldable          -- fold, filter, scan, len
+    └── Monad             -- then (bind/flatMap)
+```
 
 | Protocol | Keyword | Types | Methods |
 |----------|---------|-------|---------|
-| Sized | `sized` | list, tuple, record | `len` |
-| Seq | `seq` (implies Sized) | list | `get`, `set`, `push`, `pop`, `cat` |
-| Eq | `eql` | all stackable types | `eq` |
-| Ord | `ord` (implies Eq) | int, float, sym | `lt`, `sort` |
-| Num | `num` (implies Ord) | int, float | `plus`, `sub`, `mul`, `div` |
+| Eq | `eq` | all stackable types | `eq` |
+| Ord | `ord` (implies Eq) | int, float | `lt`, `sort` |
+| Num | `num` (implies Eq, NOT Ord) | int, float | `plus`, `sub`, `mul`, `div` |
+| Integral | `integral` (implies Num) | int | `mod`, `divmod`, `wrap`, bitwise |
+| Semigroup | `semigroup` | list, tuple, record | `cat` |
+| Monoid | `monoid` (implies Semigroup) | list, tuple, record | (none yet) |
+| Seq | `seq` (implies Semigroup) | list | `get`, `set`, `push`, `pop` |
+| Functor | `functor` | list, tagged | `each` (fmap) |
+| Applicative | `applicative` (implies Functor) | list, tagged | (none yet) |
+| Foldable | `foldable` | list | `fold`, `filter`, `scan` |
+| Monad | `monad` (implies Functor) | list, tagged | `then` (bind) |
 
-Hierarchy: Num ⊂ Ord ⊂ Eq. Seq ⊂ Sized. Protocols live entirely in the type checker (`tc_constraint_matches`). No runtime dispatch changes.
+Key differences from previous system:
+- **Num does NOT extend Ord**. Symbols are NOT Ord.
+- **`map` removed**. `each` is now fmap (Functor) — returns a new container.
+- **`each` on tagged**: if `'ok`, applies body to payload and re-wraps; non-ok passes through.
+- **`then` is monadic bind**: body must return a tagged/list value. For tagged: `5 ok (1 plus ok) then`. For lists: flatMap.
+- **Side-effect iteration**: use `(body) each drop`.
+
+Hierarchy: see protocol tree above. Num ⊂ Eq (NOT Ord). Integral ⊂ Num. Seq ⊂ Semigroup. Functor ⊃ {Applicative, Foldable, Monad}. Protocols live entirely in the type checker (`tc_constraint_matches`). No runtime dispatch changes.
 
 ### `either` type annotation
 

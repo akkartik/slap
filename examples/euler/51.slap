@@ -55,7 +55,7 @@
 -- compute-mult: n d → sum of 10^pos where n has digit d (pos LSB=0)
 'compute-mult (
   'cm-d let 'cm-n let
-  cm-n int-str (48 sub) map cm-d 0 compute-mult-loop
+  cm-n int-str (48 sub) each cm-d 0 compute-mult-loop
 ) def
 
 -- try-digit: p d → 1 if some digit d..9 gives an 8-family, else 0

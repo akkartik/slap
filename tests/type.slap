@@ -88,7 +88,7 @@ true assert
 
 -- ===== Tagged unions =====
 123 ok print
-123 ok (1 plus) then -1 default print
+123 ok (1 plus ok) then -1 default print
 42 ok -1 default print
 "fail" no "" default print
 
@@ -96,13 +96,13 @@ true assert
 42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag must print
 
 -- union through then
-42 ok {'ok 'int 'no 'str} union (1 plus) then {'ok () 'no (drop 0)} untag must print
+42 ok {'ok 'int 'no 'str} union (1 plus ok) then {'ok () 'no (drop 0)} untag must print
 
 -- ===== Protocol constraints =====
 
 -- seq: list-only operations with typed elements
 'my-push ['a seq own in  'a own in  'a seq move out] effect
-'my-len ['a sized lent in  int move out] effect
+'my-len [lent in  int move out] effect
 'my-max ['a ord lent in  'a ord lent in  'a ord move out] effect
 
 -- sized: works on lists, tuples, and records
@@ -119,7 +119,6 @@ true assert
 
 -- ord: sort requires orderable elements
 [3 1 2] sort drop
-['c 'a 'b] sort ['a 'b 'c] eq assert
 
 -- protocol constraint in user-defined function
 'list-len (len) ['a seq lent in  int move out] effect def

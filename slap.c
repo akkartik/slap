@@ -373,16 +373,16 @@ static void syms_init(void);
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
 typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT } OwnMode;
-typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_SIZED, TC_EQ, TC_ORD } TypeConstraint;
+typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_MONOID, TC_FUNCTOR, TC_APPLICATIVE, TC_FOLDABLE, TC_MONAD } TypeConstraint;
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4, HO_SCRUTINEE_SYM=8,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 26
+#define HO_OP_COUNT 25
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
-    {"map",0,2,1,TC_LIST,HO_BODY_1TO1},{"filter",0,2,1,TC_LIST,HO_BODY_1TO1},
-    {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,0,TC_NONE,0},
+    {"filter",0,2,1,TC_LIST,HO_BODY_1TO1},
+    {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,1,TC_FUNCTOR,HO_BODY_1TO1},
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
     {"cond",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE},{"match",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_SYM},
@@ -391,7 +391,7 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
     {"untag",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
-    {"then",0,2,1,TC_TAGGED,HO_BODY_1TO1|HO_SCRUTINEE_TAGGED},
+    {"then",0,2,1,TC_MONAD,HO_BODY_1TO1},
     {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
 static HOEffect *ho_ops_find(uint32_t sym) { for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i]; return NULL; }
@@ -426,13 +426,15 @@ static TypeSig *typesig_find(uint32_t sym) {
 static const struct { const char *name; TypeConstraint tc; } tc_names[] = {
     {"int",TC_INT},{"float",TC_FLOAT},{"sym",TC_SYM},{"num",TC_NUM},
     {"list",TC_LIST},{"tuple",TC_TUPLE},{"rec",TC_REC},{"box",TC_BOX},{"stack",TC_STACK},{"tagged",TC_TAGGED},
-    {"seq",TC_SEQ},{"sized",TC_SIZED},{"eql",TC_EQ},{"ord",TC_ORD},{NULL,TC_NONE}
+    {"seq",TC_SEQ},{"eq",TC_EQ},{"eql",TC_EQ},{"ord",TC_ORD},
+    {"integral",TC_INTEGRAL},{"semigroup",TC_SEMIGROUP},{"monoid",TC_MONOID},
+    {"functor",TC_FUNCTOR},{"applicative",TC_APPLICATIVE},{"foldable",TC_FOLDABLE},{"monad",TC_MONAD},{NULL,TC_NONE}
 };
 static TypeConstraint parse_constraint(const char *tw) {
     for (int i=0; tc_names[i].name; i++) if (strcmp(tw,tc_names[i].name)==0) return tc_names[i].tc;
     return TC_NONE;
 }
-static int tc_is_container(TypeConstraint c) { return c == TC_LIST || c == TC_BOX || c == TC_TAGGED || c == TC_SEQ; }
+static int tc_is_container(TypeConstraint c) { return c == TC_LIST || c == TC_BOX || c == TC_TAGGED || c == TC_SEQ || c == TC_FUNCTOR || c == TC_MONAD || c == TC_APPLICATIVE; }
 static int tc_is_concrete(TypeConstraint c) {
     return c == TC_INT || c == TC_FLOAT || c == TC_SYM || c == TC_LIST || c == TC_TUPLE || c == TC_REC || c == TC_BOX || c == TC_TAGGED;
 }
@@ -548,28 +550,41 @@ static int tvar_find(TypeChecker *tc, int id) {
 static TypeConstraint tvar_resolve(TypeChecker *tc, int id) { return tc->tvars[tvar_find(tc, id)].bound; }
 /* Bitmask per TypeConstraint: bit N set means "compatible with TC whose enum == N" */
 #define B(x) (1u<<(x))
-static const uint16_t tc_compat[] = {
-    [TC_NONE]=0xFFFF, [TC_INT]=B(TC_INT)|B(TC_NUM)|B(TC_ORD)|B(TC_EQ),
+static const uint32_t tc_compat[] = {
+    [TC_NONE]=0xFFFFFFFF,
+    [TC_INT]=B(TC_INT)|B(TC_NUM)|B(TC_INTEGRAL)|B(TC_ORD)|B(TC_EQ),
     [TC_FLOAT]=B(TC_FLOAT)|B(TC_NUM)|B(TC_ORD)|B(TC_EQ),
-    [TC_SYM]=B(TC_SYM)|B(TC_ORD)|B(TC_EQ), [TC_NUM]=B(TC_NUM)|B(TC_INT)|B(TC_FLOAT)|B(TC_ORD)|B(TC_EQ),
-    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SIZED)|B(TC_EQ), [TC_TUPLE]=B(TC_TUPLE)|B(TC_SIZED)|B(TC_EQ),
-    [TC_REC]=B(TC_REC)|B(TC_SIZED)|B(TC_EQ), [TC_BOX]=B(TC_BOX), [TC_STACK]=B(TC_STACK),
-    [TC_TAGGED]=B(TC_TAGGED)|B(TC_EQ), [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SIZED)|B(TC_EQ),
-    [TC_SIZED]=B(TC_SIZED)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ)|B(TC_EQ),
-    [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED)|B(TC_NUM)|B(TC_ORD)|B(TC_SEQ)|B(TC_SIZED),
-    [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_NUM)|B(TC_EQ),
+    [TC_SYM]=B(TC_SYM)|B(TC_EQ),
+    [TC_NUM]=B(TC_NUM)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_ORD),
+    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ),
+    [TC_TUPLE]=B(TC_TUPLE)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ),
+    [TC_REC]=B(TC_REC)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ),
+    [TC_BOX]=B(TC_BOX), [TC_STACK]=B(TC_STACK),
+    [TC_TAGGED]=B(TC_TAGGED)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_EQ),
+    [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ),
+    [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED)|B(TC_NUM)|B(TC_ORD)|B(TC_SEQ)|B(TC_INTEGRAL)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD),
+    [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_NUM),
+    [TC_INTEGRAL]=B(TC_INTEGRAL)|B(TC_INT)|B(TC_NUM)|B(TC_EQ),
+    [TC_SEMIGROUP]=B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ),
+    [TC_MONOID]=B(TC_MONOID)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ)|B(TC_SEMIGROUP),
+    [TC_FUNCTOR]=B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_FOLDABLE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ),
+    [TC_APPLICATIVE]=B(TC_APPLICATIVE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_MONAD),
+    [TC_FOLDABLE]=B(TC_FOLDABLE)|B(TC_LIST)|B(TC_SEQ),
+    [TC_MONAD]=B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_APPLICATIVE),
 };
 #undef B
 static int tc_constraint_matches(TypeConstraint a, TypeConstraint b) {
     if (a == TC_NONE || a == b) return 1;
-    return (a <= TC_ORD && b <= TC_ORD) ? (tc_compat[a] >> b) & 1 : 0;
+    return (a <= TC_MONAD && b <= TC_MONAD) ? (tc_compat[a] >> b) & 1 : 0;
 }
 static int tc_should_narrow(TypeConstraint cur, TypeConstraint c) {
     if (tc_is_concrete(c) && !tc_is_concrete(cur)) return 1;
-    if (cur == TC_NUM && (c == TC_INT || c == TC_FLOAT)) return 1;
-    if (cur == TC_EQ && (c == TC_ORD || c == TC_NUM || c == TC_SEQ || c == TC_SIZED)) return 1;
-    if (cur == TC_ORD && c == TC_NUM) return 1;
-    if (cur == TC_SIZED && c == TC_SEQ) return 1;
+    if (cur == TC_NUM && (c == TC_INT || c == TC_FLOAT || c == TC_INTEGRAL)) return 1;
+    if (cur == TC_EQ && (c == TC_ORD || c == TC_NUM || c == TC_SEQ || c == TC_INTEGRAL || c == TC_SEMIGROUP || c == TC_MONOID || c == TC_FUNCTOR || c == TC_APPLICATIVE || c == TC_FOLDABLE || c == TC_MONAD)) return 1;
+    if (cur == TC_SEMIGROUP && (c == TC_SEQ || c == TC_MONOID)) return 1;
+    if (cur == TC_MONOID && c == TC_SEQ) return 1;
+    if (cur == TC_FUNCTOR && (c == TC_APPLICATIVE || c == TC_MONAD || c == TC_FOLDABLE)) return 1;
+    if (cur == TC_APPLICATIVE && c == TC_MONAD) return 1;
     return 0;
 }
 static int tvar_bind(TypeChecker *tc, int id, TypeConstraint c, int line) {
@@ -860,8 +875,10 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
     TypeConstraint out = ho->out_type;
     if (out == TC_NONE && (ho->flags & HO_BRANCHES_AGREE))
         for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { out = bouts[i]; break; }
+    /* Functor/Monad ops: output type matches input container type */
+    if ((out == TC_FUNCTOR || out == TC_MONAD) && lpt != TC_NONE && tc_is_concrete(lpt)) out = lpt;
     for (int j = 0; j < ho->out; j++) tc_push(tc, (j == ho->out - 1) ? out : TC_NONE, line);
-    if ((ho->flags & HO_BODY_1TO1) && out == TC_TAGGED && tc->sp > 0 && tc->data[tc->sp-1].tvar_id > 0) {
+    if ((ho->flags & HO_BODY_1TO1) && out == TC_TAGGED && ho->out_type != TC_MONAD && tc->sp > 0 && tc->data[tc->sp-1].tvar_id > 0) {
         int otp = tvar_content(tc, tc->data[tc->sp-1].tvar_id, TC_TAGGED);
         if (otp > 0) { if (bo != TC_NONE) tvar_bind(tc, otp, bo, line); else if (tptv > 0) tvar_unify(tc, otp, tptv, line); }
         if (lptv > 0) { int uid = tc->tvars[tvar_find(tc, lptv)].union_id; if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid; }
@@ -1316,18 +1333,32 @@ static void prim_untag(Frame *env) {
         push_ok();
     else push_none();
 }
+#define LIST_ITER(label) POP_BODY(fn,label); POP_LIST_BUF(list,label); \
+    int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs)
+#define PUSH_ELEM(i) SPUSH(&list_buf[offs[i]],szs[i])
 static void prim_then(Frame *env) {
     POP_BODY(body,"then");
     Value top=stack[sp-1];
-    if(top.tag!=VAL_TAGGED) die("then: expected tagged value, got %s", valtag_name(top.tag));
-    if(top.as.compound.len==S_OK){
-        sp--; /* remove header, payload stays */
-        eval_body(body_buf,body_s,env);
-        Value new_top=stack[sp-1];
-        int new_payload_s=val_slots(new_top);
-        spush(val_compound(VAL_TAGGED,S_OK,new_payload_s+1));
+    if(top.tag==VAL_TAGGED){
+        if(top.as.compound.len==S_OK){
+            sp--; /* remove header, payload stays */
+            eval_body(body_buf,body_s,env);
+        }
+        /* non-ok: leave tagged value untouched */
+    } else if(top.tag==VAL_LIST){
+        POP_LIST_BUF(list,"then");
+        int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
+        int rb=sp,rc=0;
+        for(int i=0;i<list_len;i++){
+            PUSH_ELEM(i); eval_body(body_buf,body_s,env);
+            Value r=stack[sp-1];
+            if(r.tag!=VAL_LIST) die("then: body must return list for list bind, got %s",valtag_name(r.tag));
+            rc+=(int)r.as.compound.len; sp--; /* remove list header, elements stay */
+        }
+        spush(val_compound(VAL_LIST,rc,sp-rb+1));
+    } else {
+        die("then: expected list or tagged, got %s", valtag_name(top.tag));
     }
-    /* non-ok: leave tagged value untouched */
 }
 static void prim_default(Frame *e) {
     (void)e; POP_VAL(def);
@@ -1513,13 +1544,27 @@ static void prim_slice_n(int take) {
     spush(val_compound(VAL_LIST,end_i-start,tmp_sp+1));
 }
 static void prim_range(Frame *e){(void)e;int64_t end=pop_int(),start=pop_int();int count=0;for(int64_t i=start;i<end;i++){spush(val_int(i));count++;}spush(val_compound(VAL_LIST,count,count+1));}
-#define LIST_ITER(label) POP_BODY(fn,label); POP_LIST_BUF(list,label); \
-    int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs)
-#define PUSH_ELEM(i) SPUSH(&list_buf[offs[i]],szs[i])
-static void prim_map(Frame *env) {
-    LIST_ITER("map"); int rb=sp;
-    for(int i=0;i<list_len;i++){PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);}
-    spush(val_compound(VAL_LIST,list_len,sp-rb+1));
+static void prim_each(Frame *env) {
+    POP_BODY(fn,"each");
+    Value top=stack[sp-1];
+    if(top.tag==VAL_LIST){
+        POP_LIST_BUF(list,"each");
+        int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
+        int rb=sp;
+        for(int i=0;i<list_len;i++){PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);}
+        spush(val_compound(VAL_LIST,list_len,sp-rb+1));
+    } else if(top.tag==VAL_TAGGED){
+        if(top.as.compound.len==S_OK){
+            sp--; /* remove tagged header, payload stays */
+            eval_body(fn_buf,fn_s,env);
+            Value new_top=stack[sp-1];
+            int new_payload_s=val_slots(new_top);
+            spush(val_compound(VAL_TAGGED,S_OK,new_payload_s+1));
+        }
+        /* non-ok: leave tagged value untouched */
+    } else {
+        die("each: expected list or tagged, got %s", valtag_name(top.tag));
+    }
 }
 static void prim_filter(Frame *env) {
     LIST_ITER("filter"); int rb=sp,rc=0;
@@ -1530,10 +1575,6 @@ static void prim_fold(Frame *env) {
     POP_BODY(fn,"fold"); POP_VAL(init); POP_LIST_BUF(list,"fold");
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
     SPUSH(init_buf,init_s);
-    for(int i=0;i<list_len;i++){PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);}
-}
-static void prim_each(Frame *env) {
-    LIST_ITER("each");
     for(int i=0;i<list_len;i++){PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);}
 }
 static int val_cmp(const Value *va, const Value *vb) {
@@ -1802,9 +1843,9 @@ static const char *BUILTIN_TYPES =
     "'itof [int lent in  float" MO "'ftoi [float lent in  int" MO
     "'fsqrt" F1E "'fsin" F1E "'fcos" F1E "'ftan" F1E "'ffloor" F1E "'fceil" F1E "'fround" F1E "'fexp" F1E "'flog" F1E
     "'fpow" F2E "'fatan2" F2E
-    "'list [list" MO "'len ['a sized lent in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect\n"
-    "'get ['a seq own in  int lent in  {'ok 'a 'no ()} either move out] effect\n'nth [sym lent in  int lent in  {'ok 'a 'no ()} either move out] effect\n'set ['a seq own in  int lent in  'a own in  {'ok 'a 'no ()} either move out] effect\n'cat ['a seq own in  'a seq own in  'a seq" MO
-    "'take-n" LNE "'drop-n" LNE "'range [int lent in  int lent in  int list" MO "'sort ['a ord seq own in  'a ord seq" MO
+    "'list [list" MO "'len [lent in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect\n"
+    "'get ['a seq own in  int lent in  {'ok 'a 'no ()} either move out] effect\n'nth [sym lent in  int lent in  {'ok 'a 'no ()} either move out] effect\n'set ['a seq own in  int lent in  'a own in  {'ok 'a 'no ()} either move out] effect\n'cat ['a semigroup own in  'a semigroup own in  'a semigroup" MO
+    "'take-n" LNE "'drop-n" LNE "'range [int lent in  int lent in  int list" MO "'sort ['a ord list own in  'a ord list" MO
     "'reverse" L1E "'dedup" L1E "'index-of ['a list own in  'a lent in  {'ok int 'no ()} either move out] effect\n'select" LIE "'pick" LIE "'keep-mask" LIE
     "'rise" LGE "'fall" LGE "'shape" LGE "'classify" LGE "'stack [tuple" MO "'compose [tuple own in  tuple own in  tuple" MO "'rec [rec" MO
     "'random [int lent in  int" MO "'halt [] effect\n'box ['a own in  'a box" MO "'free ['a box own in] effect\n"
@@ -1835,37 +1876,37 @@ static const char *PRELUDE =
     "'not (0 eq) [int lent in  int move out] effect def\n'neq (eq not) [lent in  lent in  int move out] effect def\n"
     "'gt (swap lt) [lent in  lent in  int move out] effect def\n'ge (lt not) [lent in  lent in  int move out] effect def\n'le (swap lt not) [lent in  lent in  int move out] effect def\n"
     "'inc (1 plus) [num lent in  num move out] effect def\n'dec (1 sub) [num lent in  num move out] effect def\n'neg (0 swap sub) [num lent in  num move out] effect def\n"
-    "'max (over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'min (over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'abs (dup neg max) [num lent in  num move out] effect def\n"
+    "'max (over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'min (over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'abs (dup 0 lt (neg) (dup drop) if) def\n"
     "'bi ('g swap def 'f swap def dup f swap g) def\n'keep ('f swap def dup f swap) def\n'repeat ('f swap def (dup 0 gt) (1 sub (f) dip) while drop) def\n"
-    "'select (swap 'data swap def (data swap get must) map) def\n'pick (swap 'data swap def (data swap get must) map) def\n'reduce (swap dup 0 get must swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose map) def\n"
+    "'select (swap 'data swap def (data swap get must) each) def\n'pick (swap 'data swap def (data swap get must) each) def\n'reduce (swap dup 0 get must swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose each) def\n"
     "'sqr (dup mul) def\n'cube (dup dup mul mul) def\n'ispos (0 swap lt) def\n'isneg (0 lt) def\n'first (0 get) def\n'last (dup len 1 sub get) def\n'sum (0 (plus) fold) def\n'product (1 (mul) fold) def\n"
-    "'max-of (dup first must (max) fold) def\n'min-of (dup first must (min) fold) def\n'member (index-of (drop 1) then 0 default) def\n'couple (list rot push swap push) def\n"
+    "'max-of (dup first must (max) fold) def\n'min-of (dup first must (min) fold) def\n'member (index-of (drop 1 ok) then 0 default) def\n'couple (list rot push swap push) def\n"
     "'isany (0 (or) fold) def\n'isall (1 (and) fold) def\n'flatten (list (cat) fold) def\n'sort-desc (sort reverse) def\n'fneg (0.0 swap sub) def\n"
     "'fabs (dup 0.0 lt (fneg) () if) def\n'frecip (1.0 swap div) def\n'fsign (dup 0.0 lt (drop -1.0) (dup 0.0 eq (drop 0.0) (drop 1.0) if) if) def\n'sign (dup 0 lt (drop -1) (dup 0 eq (drop 0) (drop 1) if) if) def\n"
     "'clamp (rot swap min max) def\n'fclamp (swap min max) def\n'lerp ((over sub) dip swap mul plus) def\n'isbetween (rot dup (rot swap le) dip rot rot ge and) def\n"
     "'iszero (0 eq) [int lent in  int move out] effect def\n'iseven (2 mod 0 eq) [int lent in  int move out] effect def\n'isodd (2 mod 0 neq) [int lent in  int move out] effect def\n'divides (mod 0 eq) [int lent in  int lent in  int move out] effect def\n"
     "'ok ('ok tag) ['a own in  'a tagged move out] effect def\n'no ('no tag) ['a own in  'a tagged move out] effect def\n'none (() no) [tagged move out] effect def\n'times-i ('f swap def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) def\n"
     "3.14159265358979323846 'pi let\n6.28318530717958647692 'tau let\n2.71828182845904523536 'e let\n'rotate ('n let dup len 'ln let ln 0 eq not (n ln wrap 'nn let nn 0 eq not (dup ln nn sub take-n swap ln nn sub drop-n swap cat) () if) () if) def\n"
-    "'zip ('b swap def 'a swap def a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) map) def\n"
-    "'windows ('n let 'l swap def l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) map) if) def\n"
-    "'reshape ('dims swap def 'data swap def dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) map) map) def\n"
-    "'transpose ('m swap def m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) map) map) def\n"
-    "'keep-mask ('mask swap def 0 mask len range (mask swap get must 0 neq) where select) def\n'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) map) def\n"
-    "'classify (dup 'l swap def (l swap index-of must) map dup dedup 'u swap def (u swap index-of must) map) def\n'byte-mask (255 band) def\n'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) map) def\n"
+    "'zip ('b swap def 'a swap def a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) each) def\n"
+    "'windows ('n let 'l swap def l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) each) if) def\n"
+    "'reshape ('dims swap def 'data swap def dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) each) each) def\n"
+    "'transpose ('m swap def m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) each) each) def\n"
+    "'keep-mask ('mask swap def 0 mask len range (mask swap get must 0 neq) where select) def\n'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) each) def\n"
+    "'classify (dup 'l swap def (l swap index-of must) each dup dedup 'u swap def (u swap index-of must) each) def\n'byte-mask (255 band) def\n'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) each) def\n"
     "'bits-byte (0 (swap 1 shl bor) fold) def\n'chunks ('n let list swap (dup len 0 eq not) (dup n take-n swap (push) dip n drop-n) while drop) def\n"
-    "'icn-decode ((byte-bits) map flatten) def\n'icn-encode (8 chunks (bits-byte) map) def\n'chr-encode (8 chunks 'rows let rows ((1 band) map bits-byte) map rows ((1 shr 1 band) map bits-byte) map cat) def\n"
-    "'chr-decode ('data let data 8 take-n (byte-bits) map 'p0 let data 8 drop-n 8 take-n (byte-bits) map 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) map) map flatten) def\n"
-    "'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) map) def\n'nmt-encode ((dup 'addr at must dup byte-mask swap 8 shr byte-mask couple swap 'color at must push) map flatten) def\n"
+    "'icn-decode ((byte-bits) each flatten) def\n'icn-encode (8 chunks (bits-byte) each) def\n'chr-encode (8 chunks 'rows let rows ((1 band) each bits-byte) each rows ((1 shr 1 band) each bits-byte) each cat) def\n"
+    "'chr-decode ('data let data 8 take-n (byte-bits) each 'p0 let data 8 drop-n 8 take-n (byte-bits) each 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) each) each flatten) def\n"
+    "'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) each) def\n'nmt-encode ((dup 'addr at must dup byte-mask swap 8 shr byte-mask couple swap 'color at must push) each flatten) def\n"
     "'tga-decode ('data let data 12 get must data 13 get must 8 shl bor 'w let data 14 get must data 15 get must 8 shl bor 'h let data 16 get must 'd let data 18 drop-n 'pixels let rec w 'width into h 'height into d 'depth into pixels 'pixels into) def\n"
     "'tga-header ('px let 'd let 'h let 'w let list 0 push 0 push 2 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push w byte-mask push w 8 shr byte-mask push h byte-mask push h 8 shr byte-mask push d push 0 push px cat) def\n'tga-encode (dup 'width at must swap dup 'height at must swap dup 'depth at must swap 'pixels at must tga-header) def\n"
     "'gly-parse-rows recur ('input let 'cur let 'rows let 'maxw let input len 0 eq (cur len 0 eq not (cur len maxw max rows cur push) (maxw rows) if) (input first must 'ch let input 1 drop-n 'rest let ch 10 eq (cur len maxw max rows cur push list rest gly-parse-rows) (ch 32 eq (cur 0 push) (cur ch 63 sub push) if 'ncur let maxw rows ncur rest gly-parse-rows) if) if) def\n"
-    "'gly-decode ('input let 0 list list input gly-parse-rows 'rows let 'maxw let rows len 'nrows let maxw 'w let nrows 4 mul 'h let list 0 h range ('y let 0 w range ('c let y 4 div 'r let y 4 mod 'bit let rows len r gt (rows r get must dup len c gt (c get must bit shr 1 band) (drop 0) if) (0) if push) each) each 'pixels let rec w 'width into h 'height into pixels 'pixels into) def\n"
-    "'gly-encode (dup 'width at must 'w let dup 'height at must 'h let 'pixels at must 'px let h 4 div 'nrows let list 0 nrows range ('r let 0 w range ('c let 0 0 4 range ('bit let px r 4 mul bit plus w mul c plus get must bit shl bor) each 63 plus push) each r nrows 1 sub lt (10 push) () if) each) def\n"
-    "'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) map 'glyphs let rec widths 'widths into glyphs 'glyphs into) def\n'ufx-encode (dup 'widths at must swap 'glyphs at must (icn-encode) map flatten cat) def\n"
+    "'gly-decode ('input let 0 list list input gly-parse-rows 'rows let 'maxw let rows len 'nrows let maxw 'w let nrows 4 mul 'h let 0 h range ('y let 0 w range ('c let y 4 div 'r let y 4 mod 'bit let rows len r gt (rows r get must dup len c gt (c get must bit shr 1 band) (drop 0) if) (0) if) each) each flatten 'pixels let rec w 'width into h 'height into pixels 'pixels into) def\n"
+    "'gly-encode (dup 'width at must 'w let dup 'height at must 'h let 'pixels at must 'px let h 4 div 'nrows let 0 nrows range ('r let 0 w range ('c let 0 4 range 0 ('bit let px r 4 mul bit plus w mul c plus get must bit shl bor) fold 63 plus) each r nrows 1 sub lt (10 push) () if) each flatten) def\n"
+    "'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) each 'glyphs let rec widths 'widths into glyphs 'glyphs into) def\n'ufx-encode (dup 'widths at must swap 'glyphs at must (icn-encode) each flatten cat) def\n"
     "'ulz-decode ('src let list 0 (dup src len lt) (dup src swap get must 'op let 1 plus op 128 band 0 eq (op 127 band 1 plus 'cnt let cnt (dup src swap get must swap (push) dip 1 plus) repeat) (op 64 band 0 eq (op 63 band 4 plus 'lng let dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) (op 63 band 8 shl (dup src swap get must) dip swap bor 4 plus 'lng let 1 plus dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) if) if) while drop) def\n"
 #ifndef SLAP_WASM
     "'crlf (list 13 push 10 push) def\n'int-str-digits recur ('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) def\n"
-    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts first must parts 1 drop-n (sep swap cat cat) each) if) def\n"
+    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first must (sep swap cat cat) fold) if) def\n"
     "'http-request ('body let 'headers let 'path let 'host let 'method let method \" \" cat path cat \" HTTP/1.1\" cat crlf cat \"Host: \" cat host cat crlf cat headers cat body len 0 gt (\"Content-Length: \" cat body len int-str cat crlf cat) () if crlf cat body cat) def\n"
     "'http-get ('path let 'port let 'host let host port tcp-connect must \"GET\" host path list list http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
     "'http-post ('body let 'content-type let 'path let 'port let 'host let host port tcp-connect must \"Content-Type: \" content-type cat crlf cat 'ct-hdr let \"POST\" host path ct-hdr body http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
@@ -2195,7 +2236,7 @@ static void register_prims(void) {
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
         {"get",prim_get},R(nth,nth),R(set,replace_at),R(cat,concat),
         {"take-n",prim_take_n},{"drop-n",prim_drop_n},R(range,range),
-        R(map,map),R(filter,filter),R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
+        R(filter,filter),R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
         R(rec,rec),R(into,into),R(edit,edit),R(reverse,reverse),R(dedup,dedup),R(where,where),R(find,find_elem),
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),

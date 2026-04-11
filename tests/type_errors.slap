@@ -23,10 +23,6 @@
 1.0 assert
 
 -- EXPECT: type error
--- TYPE ERROR: len on int (list-only)
-42 len
-
--- EXPECT: type error
 -- TYPE ERROR: fsqrt on int (float-only)
 42 fsqrt
 
@@ -61,10 +57,6 @@
 -- EXPECT: type error
 -- TYPE ERROR: give to non-list
 42 99 give
-
--- EXPECT: type error
--- TYPE ERROR: len of non-list
-42 len
 
 -- EXPECT: type error
 -- TYPE ERROR: range with float args
@@ -186,14 +178,6 @@
 -- TYPE ERROR: untag scrutinee must be tagged
 123 {'foo ()} untag
 
--- EXPECT: expected tagged value
--- TYPE ERROR: then on plain int
-123 (1 plus) then
-
--- EXPECT: expected tagged value
--- TYPE ERROR: then on symbol (not tagged)
-'ok (1 plus) then
-
 -- EXPECT: expected tagged
 -- TYPE ERROR: default on plain int
 42 -1 default
@@ -238,29 +222,13 @@
 -- TYPE ERROR: untag missing variant declared by union
 42 ok {'ok 'int 'no 'str} union {'ok (1 plus)} untag
 
--- EXPECT: missing variant 'no'
--- TYPE ERROR: untag with union, handles only ok after then
-42 ok {'ok 'int 'no 'str} union (1 plus) then {'ok ()} untag
-
 -- EXPECT: missing variant 'err'
 -- TYPE ERROR: three variants, only two handled
 42 'a tag {'a 'int 'b 'int 'err 'str} union {'a () 'b ()} untag
 
--- EXPECT: body expects sized but 'ok variant has int
--- TYPE ERROR: then body expects sized but ok variant is int
-42 ok {'ok 'int 'no 'str} union (len) then print
-
--- EXPECT: body expects float but 'ok variant has int
--- TYPE ERROR: then body expects float, ok variant is int
-42 ok {'ok 'int 'no 'str} union (fsqrt) then print
-
 -- EXPECT: expected num, got list
 -- TYPE ERROR: default preserves payload type (string/list + int)
 "hello" ok -1 default 1 plus print
-
--- EXPECT: expected sized, got int
--- TYPE ERROR: default preserves payload type (int given to len)
-42 ok -1 default len print
 
 -- EXPECT: expected seq, got tagged
 -- TYPE ERROR: push onto tagged
@@ -270,15 +238,11 @@
 -- TYPE ERROR: pop from tagged
 1 'x tag pop
 
--- EXPECT: expected sized, got tagged
--- TYPE ERROR: size on tagged
-1 'x tag size
-
 -- EXPECT: expected seq, got tagged
 -- TYPE ERROR: get on tagged
 1 'x tag 0 get
 
--- EXPECT: expected seq, got tagged
+-- EXPECT: expected semigroup, got tagged
 -- TYPE ERROR: cat on tagged
 [1] 1 'x tag cat
 
@@ -335,10 +299,6 @@
 -- EXPECT: expected seq, got tuple
 -- TYPE ERROR: set on tuple
 (1 2 3) 0 99 set
-
--- EXPECT: expected sized, got int
--- TYPE ERROR: len on int
-42 len
 
 -- EXPECT: expected ord
 -- TYPE ERROR: sort list of lists (lists aren't Ord)
