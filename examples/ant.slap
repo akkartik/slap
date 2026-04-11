@@ -6,7 +6,7 @@
 19200 'N let
 4 'S let
 
--- Draw SxS block at grid (gx, gy) with color c
+-- Draw SxS block at must grid (gx, gy) with color c
 'draw-block (
   'c let 'gy let 'gx let
   gx S mul gy S mul S S c fill-rect
@@ -21,12 +21,12 @@ N 3 plus 'I-STEPS let
 
 -- One ant step: grid on stack -> updated grid
 'ant-step (
-  dup I-AX get 'ax let
-  dup I-AY get 'ay let
-  dup I-DIR get 'dir let
+  dup I-AX get must 'ax let
+  dup I-AY get must 'ay let
+  dup I-DIR get must 'dir let
 
-  -- read cell at ant position
-  dup ay W mul ax plus get 'cell let
+  -- read must cell at must ant position
+  dup ay W mul ax plus get must 'cell let
 
   -- turn: white(0)->right, black(1)->left
   cell 0 eq
@@ -35,19 +35,19 @@ N 3 plus 'I-STEPS let
   if 'newdir let
 
   -- flip cell and update grid
-  ay W mul ax plus 1 cell sub set
+  ay W mul ax plus 1 cell sub set must
 
   -- draw flipped cell to canvas
   ax ay 1 cell sub 0 eq (0) (3) if draw-block
 
   -- move forward
-  ax [0 1 0 -1] newdir get plus W plus W mod 'nax let
-  ay [-1 0 1 0] newdir get plus H plus H mod 'nay let
+  ax [0 1 0 -1] newdir get must plus W plus W mod 'nax let
+  ay [-1 0 1 0] newdir get must plus H plus H mod 'nay let
 
   -- update state
-  I-AX nax set I-AY nay set I-DIR newdir set
-  dup I-STEPS get 1 plus 'nsteps let
-  I-STEPS nsteps set
+  I-AX nax set must I-AY nay set must I-DIR newdir set must
+  dup I-STEPS get must 1 plus 'nsteps let
+  I-STEPS nsteps set must
 ) def
 
 -- Initial grid: all white (0)
@@ -61,8 +61,8 @@ list N (0 give) repeat
 -- Render: draw ant marker
 (
   drop
-  dup I-AX get 'ax let
-  dup I-AY get 'ay let
-  dup I-STEPS get 'steps let
+  dup I-AX get must 'ax let
+  dup I-AY get must 'ay let
+  dup I-STEPS get must 'steps let
   ax ay steps 10 div 2 mod 1 plus draw-block
 ) show

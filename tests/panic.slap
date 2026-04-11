@@ -42,11 +42,11 @@ false assert
 -- EXPECT: type variable
 1 2.0 plus
 
--- EXPECT: index 5 out of bounds
-[1 2 3] 5 get
+-- EXPECT: MUST FAILED
+[1 2 3] 5 get must
 
--- EXPECT: index -1 out of bounds
-[1 2 3] -1 get
+-- EXPECT: MUST FAILED
+[1 2 3] -1 get must
 
 -- EXPECT: expected sized
 1 len
@@ -57,17 +57,17 @@ false assert
 -- EXPECT: expected box
 1 free
 
--- EXPECT: pop: empty list
-[] grab
+-- EXPECT: MUST FAILED
+[] grab must
 
--- EXPECT: index 0 out of bounds
-[] (plus) reduce
+-- EXPECT: MUST FAILED
+[] (plus) reduce must
 
 -- EXPECT: unknown word
 nonexistent_word_xyz
 
--- EXPECT: out of bounds
-[1 2 3] 5 99 set
+-- EXPECT: MUST FAILED
+[1 2 3] 5 99 set must
 
 -- EXPECT: expected box
 1 mutate
@@ -88,7 +88,7 @@ stack pop
 42 (1 eq) filter
 
 -- EXPECT: scrutinee must be a symbol
-1 2 3 match
+1 {'a (1)} match
 
 -- EXPECT: check: expected preceding type word
 (check)
@@ -102,8 +102,8 @@ stack pop
 -- EXPECT: expected rec
 [1 2 3] 'x at
 
--- EXPECT: read: cannot open
-"_nonexistent_file_abc123.txt" read
+-- EXPECT: MUST FAILED
+"_nonexistent_file_abc123.txt" read must
 
 -- EXPECT: write: byte element
 "foo.txt" ['x] write
@@ -114,26 +114,26 @@ stack pop
 -- EXPECT: write: byte 0 out of range
 "foo.txt" [-1] write
 
--- EXPECT: ls: cannot open directory
-"_nonexistent_dir_abc123" ls
+-- EXPECT: MUST FAILED
+"_nonexistent_dir_abc123" ls must
 
--- EXPECT: utf8-encode: codepoint
-[1114112] utf8-encode
+-- EXPECT: MUST FAILED
+[1114112] utf8-encode must
 
--- EXPECT: utf8-encode: codepoint
-[-1] utf8-encode
+-- EXPECT: MUST FAILED
+[-1] utf8-encode must
 
--- EXPECT: utf8-decode: invalid lead byte
-[255] utf8-decode
+-- EXPECT: MUST FAILED
+[255] utf8-decode must
 
--- EXPECT: utf8-decode: truncated sequence
-[195] utf8-decode
+-- EXPECT: MUST FAILED
+[195] utf8-decode must
 
--- EXPECT: utf8-decode: invalid continuation byte
-[195 65] utf8-decode
+-- EXPECT: MUST FAILED
+[195 65] utf8-decode must
 
 -- EXPECT: expected tagged value
-123 {'foo ()} -1 untag
+123 {'foo ()} untag
 
 -- EXPECT: expected tagged value
 123 (1 plus) then
@@ -177,14 +177,14 @@ tuck
 -- EXPECT: edit: expected record
 1 'x (1 plus) edit
 
--- EXPECT: edit: key
-{'a 1} 'b (1 plus) edit
+-- EXPECT: MUST FAILED
+{'a 1} 'b (1 plus) edit must
 
 -- EXPECT: recursion depth exceeded
 'inf recur (inf) def inf
 
--- EXPECT: parse-http: no header/body separator
-"garbage" parse-http
+-- EXPECT: MUST FAILED
+"garbage" parse-http must
 
 -- ===== Error message detail: "got X" wording =====
 -- These verify that type errors (whether caught at type-check or at runtime)
@@ -258,23 +258,19 @@ tuck
 -- EXPECT-COL: 5
 1 0 mod
 
--- EXPECT: index 0 out of bounds
--- EXPECT-LINE: 1
--- EXPECT-COL: 6
-[] 0 get
+-- EXPECT: MUST FAILED
+[] 0 get must
 
--- EXPECT: index 5 out of bounds
--- EXPECT-LINE: 1
--- EXPECT-COL: 14
-[10 20 30] 5 get
+-- EXPECT: MUST FAILED
+[10 20 30] 5 get must
 
 -- ===== Uncovered die() sites =====
 
--- EXPECT: random: max must be positive
-0 random
+-- EXPECT: MUST FAILED
+[] first must
 
--- EXPECT: random: max must be positive
--5 random
+-- EXPECT: MUST FAILED
+[] last must
 
 -- EXPECT: dip: need body and value
 1 dip
@@ -283,29 +279,23 @@ tuck
 42 loop
 
 -- EXPECT: cond: expected tuple or record
-1 1 -1 cond
+1 1 cond
 
 -- EXPECT: match: expected tuple or record
-'x 1 -1 match
+'x 1 match
 
 -- EXPECT: untag: expected tuple or record
-1 'ok tag 1 -1 untag
+1 'ok tag 1 untag
 
 -- EXPECT: untag: need even number of clauses
-1 'ok tag {'ok} -1 untag
+1 'ok tag {'ok} untag
 
--- EXPECT: at: key 'b' not found
-{'a 1} 'b at
+-- EXPECT: MUST FAILED
+{'a 1} 'b at must
 
--- EXPECT: index 0 out of bounds
-[] first
-
--- EXPECT: index -1 out of bounds
-[] last
-
--- EXPECT: index 0 out of bounds
+-- EXPECT: MUST FAILED
 [] max-of
 
--- EXPECT: index 0 out of bounds
+-- EXPECT: MUST FAILED
 [] min-of
 

@@ -6,22 +6,22 @@
 'mul-digits (
   'n let 'ds let
   rec 0 'carry into list 'result into 0 'j into
-  (dup 'j at ds len lt)
+  (dup 'j at must ds len lt)
   (
-    dup 'j at ds swap get n mul over 'carry at plus 'val let
-    'result (val 10 mod give) edit
-    'carry (drop val 10 div) edit
-    'j (1 plus) edit
+    dup 'j at must ds swap get must n mul over 'carry at must plus 'val let
+    'result (val 10 mod give) edit must
+    'carry (drop val 10 div) edit must
+    'j (1 plus) edit must
   )
   while
-  (dup 'carry at 0 gt)
+  (dup 'carry at must 0 gt)
   (
-    dup 'carry at 'c let
-    'result (c 10 mod give) edit
-    'carry (10 div) edit
+    dup 'carry at must 'c let
+    'result (c 10 mod give) edit must
+    'carry (10 div) edit must
   )
   while
-  'result at
+  'result at must
 ) def
 
 'mul-box ('nn let (nn mul-digits) mutate) def

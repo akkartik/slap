@@ -62,13 +62,13 @@ answer 42 eq assert
 3 dup 5 lt (2 mul) (3 mul) if 6 eq assert
 
 -- ===== Control Flow: cond =====
-10 {(5 lt) (2 mul) (20 lt) (3 mul)} -1 cond
+10 {(5 lt) (2 mul) (20 lt) (3 mul)} cond must
 30 eq assert
 
 -- ===== Control Flow: match =====
-'red {'red (0) 'green (1) 'blue (2)} -1 match
+'red {'red (0) 'green (1) 'blue (2)} match must
 0 eq assert
-'blue {'red (0) 'green (1) 'blue (2)} -1 match
+'blue {'red (0) 'green (1) 'blue (2)} match must
 2 eq assert
 
 -- ===== Control Flow: while =====
@@ -88,11 +88,11 @@ list [] eq assert
 
 -- ===== Lists: give / grab =====
 list 10 give 20 give [10 20] eq assert
-[10 20 30] grab 30 eq assert [10 20] eq assert
+[10 20 30] grab must 30 eq assert [10 20] eq assert
 
 -- ===== Lists: get / set =====
-[10 20 30] 1 get 20 eq assert
-[10 20 30] 1 99 set [10 99 30] eq assert
+[10 20 30] 1 get must 20 eq assert
+[10 20 30] 1 99 set must [10 99 30] eq assert
 
 -- ===== Lists: len =====
 [1 2 3] len 3 eq assert
@@ -133,11 +133,11 @@ list 10 give 20 give [10 20] eq assert
 [1 2 3 4 5 6] dup (3 mod 0 eq) map keep-mask [3 6] eq assert
 
 -- ===== List: index-of =====
-[10 20 30] 20 index-of 1 eq assert
+[10 20 30] 20 index-of must 1 eq assert
 
 -- ===== Strings =====
 "hello" len 5 eq assert
-"hello" 0 get 104 eq assert
+"hello" 0 get must 104 eq assert
 "ab" "cd" cat "abcd" eq assert
 
 -- ===== Tuples =====
@@ -145,10 +145,10 @@ list 10 give 20 give [10 20] eq assert
 (10 20 30) apply 30 eq assert 20 eq assert 10 eq assert
 
 -- ===== Records =====
-{'x 10 'y 20} 'x at 10 eq assert
+{'x 10 'y 20} 'x at must 10 eq assert
 
 -- ===== Records: into =====
-{'x 10 'y 20} 30 'x into 'x at 30 eq assert
+{'x 10 'y 20} 30 'x into 'x at must 30 eq assert
 
 -- ===== Box =====
 42 box free
@@ -179,8 +179,8 @@ list 10 give 20 give [10 20] eq assert
 [1 2 3 4] product 24 eq assert
 [5 1 3] max-of 5 eq assert
 [5 1 3] min-of 1 eq assert
-[1 2 3] first 1 eq assert
-[1 2 3] last 3 eq assert
+[1 2 3] first must 1 eq assert
+[1 2 3] last must 3 eq assert
 
 -- ===== Prelude: constants =====
 pi 3.0 lt not assert
@@ -199,8 +199,8 @@ list len 0 eq assert
 stack size 0 eq assert
 
 -- single element list
-[42] first 42 eq assert
-[42] last 42 eq assert
+[42] first must 42 eq assert
+[42] last must 42 eq assert
 [42] len 1 eq assert
 
 -- nested if
@@ -210,7 +210,7 @@ stack size 0 eq assert
 ((1 2 plus)) apply apply 3 eq assert
 
 -- string as list of chars
-"a" 0 get 97 eq assert
+"a" 0 get must 97 eq assert
 "" len 0 eq assert
 
 -- range edge cases
@@ -230,8 +230,8 @@ stack size 0 eq assert
 [42] (plus) reduce 42 eq assert
 
 -- list of lists
-[[1 2] [3 4]] 0 get [1 2] eq assert
-[[1 2] [3 4]] 1 get [3 4] eq assert
+[[1 2] [3 4]] 0 get must [1 2] eq assert
+[[1 2] [3 4]] 1 get must [3 4] eq assert
 
 -- reverse
 [1 2 3] reverse [3 2 1] eq assert
@@ -249,7 +249,7 @@ stack size 0 eq assert
 
 -- box with list
 [1 2 3] box
-  (0 get) lend 1 eq assert
+  (0 get must) lend 1 eq assert
   ((2 mul) map) mutate
   () lend [2 4 6] eq assert
 free
@@ -258,17 +258,17 @@ free
 rec rec eq assert
 
 -- multiple record fields
-{'a 1 'b 2 'c 3} 'b at 2 eq assert
-{'a 1 'b 2 'c 3} 'c at 3 eq assert
+{'a 1 'b 2 'c 3} 'b at must 2 eq assert
+{'a 1 'b 2 'c 3} 'c at must 3 eq assert
 
 -- record into creates new field
-{'a 1} 2 'b into 'b at 2 eq assert
+{'a 1} 2 'b into 'b at must 2 eq assert
 
--- match with default
-'unknown {'red (0) 'blue (1)} -1 match -1 eq assert
+-- match with no match returns none
+'unknown {'red (0) 'blue (1)} match none eq assert
 
--- cond with default
-100 {(50 lt) (1)} -1 cond -1 eq assert
+-- cond with no match returns none
+100 {(50 lt) (1)} cond none eq assert
 
 -- while that never executes body
 10 (dup 5 lt) (2 mul) while 10 eq assert
@@ -291,7 +291,7 @@ outer 15 eq assert
 [1 2 3] [0 0 0] keep-mask [] eq assert
 
 -- index-of not found
-[1 2 3] 99 index-of -1 eq assert
+[1 2 3] 99 index-of none eq assert
 
 -- sort already sorted
 [1 2 3] sort [1 2 3] eq assert
@@ -407,7 +407,7 @@ outer 15 eq assert
 [1 2 3] (sqr) table [[1 1] [2 4] [3 9]] eq assert
 
 -- ===== Complex: zip + map =====
-[1 2 3] [10 20 30] zip ((0 get) (1 get) bi plus) map [11 22 33] eq assert
+[1 2 3] [10 20 30] zip ((0 get must) (1 get must) bi plus) map [11 22 33] eq assert
 
 -- ===== Complex: where + select =====
 [5 3 8 1 7] dup (4 lt) where select [3 1] eq assert
@@ -453,7 +453,7 @@ outer 15 eq assert
 
 -- ===== Adversarial: table + fold =====
 [1 2 3 4] (sqr) table
-  (1 get) map
+  (1 get must) map
   (plus) reduce
 30 eq assert
 
@@ -516,12 +516,12 @@ free
 
 -- ===== Complex: records built incrementally =====
 rec 10 'x into 20 'y into 30 'z into
-  dup 'x at 10 eq assert
-  dup 'y at 20 eq assert
-  'z at 30 eq assert
+  dup 'x at must 10 eq assert
+  dup 'y at must 20 eq assert
+  'z at must 30 eq assert
 
 -- ===== Complex: record overwrite =====
-{'x 1 'y 2} 99 'x into 'x at 99 eq assert
+{'x 1 'y 2} 99 'x into 'x at must 99 eq assert
 
 -- ===== Complex: box mutate in while loop =====
 0 box
@@ -545,12 +545,12 @@ free free
 
 -- ===== Complex: dot product via zip + fold =====
 [1 2 3] [4 5 6] zip
-  0 (dup 0 get swap 1 get mul plus) fold
+  0 (dup 0 get must swap 1 get must mul plus) fold
 32 eq assert
 
 -- ===== Complex: windows + map for pairwise differences =====
 [10 13 17 22] 2 windows
-  (dup 1 get swap 0 get sub) map
+  (dup 1 get must swap 0 get must sub) map
 [3 4 5] eq assert
 
 -- ===== Complex: rise + select = sort by derived key =====
@@ -595,7 +595,7 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 
 -- ===== Complex: match in function =====
 'color-val (
-  {'red (0) 'green (1) 'blue (2)} -1 match
+  {'red (0) 'green (1) 'blue (2)} match must
 ) def
 'red color-val 0 eq assert
 'blue color-val 2 eq assert
@@ -611,8 +611,8 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 
 -- ===== Complex: table + filter + map pipeline =====
 [1 2 3 4 5] (sqr) table
-  (1 get 10 lt) filter
-  (0 get) map
+  (1 get must 10 lt) filter
+  (0 get must) map
 [1 2 3] eq assert
 
 -- ===== Complex: compose chain =====
@@ -645,12 +645,12 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 
 -- ===== Complex: box with record inside =====
 {'count 0 'total 0} box
-  ('count (1 plus) edit) mutate
-  ('count (1 plus) edit) mutate
-  ('total (100 plus) edit) mutate
+  ('count (1 plus) edit must) mutate
+  ('count (1 plus) edit must) mutate
+  ('total (100 plus) edit must) mutate
   () lend
-  dup 'count at 2 eq assert
-  'total at 100 eq assert
+  dup 'count at must 2 eq assert
+  'total at must 100 eq assert
 free
 
 -- ===== Complex: triple nested list operations =====
@@ -706,8 +706,8 @@ add-lists [1 2 3 4 5 6] eq assert
 -- circle sprite: 00111100 01000010 10000001 ... (8 bytes)
 [60 66 129 129 129 129 66 60] icn-decode
   dup len 64 eq assert
-  dup 0 get 0 eq assert    -- top-left is 0
-  dup 2 get 1 eq assert    -- third pixel of first row is 1
+  dup 0 get must 0 eq assert    -- top-left is 0
+  dup 2 get must 1 eq assert    -- third pixel of first row is 1
   icn-encode [60 66 129 129 129 129 66 60] eq assert
 -- all zeros
 [0 0 0 0 0 0 0 0] icn-decode icn-encode [0 0 0 0 0 0 0 0] eq assert
@@ -719,23 +719,23 @@ add-lists [1 2 3 4 5 6] eq assert
 -- first row: both planes set = color 3, rest = color 0
 [255 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] chr-decode
   dup len 64 eq assert
-  dup 0 get 3 eq assert    -- first pixel = both planes = 3
-  dup 8 get 0 eq assert    -- second row first pixel = 0
+  dup 0 get must 3 eq assert    -- first pixel = both planes = 3
+  dup 8 get must 0 eq assert    -- second row first pixel = 0
   chr-encode [255 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] eq assert
 -- plane0 only (color 1)
 [255 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0] chr-decode
-  dup 0 get 1 eq assert
+  dup 0 get must 1 eq assert
   chr-encode [255 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0] eq assert
 -- plane1 only (color 2)
 [0 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] chr-decode
-  dup 0 get 2 eq assert
+  dup 0 get must 2 eq assert
   chr-encode [0 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] eq assert
 
 -- ===== NMT codec =====
 [0 1 2  3 4 5] nmt-decode
   dup len 2 eq assert
-  dup 0 get dup 'addr at 256 eq assert 'color at 2 eq assert
-  1 get dup 'addr at 1027 eq assert 'color at 5 eq assert
+  dup 0 get must dup 'addr at must 256 eq assert 'color at must 2 eq assert
+  1 get must dup 'addr at must 1027 eq assert 'color at must 5 eq assert
 -- round-trip
 [0 1 2  3 4 5] nmt-decode nmt-encode [0 1 2  3 4 5] eq assert
 [0 0 0] nmt-decode nmt-encode [0 0 0] eq assert
@@ -747,10 +747,10 @@ list 0 give 0 give 2 give 0 give 0 give 0 give 0 give 0 give 0 give 0 give 0 giv
 255 give 0 give 0 give  0 give 255 give 0 give  0 give 0 give 255 give  128 give 128 give 128 give
 'tga-data let
 tga-data tga-decode
-  dup 'width at 2 eq assert
-  dup 'height at 2 eq assert
-  dup 'depth at 24 eq assert
-  'pixels at len 12 eq assert
+  dup 'width at must 2 eq assert
+  dup 'height at must 2 eq assert
+  dup 'depth at must 24 eq assert
+  'pixels at must len 12 eq assert
 -- round-trip
 tga-data tga-decode tga-encode tga-data eq assert
 
@@ -761,9 +761,9 @@ list
 60 give 66 give 129 give 129 give 129 give 129 give 66 give 60 give  -- one circle glyph
 'ufx-data let
 ufx-data ufx-decode
-  dup 'widths at len 256 eq assert
-  dup 'widths at 0 get 4 eq assert
-  'glyphs at len 1 eq assert
+  dup 'widths at must len 256 eq assert
+  dup 'widths at must 0 get must 4 eq assert
+  'glyphs at must len 1 eq assert
 -- round-trip
 ufx-data ufx-decode ufx-encode ufx-data eq assert
 
@@ -779,8 +779,8 @@ ufx-data ufx-decode ufx-encode ufx-data eq assert
 -- char 68 (0x44) = value 5 = 0b0101 → pixels: bit0=1 bit1=0 bit2=1 bit3=0
 -- char 63 (0x3F) = value 0 = 0b0000 → all off
 [68 63] gly-decode
-  dup 'width at 2 eq assert
-  dup 'height at 4 eq assert
+  dup 'width at must 2 eq assert
+  dup 'height at must 4 eq assert
   drop
 -- round-trip
 [68 63] gly-decode gly-encode [68 63] eq assert
@@ -790,61 +790,61 @@ ufx-data ufx-decode ufx-encode ufx-data eq assert
 [68 10 72] gly-decode gly-encode [68 10 72] eq assert
 
 -- ===== Filesystem: write & read round-trip =====
-"_test_fs.bin" [72 101 108 108 111] write
-"_test_fs.bin" read [72 101 108 108 111] eq assert
+"_test_fs.bin" [72 101 108 108 111] write must drop
+"_test_fs.bin" read must [72 101 108 108 111] eq assert
 
 -- write overwrites previous contents
-"_test_fs.bin" [1 2 3] write
-"_test_fs.bin" read [1 2 3] eq assert
+"_test_fs.bin" [1 2 3] write must drop
+"_test_fs.bin" read must [1 2 3] eq assert
 
 -- empty file round-trip
-"_test_fs.bin" [] write
-"_test_fs.bin" read [] eq assert
+"_test_fs.bin" [] write must drop
+"_test_fs.bin" read must [] eq assert
 
 -- binary bytes (0 and 255)
-"_test_fs.bin" [0 127 255] write
-"_test_fs.bin" read [0 127 255] eq assert
+"_test_fs.bin" [0 127 255] write must drop
+"_test_fs.bin" read must [0 127 255] eq assert
 
 -- single byte
-"_test_fs.bin" [42] write
-"_test_fs.bin" read [42] eq assert
+"_test_fs.bin" [42] write must drop
+"_test_fs.bin" read must [42] eq assert
 
 -- ===== Filesystem: ls =====
-"." ls len 0 lt not assert
+"." ls must len 0 lt not assert
 
 -- ===== UTF-8 encode/decode =====
 -- ASCII round-trip
-[72 101 108 108 111] utf8-encode utf8-decode [72 101 108 108 111] eq assert
+[72 101 108 108 111] utf8-encode must utf8-decode must [72 101 108 108 111] eq assert
 
 -- ASCII encodes as identity
-[65 66 67] utf8-encode [65 66 67] eq assert
+[65 66 67] utf8-encode must [65 66 67] eq assert
 
 -- empty list round-trip
-[] utf8-encode [] eq assert
-[] utf8-decode [] eq assert
+[] utf8-encode must [] eq assert
+[] utf8-decode must [] eq assert
 
 -- 2-byte character: U+00E9 (é) = [0xC3, 0xA9]
-[233] utf8-encode [195 169] eq assert
-[195 169] utf8-decode [233] eq assert
+[233] utf8-encode must [195 169] eq assert
+[195 169] utf8-decode must [233] eq assert
 
 -- 3-byte character: U+4E16 (世) = [0xE4, 0xB8, 0x96]
-[19990] utf8-encode [228 184 150] eq assert
-[228 184 150] utf8-decode [19990] eq assert
+[19990] utf8-encode must [228 184 150] eq assert
+[228 184 150] utf8-decode must [19990] eq assert
 
 -- 4-byte character: U+1F600 (😀) = [0xF0, 0x9F, 0x98, 0x80]
-[128512] utf8-encode [240 159 152 128] eq assert
-[240 159 152 128] utf8-decode [128512] eq assert
+[128512] utf8-encode must [240 159 152 128] eq assert
+[240 159 152 128] utf8-decode must [128512] eq assert
 
 -- mixed ASCII and multibyte: "Ré" = [82 233]
-[82 233] utf8-encode [82 195 169] eq assert
-[82 195 169] utf8-decode [82 233] eq assert
+[82 233] utf8-encode must [82 195 169] eq assert
+[82 195 169] utf8-decode must [82 233] eq assert
 
 -- full round-trip with file I/O
-"_test_fs.bin" [82 233] utf8-encode write
-"_test_fs.bin" read utf8-decode [82 233] eq assert
+"_test_fs.bin" [82 233] utf8-encode must write must drop
+"_test_fs.bin" read must utf8-decode must [82 233] eq assert
 
 -- cleanup test file
-"_test_fs.bin" [] write
+"_test_fs.bin" [] write must drop
 
 -- ===== System Primitives =====
 args len 0 eq assert
@@ -854,8 +854,8 @@ cwd len 0 lt not assert
 -- ===== String Helpers =====
 -- crlf
 crlf len 2 eq assert
-crlf 0 get 13 eq assert
-crlf 1 get 10 eq assert
+crlf 0 get must 13 eq assert
+crlf 1 get must 10 eq assert
 
 -- int-str
 0 int-str "0" eq assert
@@ -868,22 +868,22 @@ crlf 1 get 10 eq assert
 1000 int-str "1000" eq assert
 
 -- str-find
-"hello world" "world" str-find 6 eq assert
-"hello world" "hello" str-find 0 eq assert
-"hello world" "xyz" str-find -1 eq assert
-"aaa" "a" str-find 0 eq assert
-"" "a" str-find -1 eq assert
+"hello world" "world" str-find must 6 eq assert
+"hello world" "hello" str-find must 0 eq assert
+"hello world" "xyz" str-find none eq assert
+"aaa" "a" str-find must 0 eq assert
+"" "a" str-find none eq assert
 
 -- str-split
 "a,b,c" "," str-split len 3 eq assert
-"a,b,c" "," str-split 0 get "a" eq assert
-"a,b,c" "," str-split 1 get "b" eq assert
-"a,b,c" "," str-split 2 get "c" eq assert
+"a,b,c" "," str-split 0 get must "a" eq assert
+"a,b,c" "," str-split 1 get must "b" eq assert
+"a,b,c" "," str-split 2 get must "c" eq assert
 "hello" "," str-split len 1 eq assert
-"hello" "," str-split 0 get "hello" eq assert
+"hello" "," str-split 0 get must "hello" eq assert
 "a::b" "::" str-split len 2 eq assert
-"a::b" "::" str-split 0 get "a" eq assert
-"a::b" "::" str-split 1 get "b" eq assert
+"a::b" "::" str-split 0 get must "a" eq assert
+"a::b" "::" str-split 1 get must "b" eq assert
 
 -- str-join
 list "a" give "b" give "c" give "x" str-join "axbxc" eq assert
@@ -892,16 +892,16 @@ list "hi" give "--" str-join "hi" eq assert
 
 -- ===== TCP Loopback =====
 'tcp-roundtrip (
-  19201 tcp-listen 's1 let
-  "127.0.0.1" 19201 tcp-connect 'c1 let
-  s1 tcp-accept 'p1 let 's1a let
+  19201 tcp-listen must 's1 let
+  "127.0.0.1" 19201 tcp-connect must 'c1 let
+  s1 tcp-accept must 'p1 let 's1a let
 
-  c1 "hello" tcp-send 'c1a let
-  p1 1024 tcp-recv 'd1 let 'p1a let
+  c1 "hello" tcp-send must drop 'c1a let
+  p1 1024 tcp-recv must 'd1 let 'p1a let
   d1 "hello" eq assert
 
-  p1a "world" tcp-send 'p1b let
-  c1a 1024 tcp-recv 'd2 let 'c1b let
+  p1a "world" tcp-send must drop 'p1b let
+  c1a 1024 tcp-recv must 'd2 let 'c1b let
   d2 "world" eq assert
 
   c1b tcp-close
@@ -910,15 +910,15 @@ list "hi" give "--" str-join "hi" eq assert
 ) def tcp-roundtrip
 
 'tcp-multi-send (
-  19202 tcp-listen 's2 let
-  "127.0.0.1" 19202 tcp-connect 'c2 let
-  s2 tcp-accept 'p2 let 's2a let
+  19202 tcp-listen must 's2 let
+  "127.0.0.1" 19202 tcp-connect must 'c2 let
+  s2 tcp-accept must 'p2 let 's2a let
 
-  c2 "aaa" tcp-send 'c2a let
-  c2a "bbb" tcp-send 'c2b let
-  c2b "ccc" tcp-send 'c2c let
+  c2 "aaa" tcp-send must drop 'c2a let
+  c2a "bbb" tcp-send must drop 'c2b let
+  c2b "ccc" tcp-send must drop 'c2c let
 
-  p2 1024 tcp-recv 'chunk1 let 'p2a let
+  p2 1024 tcp-recv must 'chunk1 let 'p2a let
   chunk1 len 0 gt assert
 
   c2c tcp-close
@@ -927,11 +927,11 @@ list "hi" give "--" str-join "hi" eq assert
 ) def tcp-multi-send
 
 'tcp-empty-send (
-  19203 tcp-listen 's3 let
-  "127.0.0.1" 19203 tcp-connect 'c3 let
-  s3 tcp-accept 'p3 let 's3a let
+  19203 tcp-listen must 's3 let
+  "127.0.0.1" 19203 tcp-connect must 'c3 let
+  s3 tcp-accept must 'p3 let 's3a let
 
-  c3 list tcp-send 'c3a let
+  c3 list tcp-send must drop 'c3a let
 
   c3a tcp-close
   p3 tcp-close
@@ -939,16 +939,16 @@ list "hi" give "--" str-join "hi" eq assert
 ) def tcp-empty-send
 
 'tcp-large-data (
-  19204 tcp-listen 's4 let
-  "127.0.0.1" 19204 tcp-connect 'c4 let
-  s4 tcp-accept 'p4 let 's4a let
+  19204 tcp-listen must 's4 let
+  "127.0.0.1" 19204 tcp-connect must 'c4 let
+  s4 tcp-accept must 'p4 let 's4a let
 
   0 1000 range 'big let
-  c4 big (256 mod) map tcp-send 'c4a let
+  c4 big (256 mod) map tcp-send must drop 'c4a let
   c4a tcp-close
 
   p4 list
-  (swap 4096 tcp-recv 'ch let swap ch cat ch len 0 gt) () while
+  (swap 4096 tcp-recv must 'ch let swap ch cat ch len 0 gt) () while
   len 1000 eq assert
 
   tcp-close
@@ -958,11 +958,11 @@ list "hi" give "--" str-join "hi" eq assert
 -- ===== HTTP Prelude =====
 'test-parse-http (
   "HTTP/1.1 200 OK" crlf cat "Content-Type: text/html" cat crlf cat crlf cat "hello body" cat
-  parse-http 'body let 'headers let 'status let
+  parse-http must 'body let 'headers let 'status let
   status 200 eq assert
   headers len 1 eq assert
-  headers 0 get 'key at "Content-Type" eq assert
-  headers 0 get 'value at "text/html" eq assert
+  headers 0 get must 'key at must "Content-Type" eq assert
+  headers 0 get must 'value at must "text/html" eq assert
   body "hello body" eq assert
 ) def test-parse-http
 
@@ -973,25 +973,25 @@ list "hi" give "--" str-join "hi" eq assert
 
 -- ===== HTTP Integration (Loopback) =====
 'test-http-loopback (
-  19205 tcp-listen 'srv let
-  "127.0.0.1" 19205 tcp-connect 'cli let
-  srv tcp-accept 'peer let 'srv2 let
+  19205 tcp-listen must 'srv let
+  "127.0.0.1" 19205 tcp-connect must 'cli let
+  srv tcp-accept must 'peer let 'srv2 let
 
   "HTTP/1.1 200 OK" crlf cat
   "Content-Type: text/plain" cat crlf cat
   "Content-Length: 5" cat crlf cat
   crlf cat "hello" cat
   'http-resp let
-  peer http-resp tcp-send 'peer2 let
+  peer http-resp tcp-send must drop 'peer2 let
   peer2 tcp-close
 
   cli list
-  (swap 4096 tcp-recv 'ch let swap ch cat ch len 0 gt) () while
+  (swap 4096 tcp-recv must 'ch let swap ch cat ch len 0 gt) () while
   swap 'cli2 let
   cli2 tcp-close
   srv2 tcp-close
 
-  parse-http 'rbody let 'rhdrs let 'rstat let
+  parse-http must 'rbody let 'rhdrs let 'rstat let
   rstat 200 eq assert
   rbody "hello" eq assert
   rhdrs len 2 eq assert
@@ -1000,20 +1000,20 @@ list "hi" give "--" str-join "hi" eq assert
 -- ===== Tagged Unions (Sum Types) =====
 
 -- basic tag and untag
-123 'foo tag {'foo ()} -1 untag 123 eq assert
-123 'foo tag {'bar ()} -1 untag -1 eq assert
-123 'foo tag {'bar ()} (-1) untag -1 eq assert
+123 'foo tag {'foo ()} untag must 123 eq assert
+123 'foo tag {'bar ()} untag none eq assert
+123 'foo tag {'bar ()} untag none eq assert
 
 -- record clauses
-123 'foo tag {'foo (1 plus) 'bar (2 plus)} -1 untag 124 eq assert
-456 'bar tag {'foo (1 plus) 'bar (2 plus)} -1 untag 458 eq assert
-789 'baz tag {'foo (1 plus) 'bar (2 plus)} -1 untag -1 eq assert
+123 'foo tag {'foo (1 plus) 'bar (2 plus)} untag must 124 eq assert
+456 'bar tag {'foo (1 plus) 'bar (2 plus)} untag must 458 eq assert
+789 'baz tag {'foo (1 plus) 'bar (2 plus)} untag none eq assert
 
 -- multi-slot payload (tuple)
-(1 2 3) 'triple tag {'triple ()} -1 untag (1 2 3) eq assert
+(1 2 3) 'triple tag {'triple ()} untag must (1 2 3) eq assert
 
 -- nested tags
-42 'inner tag 'outer tag {'outer ()} -1 untag 42 'inner tag eq assert
+42 'inner tag 'outer tag {'outer ()} untag must 42 'inner tag eq assert
 
 -- dup/drop/swap on tagged values
 123 ok dup eq assert
@@ -1034,11 +1034,11 @@ list "hi" give "--" str-join "hi" eq assert
 "x" no (1 plus) then (2 mul) then 0 default 0 eq assert
 
 -- then preserves non-ok tag and payload
-"fail" no (999 plus) then {'no ()} -1 untag "fail" eq assert
+"fail" no (999 plus) then {'no ()} untag must "fail" eq assert
 
 -- default
 42 ok -1 default 42 eq assert
-"fail" no -1 default -1 eq assert
+"fail" no "" default "" eq assert
 
 -- tag with symbol payload
 'hello ok (drop "yes") then "no" default "yes" eq assert
@@ -1067,16 +1067,16 @@ list "hi" give "--" str-join "hi" eq assert
 123 ok {'ok 'int 'no 'str} union print
 
 -- exhaustive untag with union passes type checker
-42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} -1 untag 43 eq assert
+42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag must 43 eq assert
 
 -- union propagates through then
-10 ok {'ok 'int 'no 'str} union (5 plus) then {'ok () 'no (drop 0)} -1 untag 15 eq assert
+10 ok {'ok 'int 'no 'str} union (5 plus) then {'ok () 'no (drop 0)} untag must 15 eq assert
 
 -- three-variant union, all handled
-42 'a tag {'a 'int 'b 'int 'c 'int} union {'a (1 plus) 'b (2 plus) 'c (3 plus)} -1 untag 43 eq assert
+42 'a tag {'a 'int 'b 'int 'c 'int} union {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag must 43 eq assert
 
 -- untag without union: no exhaustiveness check (open tagged)
-42 'foo tag {'foo (1 plus)} -1 untag 43 eq assert
+42 'foo tag {'foo (1 plus)} untag must 43 eq assert
 
 -- default preserves payload type through then chain
 42 ok (1 plus) then (2 mul) then -1 default 86 eq assert
@@ -1095,7 +1095,7 @@ list "hi" give "--" str-join "hi" eq assert
 
 -- tagged via custom tag function
 'tag-as ('s let s tag) def
-42 'custom tag-as {'custom (1 plus)} -1 untag 43 eq assert
+42 'custom tag-as {'custom (1 plus)} untag must 43 eq assert
 
 -- tagged stored in let bindings
 42 ok 'x let
@@ -1109,24 +1109,24 @@ x (2 mul) then -1 default 84 eq assert
 
 -- nested tags: unwrap outermost
 1 'a tag 'b tag 'c tag
-  {'c ()} -1 untag
+  {'c ()} untag must
   1 'a tag 'b tag eq assert
 
 -- nested tags: full 3-level unwrap
 1 'a tag 'b tag 'c tag
-  {'c ()} -1 untag
-  {'b ()} -1 untag
-  {'a ()} -1 untag
+  {'c ()} untag must
+  {'b ()} untag must
+  {'a ()} untag must
   1 eq assert
 
 -- nested tags: two levels of wrapping/unwrapping
 42 'inner tag 'outer tag
-  {'outer ({'inner (10 plus)} -1 untag)} -1 untag
+  {'outer ({'inner (10 plus)} untag must)} untag must
   52 eq assert
 
 -- untag with body that returns tagged (re-wrapping)
-42 ok {'ok (2 mul ok)} 0 no untag -1 default 84 eq assert
-42 no {'ok (2 mul)} 0 untag 0 eq assert
+42 ok {'ok (2 mul ok)} untag must -1 default 84 eq assert
+42 no {'ok (2 mul)} untag none eq assert
 
 -- then chain: 10 deep
 1 ok
@@ -1137,32 +1137,32 @@ x (2 mul) then -1 default 84 eq assert
 -- no passes through arbitrary then chains
 "err" no
   (1 plus) then (2 mul) then (3 sub) then (4 div) then
-  {'no ()} -1 untag "err" eq assert
+  {'no ()} untag must "err" eq assert
 
 -- default with body (tuple) as fallback
-42 no (99) default 99 eq assert
-42 ok (99) default 42 eq assert
+42 no 99 default 99 eq assert
+42 ok 99 default 42 eq assert
 
 -- tag with record payload
-{'x 10 'y 20} ok -1 default 'x at 10 eq assert
+{'x 10 'y 20} ok must 'x at must 10 eq assert
 
 -- tag with list payload
-[1 2 3] ok -1 default [1 2 3] eq assert
+[1 2 3] ok must [1 2 3] eq assert
 
 -- tag with empty tuple payload
-() 'unit tag {'unit (drop 1)} 0 untag 1 eq assert
+() 'unit tag {'unit (drop 1)} untag must 1 eq assert
 
 -- mixed custom tags in untag
-42 'a tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} -1 untag 43 eq assert
-42 'b tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} -1 untag 44 eq assert
-42 'c tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} -1 untag 45 eq assert
-42 'd tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} -1 untag -1 eq assert
+42 'a tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag must 43 eq assert
+42 'b tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag must 44 eq assert
+42 'c tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag must 45 eq assert
+42 'd tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag none eq assert
 
 -- recursive tagged: build a linked list with tags
 'cons ('cdr let 'car let car cdr couple 'cons tag) def
 'nil (0 'nil tag) def
-nil {'nil (drop 0) 'cons (first)} 0 untag 0 eq assert
-1 2 nil cons cons {'nil (drop 0) 'cons (first)} 0 untag 1 eq assert
+nil {'nil (drop 0) 'cons (first must)} untag must 0 eq assert
+1 2 nil cons cons {'nil (drop 0) 'cons (first must)} untag must 1 eq assert
 
 -- ===== Stack Combinators =====
 
@@ -1194,27 +1194,27 @@ nil {'nil (drop 0) 'cons (first)} 0 untag 0 eq assert
 -- ===== Record edit =====
 
 -- basic edit
-{'a 1 'b 2} 'a (10 plus) edit dup 'a at 11 eq assert 'b at 2 eq assert
+{'a 1 'b 2} 'a (10 plus) edit must dup 'a at must 11 eq assert 'b at must 2 eq assert
 
 -- chained edits
-{'x 0 'y 0} 'x (5 plus) edit 'y (3 plus) edit
-dup 'x at 5 eq assert 'y at 3 eq assert
+{'x 0 'y 0} 'x (5 plus) edit must 'y (3 plus) edit must
+dup 'x at must 5 eq assert 'y at must 3 eq assert
 
 -- edit preserves other fields
 {'name [72 105] 'score 100 'lives 3}
-'score (50 plus) edit
-dup 'score at 150 eq assert
-dup 'lives at 3 eq assert
-'name at [72 105] eq assert
+'score (50 plus) edit must
+dup 'score at must 150 eq assert
+dup 'lives at must 3 eq assert
+'name at must [72 105] eq assert
 
 -- edit with mul
-{'width 10 'height 20} 'width (2 mul) edit 'width at 20 eq assert
+{'width 10 'height 20} 'width (2 mul) edit must 'width at must 20 eq assert
 
 -- edit on single-field record
-{'val 42} 'val (1 plus) edit 'val at 43 eq assert
+{'val 42} 'val (1 plus) edit must 'val at must 43 eq assert
 
 -- edit body that replaces value entirely
-{'a 1 'b 2} 'a (drop 99) edit 'a at 99 eq assert
+{'a 1 'b 2} 'a (drop 99) edit must 'a at must 99 eq assert
 
 -- ===== Adversarial: Tagged Unions =====
 
@@ -1222,78 +1222,78 @@ dup 'lives at 3 eq assert
 0 ok -1 default 0 eq assert
 
 -- tag with empty list payload
-[] ok -1 default [] eq assert
+[] ok must [] eq assert
 
 -- tag with empty record payload
-rec ok -1 default rec eq assert
+rec ok must rec eq assert
 
 -- tag with negative payload
 -999 ok -1 default -999 eq assert
 
 -- tag/untag roundtrip preserves equality
-42 'x tag dup {'x ()} -1 untag 42 eq assert
+42 'x tag dup {'x ()} untag must 42 eq assert
 42 'x tag eq assert
 
 -- untag with record-style clauses
-42 'a tag {'a (1 plus) 'b (2 plus)} -1 untag 43 eq assert
-42 'b tag {'a (1 plus) 'b (2 plus)} -1 untag 44 eq assert
+42 'a tag {'a (1 plus) 'b (2 plus)} untag must 43 eq assert
+42 'b tag {'a (1 plus) 'b (2 plus)} untag must 44 eq assert
 
 -- then on ok with body that changes payload size (int -> tuple)
-42 ok (dup 1 plus couple) then -1 default first 42 eq assert
+42 ok (dup 1 plus couple) then must first must 42 eq assert
 
 -- default on 3-level nested tags
 1 'a tag 'b tag 'c tag
-  {'c ()} -1 untag
-  {'b ()} -1 untag
-  {'a ()} -1 untag
+  {'c ()} untag must
+  {'b ()} untag must
+  {'a ()} untag must
   1 eq assert
 
 -- then chain where no passes through untouched
 "err" no (1 plus) then (2 mul) then (3 sub) then (4 div) then (5 plus) then
-  {'no ()} -1 untag "err" eq assert
+  {'no ()} untag must "err" eq assert
 
 -- untag where default is a plain value
-42 'x tag {'y ()} -1 untag -1 eq assert
+42 'x tag {'y ()} untag none eq assert
 
 -- tag with large tuple payload
-(1 2 3 4 5 6 7 8 9 10) ok -1 default size 10 eq assert
+(1 2 3 4 5 6 7 8 9 10) ok must size 10 eq assert
 
 -- tag, untag, re-tag
-42 ok {'ok (1 plus no)} (-1) untag -1 default -1 eq assert
+42 ok {'ok (1 plus no)} untag must -1 default -1 eq assert
 
 -- then on ok preserves tag after body
-42 ok (1 plus) then dup {'ok ()} -1 untag 43 eq assert drop
+42 ok (1 plus) then dup {'ok ()} untag must 43 eq assert drop
 
 -- ===== Adversarial: Record Edit =====
 
 -- edit that changes value size (int -> list)
-rec 1 'a into 2 'b into 'a (drop [10 20 30]) edit
-  dup 'a at [10 20 30] eq assert
-  'b at 2 eq assert
+rec 1 'a into 2 'b into 'a (drop [10 20 30]) edit must
+  dup 'a at must [10 20 30] eq assert
+  'b at must 2 eq assert
 
 -- edit on record with many fields
 rec 1 'a into 2 'b into 3 'c into 4 'd into 5 'e into
-  'c (100 plus) edit
-  dup 'a at 1 eq assert
-  dup 'b at 2 eq assert
-  dup 'c at 103 eq assert
-  dup 'd at 4 eq assert
-  'e at 5 eq assert
+  'c (100 plus) edit must
+  dup 'a at must 1 eq assert
+  dup 'b at must 2 eq assert
+  dup 'c at must 103 eq assert
+  dup 'd at must 4 eq assert
+  'e at must 5 eq assert
 
 -- chained edit then at on every field
 rec 0 'x into 0 'y into 0 'z into
-  'x (10 plus) edit 'y (20 plus) edit 'z (30 plus) edit
-  dup 'x at 10 eq assert
-  dup 'y at 20 eq assert
-  'z at 30 eq assert
+  'x (10 plus) edit must 'y (20 plus) edit must 'z (30 plus) edit must
+  dup 'x at must 10 eq assert
+  dup 'y at must 20 eq assert
+  'z at must 30 eq assert
 
 -- edit with body that doubles a list
-rec [1 2] 'data into 'data (dup cat) edit 'data at [1 2 1 2] eq assert
+rec [1 2] 'data into 'data (dup cat) edit must 'data at must [1 2 1 2] eq assert
 
 -- ===== Adversarial: Stack Combinators =====
 
 -- over with records
-rec 1 'x into  rec 2 'y into  over 'x at 1 eq assert drop drop
+rec 1 'x into  rec 2 'y into  over 'x at must 1 eq assert drop drop
 
 -- rot with 3 different compound values
 [1] [2 3] [4 5 6] rot [1] eq assert [4 5 6] eq assert [2 3] eq assert
@@ -1302,7 +1302,7 @@ rec 1 'x into  rec 2 'y into  over 'x at 1 eq assert drop drop
 42 ok 99 ok nip -1 default 99 eq assert
 
 -- tuck with records
-rec 1 'a into  rec 2 'b into  tuck 'b at 2 eq assert 'a at 1 eq assert 'b at 2 eq assert
+rec 1 'a into  rec 2 'b into  tuck 'b at must 2 eq assert 'a at must 1 eq assert 'b at must 2 eq assert
 
 -- over with tagged values
 1 ok 2 ok over -1 default 1 eq assert drop drop
@@ -1310,23 +1310,23 @@ rec 1 'a into  rec 2 'b into  tuck 'b at 2 eq assert 'a at 1 eq assert 'b at 2 e
 -- ===== Adversarial: String Helpers =====
 
 -- str-find: empty needle in non-empty haystack
-"hello" "" str-find 0 eq assert
+"hello" "" str-find must 0 eq assert
 
 -- str-find: not found
-"hello" "xyz" str-find -1 eq assert
+"hello" "xyz" str-find none eq assert
 
 -- str-find: at beginning
-"hello world" "hello" str-find 0 eq assert
+"hello world" "hello" str-find must 0 eq assert
 
 -- str-find: at end
-"hello world" "world" str-find 6 eq assert
+"hello world" "world" str-find must 6 eq assert
 
 -- str-find: middle
-"abcdef" "cd" str-find 2 eq assert
+"abcdef" "cd" str-find must 2 eq assert
 
 -- str-split: delimiter not found returns single element
 "hello" "," str-split len 1 eq assert
-"hello" "," str-split first "hello" eq assert
+"hello" "," str-split first must "hello" eq assert
 
 -- str-split: empty string
 "" "," str-split len 1 eq assert
@@ -1386,37 +1386,37 @@ millis millis swap sub 0 lt not assert
 -- str-split: consecutive delimiters produce empty middle segment
 "a,,b" "," str-split 'parts let
 parts len 3 eq assert
-parts 1 get len 0 eq assert
+parts 1 get must len 0 eq assert
 -- str-split: leading and trailing delimiters produce empty ends
 ",a,b," "," str-split 'parts2 let
 parts2 len 4 eq assert
-parts2 0 get len 0 eq assert
-parts2 3 get len 0 eq assert
+parts2 0 get must len 0 eq assert
+parts2 3 get must len 0 eq assert
 -- str-find: needle longer than haystack → -1
-"hi" "hello" str-find -1 eq assert
+"hi" "hello" str-find none eq assert
 -- int-str round-trip on large magnitude
 9999999999 int-str "9999999999" eq assert
 
 -- ===== Adversarial: larger file I/O round-trip =====
 
 -- 1 KiB buffer via range + byte mask, write + read back
-"_test_fs.bin" 0 1024 range (255 band) map write
-"_test_fs.bin" read 'buf let
+"_test_fs.bin" 0 1024 range (255 band) map write must drop
+"_test_fs.bin" read must 'buf let
 buf len 1024 eq assert
-buf 0 get 0 eq assert
-buf 255 get 255 eq assert
-buf 256 get 0 eq assert
-buf 500 get 244 eq assert
-buf 1023 get 255 eq assert
+buf 0 get must 0 eq assert
+buf 255 get must 255 eq assert
+buf 256 get must 0 eq assert
+buf 500 get must 244 eq assert
+buf 1023 get must 255 eq assert
 
 -- index-of: direct multi-slot needle with colliding prefix (regresses the POP_VAL fix)
-[[1 2] [1 3] [1 4]] [1 3] index-of 1 eq assert
-[[1 2] [1 3] [1 4]] [9 9] index-of -1 eq assert
+[[1 2] [1 3] [1 4]] [1 3] index-of must 1 eq assert
+[[1 2] [1 3] [1 4]] [9 9] index-of none eq assert
 
 -- ls: positive + negative assertions on the tests directory
-"tests" ls 'entries let
-entries "expect.slap" index-of -1 eq not assert
-entries "definitely_not_a_real_file.slap" index-of -1 eq assert
+"tests" ls must 'entries let
+entries "expect.slap" member assert
+entries "definitely_not_a_real_file.slap" member not assert
 
 -- ===== Adversarial coverage =====
 
@@ -1429,15 +1429,15 @@ entries "definitely_not_a_real_file.slap" index-of -1 eq assert
 
 -- record edit inside box mutate, repeated
 {'count 0} box
-  ('count (1 plus) edit) mutate
-  ('count (1 plus) edit) mutate
-  ('count (1 plus) edit) mutate
-  () lend 'count at 3 eq assert
+  ('count (1 plus) edit must) mutate
+  ('count (1 plus) edit must) mutate
+  ('count (1 plus) edit must) mutate
+  () lend 'count at must 3 eq assert
   free
 
 -- deeply nested records: 4 levels, at-chain to the leaf
 {'a {'b {'c {'d 10}}}} 'nest4 let
-nest4 'a at 'b at 'c at 'd at 10 eq assert
+nest4 'a at must 'b at must 'c at must 'd at must 10 eq assert
 
 -- stack combinator shapes: assert exact order after chained ops
 -- 1 2 3 4 over over over  ==>  1 2 3 4 3 4 3
@@ -1465,6 +1465,50 @@ nest4 'a at 'b at 'c at 'd at 10 eq assert
 
 -- large-but-legal list: closed-form sum
 0 5000 range sum 12497500 eq assert
+
+-- ===== Result Types (ok/no monadic chaining) =====
+
+-- pop returns tagged
+[1 2 3] pop must 3 eq assert
+[] pop none eq assert
+
+-- get returns tagged
+[10 20 30] 1 get must 20 eq assert
+[10 20 30] 5 get none eq assert
+[10 20 30] -1 get none eq assert
+
+-- monadic chaining with then/default
+[] pop (1 plus) then -1 default -1 eq assert
+[1 2 3] pop (1 plus) then -1 default 4 eq assert
+[10 20 30] 0 get (10 plus) then -1 default 20 eq assert
+[10 20 30] 5 get (10 plus) then -1 default -1 eq assert
+
+-- set returns tagged
+[1 2 3] 1 99 set must [1 99 3] eq assert
+[1 2 3] 5 99 set none eq assert
+
+-- at returns tagged
+{'x 10 'y 20} 'x at must 10 eq assert
+{'x 10 'y 20} 'z at none eq assert
+
+-- index-of returns tagged
+[10 20 30] 20 index-of must 1 eq assert
+[10 20 30] 99 index-of none eq assert
+
+-- str-find returns tagged
+"hello world" "world" str-find must 6 eq assert
+"hello" "xyz" str-find none eq assert
+
+-- none definition
+none () no eq assert
+
+-- must on ok extracts value
+42 ok must 42 eq assert
+
+-- take-n/drop-n clamp instead of panic
+[1 2 3] 5 take-n [1 2 3] eq assert
+[1 2 3] -1 take-n list eq assert
+[1 2 3] 5 drop-n list eq assert
 
 -- ===== Done =====
 "All tests passed!" print

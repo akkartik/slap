@@ -53,7 +53,7 @@
 'build-num-helper recur (
   'bnh-k let 'bnh-idx let 'bnh-acc let
   bnh-k 0 ge (
-    bnh-acc 10 mul cds bnh-idx bnh-k digit-at get plus
+    bnh-acc 10 mul cds bnh-idx bnh-k digit-at get must plus
     bnh-idx bnh-k 1 sub build-num-helper
   ) (bnh-acc) if
 ) def

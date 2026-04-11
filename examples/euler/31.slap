@@ -2,15 +2,15 @@
 -- How many ways to make 200p using 1p,2p,5p,10p,20p,50p,100p,200p?
 -- Answer: 73682
 
-list 201 (0 give) repeat 0 1 set box 'ways let
+list 201 (0 give) repeat 0 1 set must box 'ways let
 
 [1 2 5 10 20 50 100 200] 'coins let
 
 -- uw-step: coin w j -> w' j'
 'uw-step (
   'uw-j let 'uw-w let 'uw-coin let
-  uw-w uw-j get uw-w uw-j uw-coin sub get plus 'uw-v let
-  uw-w uw-j uw-v set uw-j 1 plus
+  uw-w uw-j get must uw-w uw-j uw-coin sub get must plus 'uw-v let
+  uw-w uw-j uw-v set must uw-j 1 plus
 ) def
 
 -- update-ways: w coin -> w'
@@ -29,4 +29,4 @@ coins (
   ways (coin update-ways) mutate
 ) each
 
-ways (200 get) lend swap free print
+ways (200 get must) lend swap free print

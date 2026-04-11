@@ -17,13 +17,13 @@
     ps-pos factorial 'ps-fact let
     ps-rem ps-fact div 'ps-idx let
     ps-rem ps-fact mod 'ps-rem2 let
-    ps-digits ps-idx get 'ps-d let
+    ps-digits ps-idx get must 'ps-d let
     ps-result 10 mul ps-d plus
     ps-digits ps-idx take-n ps-digits ps-idx 1 plus drop-n cat
     ps-rem2 swap
     ps-pos 1 sub perm-step
   ) (
-    ps-result 10 mul ps-digits 0 get plus
+    ps-result 10 mul ps-digits 0 get must plus
   ) if
 ) def
 

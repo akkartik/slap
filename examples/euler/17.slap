@@ -11,26 +11,26 @@
   n 1000 eq (11) (
     0 'wl let
     n 100 ge (
-      ones n 100 div get 7 plus 'wl1 let
+      ones n 100 div get must 7 plus 'wl1 let
       n 100 mod 0 neq (wl1 3 plus) (wl1) if 'wl2 let
       n 100 mod 'n2 let
       n2 20 ge (
-        wl2 tens n2 10 div get plus ones n2 10 mod get plus
+        wl2 tens n2 10 div get must plus ones n2 10 mod get must plus
       ) (
         n2 10 ge (
-          wl2 teens n2 10 sub get plus
+          wl2 teens n2 10 sub get must plus
         ) (
-          n2 0 gt (wl2 ones n2 get plus) (wl2) if
+          n2 0 gt (wl2 ones n2 get must plus) (wl2) if
         ) if
       ) if
     ) (
       n 20 ge (
-        wl tens n 10 div get plus ones n 10 mod get plus
+        wl tens n 10 div get must plus ones n 10 mod get must plus
       ) (
         n 10 ge (
-          wl teens n 10 sub get plus
+          wl teens n 10 sub get must plus
         ) (
-          n 0 gt (wl ones n get plus) (wl) if
+          n 0 gt (wl ones n get must plus) (wl) if
         ) if
       ) if
     ) if

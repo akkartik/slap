@@ -1,5 +1,5 @@
 -- Project Euler #25: 1000-Digit Fibonacci Number
--- Index of first Fibonacci number with 1000+ digits
+-- Index of first must Fibonacci number with 1000+ digits
 -- Answer: 4782
 
 'pad-1100 (
@@ -17,7 +17,7 @@
   'ad-loop recur (
     'ad-j let 'ad-carry let
     ad-j ad-n lt (
-      'ad-a ad-j nth 'ad-b ad-j nth plus ad-carry plus 'ad-v let
+      'ad-a ad-j nth must 'ad-b ad-j nth must plus ad-carry plus 'ad-v let
       ad-v 10 mod give
       ad-v 10 div ad-j 1 plus ad-loop
     ) (

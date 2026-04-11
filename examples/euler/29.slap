@@ -18,7 +18,7 @@
   'cg-outer recur (
     'cg-ei let
     cg-ei cg-exps len lt (
-      cg-exps cg-ei get 2 cg-inner
+      cg-exps cg-ei get must 2 cg-inner
       cg-ei 1 plus cg-outer
     ) () if
   ) def

@@ -17,7 +17,7 @@
   (dup 13 lt)
   (
     'jj let
-    digits idx jj plus get mul
+    digits idx jj plus get must mul
     jj 1 plus
   )
   while

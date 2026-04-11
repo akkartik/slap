@@ -11,7 +11,7 @@
 'ip-check recur (
   'ipc-i let 'ipc-ds let
   ipc-i ipc-ds len 2 div lt (
-    ipc-ds ipc-i get ipc-ds ipc-ds len 1 sub ipc-i sub get eq
+    ipc-ds ipc-i get must ipc-ds ipc-ds len 1 sub ipc-i sub get must eq
     (ipc-ds ipc-i 1 plus ip-check) (0) if
   ) (1) if
 ) def

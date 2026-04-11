@@ -43,7 +43,7 @@
 'compute-mult-loop recur (
   'cml-i let 'cml-d let 'cml-digs let
   cml-i cml-digs len ge (0) (
-    cml-digs cml-i get cml-d eq (
+    cml-digs cml-i get must cml-d eq (
       cml-digs len 1 sub cml-i sub pow-10
       cml-digs cml-d cml-i 1 plus compute-mult-loop plus
     ) (

@@ -1,7 +1,7 @@
 -- Project Euler #41: Pandigital Prime
 -- Largest n-digit pandigital prime (digits 1..n used exactly once)
 -- Answer: 7652413
--- Note: 8 and 9 digit pandigitals have digit sums divisible by 3, so check 7 first.
+-- Note: 8 and 9 digit pandigitals have digit sums divisible by 3, so check 7 first must.
 
 'is-prime (
   'ip-n let
@@ -22,11 +22,11 @@
   0 (swap 10 mul plus) fold
 ) def
 
--- list-swap: list i j -> list  (swap elements at i and j)
+-- list-swap: list i j -> list  (swap elements at must i and j)
 'list-swap (
   'lsw-j let 'lsw-i let 'lsw-l let
-  lsw-l lsw-i get 'lsw-tmp let
-  lsw-l lsw-i lsw-l lsw-j get set lsw-j lsw-tmp set
+  lsw-l lsw-i get must 'lsw-tmp let
+  lsw-l lsw-i lsw-l lsw-j get must set must lsw-j lsw-tmp set must
 ) def
 
 -- prev-perm-apply: perm i -> new-perm
@@ -35,7 +35,7 @@
   'pa-i let 'pa-perm let
   -- Find rightmost j > i where perm[j] < perm[i]
   pa-perm len 1 sub
-  (pa-perm over get pa-perm pa-i get ge) (1 sub) while
+  (pa-perm over get must pa-perm pa-i get must ge) (1 sub) while
   'pa-j let
   -- Swap i and j, then reverse suffix after i
   pa-perm pa-i pa-j list-swap 'pa-s let
@@ -44,7 +44,7 @@
 
 'descent-check (
   'dc-perm let 'dc-i let
-  dc-i 0 ge (dc-perm dc-i get dc-perm dc-i 1 plus get le) (0) if
+  dc-i 0 ge (dc-perm dc-i get must dc-perm dc-i 1 plus get must le) (0) if
 ) def
 
 'prev-perm (

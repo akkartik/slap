@@ -26,7 +26,7 @@
     0
     (dup 8 lt) (
       dup 'row let
-      raw base ti 8 mul plus row plus get
+      raw base ti 8 mul plus row plus get must
       tx ty row plus dc draw-byte
       1 plus
     ) while
@@ -43,8 +43,8 @@
   (dup str len lt) (
     dup 'si let
     swap 'cx-cur let
-    str si get 'ch let
-    raw ch get 'w let
+    str si get must 'ch let
+    raw ch get must 'w let
     w 0 gt (
       raw n ch cx-cur sy dc draw-char
       cx-cur w plus 1 plus
@@ -56,8 +56,8 @@
 ) def
 
 -- Fonts
-"fonts/geneva12.uf2" read 'body-font let
-"fonts/chicago12.uf2" read 'chic let
+"fonts/geneva12.uf2" read must 'body-font let
+"fonts/chicago12.uf2" read must 'chic let
 2 'FN let
 FN 8 mul 'FH let
 FH 2 plus 'LH let
@@ -73,35 +73,35 @@ rec list 'before into list 'after into
 
 -- File I/O
 args 'argv let
-argv len 0 gt (argv 0 get) ("") if 'fpath let
+argv len 0 gt (argv 0 get must) ("") if 'fpath let
 argv len 0 gt (
-  fpath read 'fbytes let
+  fpath read must 'fbytes let
   'before (
     0
     (dup fbytes len lt) (
       dup 'fi let
-      ('fbytes fi nth give) dip
+      ('fbytes fi nth must give) dip
       1 plus
     ) while
     drop
-  ) edit
+  ) edit must
 ) () if
 
 'do-save (
   argv len 0 gt (
-    dup 'before at 'sav-bef let
-    dup 'after at 'sav-aft let
+    dup 'before at must 'sav-bef let
+    dup 'after at must 'sav-aft let
     list 0
     (dup sav-bef len lt) (
       dup 'wi let
-      ('sav-bef wi nth give) dip
+      ('sav-bef wi nth must give) dip
       1 plus
     ) while
     drop
     sav-aft len 1 sub
     (dup 0 ge) (
       dup 'wj let
-      ('sav-aft wj nth give) dip
+      ('sav-aft wj nth must give) dip
       1 sub
     ) while
     drop
@@ -164,13 +164,13 @@ argv len 0 gt (
   (dup bef len lt) (
     dup 'ri let
     rot 'rcx-cur let swap 'rcy-cur let
-    'bef ri nth 'rch let
+    'bef ri nth must 'rch let
     rch 10 eq (
       PAD-X rcy-cur LH plus
     ) (
       rcy-cur 480 lt (
         body-font FN rch rcx-cur rcy-cur 0 draw-char
-        rcx-cur body-font rch get plus 1 plus 'rcx-new let
+        rcx-cur body-font rch get must plus 1 plus 'rcx-new let
         rcx-new PAD-X TW plus gt
           (PAD-X rcy-cur LH plus) (rcx-new rcy-cur) if
       ) (rcx-cur rcy-cur) if
@@ -191,13 +191,13 @@ argv len 0 gt (
   (dup 0 ge) (
     dup 'ra let
     rot 'rcx-cur let swap 'rcy-cur let
-    'aft ra nth 'rch let
+    'aft ra nth must 'rch let
     rch 10 eq (
       PAD-X rcy-cur LH plus
     ) (
       rcy-cur 480 lt (
         body-font FN rch rcx-cur rcy-cur 0 draw-char
-        rcx-cur body-font rch get plus 1 plus 'rcx-new let
+        rcx-cur body-font rch get must plus 1 plus 'rcx-new let
         rcx-new PAD-X TW plus gt
           (PAD-X rcy-cur LH plus) (rcx-new rcy-cur) if
       ) (rcx-cur rcy-cur) if
@@ -213,19 +213,19 @@ argv len 0 gt (
   'my let 'mx let
   my PAD-Y ge (
     -- Build full text: before + reversed after
-    dup 'before at 'mbef let
-    dup 'after at 'maft let
+    dup 'before at must 'mbef let
+    dup 'after at must 'maft let
     list 0
     (dup mbef len lt) (
       dup 'mfi let
-      ('mbef mfi nth give) dip
+      ('mbef mfi nth must give) dip
       1 plus
     ) while
     drop
     maft len 1 sub
     (dup 0 ge) (
       dup 'mfj let
-      ('maft mfj nth give) dip
+      ('maft mfj nth must give) dip
       1 sub
     ) while
     drop
@@ -237,20 +237,20 @@ argv len 0 gt (
     (dup full len lt) (
       dup 'hi let
       swap 'ws let
-      'full hi nth 'hch let
-      mx ws 'hx at sub dup mul my ws 'hy at sub dup mul plus 'hd let
-      hd ws 'bestd at lt
+      'full hi nth must 'hch let
+      mx ws 'hx at must sub dup mul my ws 'hy at must sub dup mul plus 'hd let
+      hd ws 'bestd at must lt
         (ws hi 'best into hd 'bestd into)
         (ws)
       if
       hch 10 eq (
-        PAD-X 'hx into 'hy (LH plus) edit
+        PAD-X 'hx into 'hy (LH plus) edit must
       ) (
-        body-font hch get 'hw let
+        body-font hch get must 'hw let
         hw 0 gt (
-          'hx (hw plus 1 plus) edit
-          dup 'hx at PAD-X TW plus gt (
-            PAD-X 'hx into 'hy (LH plus) edit
+          'hx (hw plus 1 plus) edit must
+          dup 'hx at must PAD-X TW plus gt (
+            PAD-X 'hx into 'hy (LH plus) edit must
           ) () if
         ) () if
       ) if
@@ -260,15 +260,15 @@ argv len 0 gt (
     drop
     -- Check end-of-text position
     'ws-end let
-    mx ws-end 'hx at sub dup mul my ws-end 'hy at sub dup mul plus 'end-d let
-    end-d ws-end 'bestd at lt
-      (full len) (ws-end 'best at) if
+    mx ws-end 'hx at must sub dup mul my ws-end 'hy at must sub dup mul plus 'end-d let
+    end-d ws-end 'bestd at must lt
+      (full len) (ws-end 'best at must) if
     'best-pos let
-    -- Rebuild gap buffer at best-pos
+    -- Rebuild gap buffer at must best-pos
     list 0
     (dup best-pos lt) (
       dup 'rbi let
-      ('full rbi nth give) dip
+      ('full rbi nth must give) dip
       1 plus
     ) while
     drop
@@ -276,7 +276,7 @@ argv len 0 gt (
     list full len 1 sub
     (dup best-pos ge) (
       dup 'raj let
-      ('full raj nth give) dip
+      ('full raj nth must give) dip
       1 sub
     ) while
     drop
@@ -288,40 +288,40 @@ argv len 0 gt (
 'keydown (
   'key let
   key 8 eq (
-    dup 'before at len 0 gt (
-      dup 'before at grab drop 'before into do-save
+    dup 'before at must len 0 gt (
+      dup 'before at must grab drop 'before into do-save
     ) () if
   ) (
   key 13 eq (
-    'before (10 give) edit do-save
+    'before (10 give) edit must do-save
   ) (
   key 127 eq (
-    dup 'after at len 0 gt (
-      dup 'after at grab drop 'after into do-save
+    dup 'after at must len 0 gt (
+      dup 'after at must grab drop 'after into do-save
     ) () if
   ) (
   key 1073741904 eq (
-    dup 'before at len 0 gt (
-      dup 'before at grab 'mc let 'before into
-      'after (mc give) edit
+    dup 'before at must len 0 gt (
+      dup 'before at must grab 'mc let 'before into
+      'after (mc give) edit must
     ) () if
   ) (
   key 1073741903 eq (
-    dup 'after at len 0 gt (
-      dup 'after at grab 'mc let 'after into
-      'before (mc give) edit
+    dup 'after at must len 0 gt (
+      dup 'after at must grab 'mc let 'after into
+      'before (mc give) edit must
     ) () if
   ) (
     key 32 ge key 127 lt and (
-      'before (key give) edit do-save
+      'before (key give) edit must do-save
     ) () if
   ) if) if) if) if) if
 ) on
 
 (
   drop
-  dup 'before at 'show-bef let
-  dup 'after at 'show-aft let
+  dup 'before at must 'show-bef let
+  dup 'after at must 'show-aft let
   3 clear
   draw-titlebar
   draw-torn

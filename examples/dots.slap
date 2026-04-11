@@ -18,14 +18,14 @@ rec
 
 'mousemove (
   'mmy let 'mmx let
-  'mx (drop mmx) edit 'my (drop mmy) edit
+  'mx (drop mmx) edit must 'my (drop mmy) edit must
 ) on
 
 'update-dot (
   'frame let 'i let 'st let
-  st 'xs at i get 'x let  st 'ys at i get 'y let
-  st 'vxs at i get 'vx let  st 'vys at i get 'vy let
-  st 'mx at 'mxv let  st 'my at 'myv let
+  st 'xs at must i get must 'x let  st 'ys at must i get must 'y let
+  st 'vxs at must i get must 'vx let  st 'vys at must i get must 'vy let
+  st 'mx at must 'mxv let  st 'my at must 'myv let
 
   x mxv sub 'dx let  y myv sub 'dy let
   dx dx mul dy dy mul plus 'dist2 let
@@ -47,11 +47,11 @@ rec
 
   -- When nearly stopped, sneak back home directly
   vx3 abs vy3 abs plus 2 lt (
-    hxs i get x2 sub 'hdx let
-    hys i get y2 sub 'hdy let
+    hxs i get must x2 sub 'hdx let
+    hys i get must y2 sub 'hdy let
     hdx abs hdy abs plus 'hd let
     hd 1 lt (
-      hxs i get hys i get
+      hxs i get must hys i get must
     ) (
       frame i 7 mul plus 3 mod 0 eq (
         x2 hdx sign plus
@@ -62,8 +62,8 @@ rec
   'yf let 'xf let
 
   st
-  'xs (i xf set) edit 'ys (i yf set) edit
-  'vxs (i vx3 set) edit 'vys (i vy3 set) edit
+  'xs (i xf set must) edit must 'ys (i yf set must) edit must
+  'vxs (i vx3 set must) edit must 'vys (i vy3 set must) edit must
 ) def
 
 'tick-loop recur (
@@ -76,8 +76,8 @@ rec
 
 'tick (
   drop
-  'frame (1 plus) edit
-  dup 'frame at 'fr let
+  'frame (1 plus) edit must
+  dup 'frame at must 'fr let
   0 fr tick-loop
 ) on
 
@@ -90,11 +90,11 @@ rec
 'draw-dots recur (
   'frame let 'st let 'i let
   i N lt (
-    st 'xs at i get 'x let  st 'ys at i get 'y let
-    st 'mx at 'mxv let  st 'my at 'myv let
+    st 'xs at must i get must 'x let  st 'ys at must i get must 'y let
+    st 'mx at must 'mxv let  st 'my at must 'myv let
     x mxv sub 'dx let  y myv sub 'dy let
     dx dx mul dy dy mul plus 'dist2 let
-    x hxs i get sub abs y hys i get sub abs plus 'hd let
+    x hxs i get must sub abs y hys i get must sub abs plus 'hd let
 
     dist2 6400 lt mxv -1 neq and (
       x y 3 1 draw-sq
@@ -111,7 +111,7 @@ rec
 (
   drop
   dup 'st let
-  st 'frame at 'fr let
+  st 'frame at must 'fr let
   0 clear
   0 st fr draw-dots
 ) show

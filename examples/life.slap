@@ -11,14 +11,14 @@ N 'I-DRAW let
 N 1 plus 'I-MX let
 N 2 plus 'I-MY let
 
--- Look up cell at wrapped (x, y) via nth (no grid copy)
+-- Look up cell at must wrapped (x, y) via nth must (no grid copy)
 'cell (
   H plus H mod W mul
   swap W plus W mod
-  plus nth
+  plus nth must
 ) def
 
--- Count live neighbors of (x, y); gs is a symbol for nth
+-- Count live neighbors of (x, y); gs is a symbol for nth must
 'neighbors (
   'cy let 'cx let 'gs let
   gs cx 1 sub cy 1 sub cell
@@ -34,15 +34,15 @@ N 2 plus 'I-MY let
 -- Compute next generation
 'step (
   'g let
-  'g I-DRAW nth 'dv let
-  'g I-MX nth 'mxv let
-  'g I-MY nth 'myv let
+  'g I-DRAW nth must 'dv let
+  'g I-MX nth must 'mxv let
+  'g I-MY nth must 'myv let
   list 0
   (dup N lt)
   (
     dup W divmod 'y let 'x let
     'g x y neighbors 'n let
-    'g over nth 1 eq
+    'g over nth must 1 eq
       (n 2 eq n 3 eq or)
       (n 3 eq)
     if
@@ -76,39 +76,39 @@ list N (2 random give) repeat
 -- Mouse handlers
 'mousedown (
   S div 'mdy let S div 'mdx let
-  I-DRAW 1 set I-MX mdx set I-MY mdy set
-  mdy W mul mdx plus 1 set
+  I-DRAW 1 set must I-MX mdx set must I-MY mdy set must
+  mdy W mul mdx plus 1 set must
 ) on
 
 'mouseup (
   drop drop
-  I-DRAW 0 set
+  I-DRAW 0 set must
 ) on
 
 'mousemove (
   S div 'mmy let S div 'mmx let
-  I-MX mmx set I-MY mmy set
-  dup I-DRAW get 1 eq (
-    mmy W mul mmx plus 1 set
+  I-MX mmx set must I-MY mmy set must
+  dup I-DRAW get must 1 eq (
+    mmy W mul mmx plus 1 set must
   ) () if
 ) on
 
 -- Step on each tick (skip when drawing)
 'tick (
   drop
-  dup I-DRAW get 0 eq (step) () if
+  dup I-DRAW get must 0 eq (step) () if
 ) on
 
 -- Render
 (
   'sg let
   0 clear
-  'sg I-DRAW nth 'sdv let
-  'sg I-MX nth 'smxv let
-  'sg I-MY nth 'smyv let
+  'sg I-DRAW nth must 'sdv let
+  'sg I-MX nth must 'smxv let
+  'sg I-MY nth must 'smyv let
   0 (dup N lt) (
     dup 'ri let
-    'sg ri nth 1 eq (
+    'sg ri nth must 1 eq (
       ri W divmod draw-cell
     ) () if
     1 plus

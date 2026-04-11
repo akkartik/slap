@@ -29,7 +29,7 @@ test: slap
 	@./slap --check < tests/expect.slap
 	@python3 tests/run_panic.py
 	@python3 tests/run_type_errors.py
-	@echo 'args len 2 eq assert  args 0 get "hello" eq assert  args 1 get "world" eq assert' | ./slap hello world
+	@echo 'args len 2 eq assert  args 0 get must "hello" eq assert  args 1 get must "world" eq assert' | ./slap hello world
 	@echo 'args len 0 eq assert' | ./slap
 	@rm -f _test_fs.bin
 	@python3 tests/run_euler.py

@@ -25,7 +25,7 @@
 'grid let
 
 -- ga: row col -> value
-'ga ('col let 'row let grid row 20 mul col plus get) def
+'ga ('col let 'row let grid row 20 mul col plus get must) def
 
 -- check-all: best r c -> best'
 -- checks all 4 directions and returns max product seen

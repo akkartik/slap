@@ -64,7 +64,7 @@ encoded len 'elen let
   (dup elen lt (over 0 eq) (0) if)
   (
     'si-j let
-    'encoded si-j nth si-ep1 si-esig check-triple
+    'encoded si-j nth must si-ep1 si-esig check-triple
     dup 0 gt (nip) (drop) if
     si-j 1 plus
   ) while
@@ -75,7 +75,7 @@ encoded len 'elen let
 (dup elen lt (over 0 eq) (0) if)
 (
   'ei-i let
-  'encoded ei-i nth 'ei-ev let
+  'encoded ei-i nth must 'ei-ev let
   ei-ev 10000 div 'ei-esig let
   ei-ev 10000 mod 'ei-ep1 let
   ei-i 1 plus ei-ep1 ei-esig search-inner

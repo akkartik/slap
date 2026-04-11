@@ -263,7 +263,7 @@ static double pop_float(void) { Value v=spop(); if(v.tag==VAL_FLOAT) return v.as
 static uint32_t pop_sym(void) { Value v=spop(); if(v.tag==VAL_SYM) return v.as.sym; die("expected symbol, got %s",valtag_name(v.tag)); }
 typedef struct { int base; int slots; } ElemRef;
 static ElemRef compound_elem(Value *data, int total_slots, int len, int index) {
-    if (index < 0 || index >= len) die("index %d out of bounds (len %d)", index, len);
+    if (index < 0 || index >= len) { ElemRef ref = { -1, 0 }; return ref; }
     if (total_slots == len + 1) { ElemRef ref = { index, 1 }; return ref; }
     int elem_end = total_slots - 1, off = 0, sz = 0;
     for (int i = len - 1; i >= 0; i--) {
@@ -364,7 +364,7 @@ static uint32_t recur_sym = 0;
 static int recur_pending = 0;
 static int eval_depth = 0;
 #define EVAL_DEPTH_MAX 10000
-static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_UNTAG, S_DEFAULT;
+static uint32_t S_DEF, S_LET, S_RECUR, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_UNTAG, S_DEFAULT;
 static void syms_init(void);
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
@@ -381,25 +381,26 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,0,TC_NONE,0},
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
-    {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},{"match",0,3,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_SYM},
+    {"cond",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE},{"match",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_SYM},
     {"where",0,2,1,TC_LIST,0},{"find",0,2,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
-    {"untag",0,3,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
+    {"untag",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
     {"then",0,2,1,TC_TAGGED,HO_BODY_1TO1|HO_SCRUTINEE_TAGGED},
-    {"edit",0,3,1,TC_REC,HO_BODY_1TO1},
+    {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
 static HOEffect *ho_ops_find(uint32_t sym) { for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i]; return NULL; }
 static void syms_init(void) {
     S_DEF=sym_intern("def"); S_LET=sym_intern("let"); S_RECUR=sym_intern("recur");
     S_IF=sym_intern("if"); S_EFFECT=sym_intern("effect"); S_CHECK=sym_intern("check");
-    S_UNION=sym_intern("union"); S_OK=sym_intern("ok");
+    S_UNION=sym_intern("union"); S_OK=sym_intern("ok"); S_NO=sym_intern("no");
     S_UNTAG=sym_intern("untag"); S_DEFAULT=sym_intern("default");
     for (int i = 0; i < HO_OP_COUNT; i++) ho_ops[i].sym = sym_intern(ho_ops[i].name);
 }
 typedef struct {
     uint32_t type_var; TypeConstraint constraint, elem_constraint; OwnMode ownership; SlotDir direction;
+    uint32_t either_syms[4]; TypeConstraint either_types[4]; uint32_t either_tvars[4]; int either_count;
 } TypeSlot;
 #define TYPE_SLOTS_MAX 16
 typedef struct { TypeSlot slots[TYPE_SLOTS_MAX]; int slot_count; } TypeSig;
@@ -435,6 +436,36 @@ static TypeSig parse_type_annotation(Token *toks, int start, int end) {
         if (sig.slot_count >= TYPE_SLOTS_MAX) die("too many type slots");
         TypeSlot *slot = &sig.slots[sig.slot_count]; memset(slot, 0, sizeof(*slot));
         int slot_start = i;
+        /* handle {... } either pattern: {'ok type 'no type} either move out */
+        if (toks[i].tag == TOK_LBRACE) {
+            int brace_start = i;
+            int d = 1; i++;
+            while (i < end && d > 0) { if (toks[i].tag == TOK_LBRACE) d++; else if (toks[i].tag == TOK_RBRACE) d--; i++; }
+            /* parse variant pairs from brace: 'sym type 'sym type ... */
+            int ec = 0;
+            for (int b = brace_start + 1; b < i - 1 && ec < 4; ) {
+                if (toks[b].tag == TOK_SYM) {
+                    slot->either_syms[ec] = toks[b].as.sym; b++;
+                    if (b < i - 1 && toks[b].tag == TOK_LPAREN) {
+                        /* () means tuple/unit */
+                        slot->either_types[ec] = TC_TUPLE; b++;
+                        if (b < i - 1 && toks[b].tag == TOK_RPAREN) b++;
+                    } else if (b < i - 1 && toks[b].tag == TOK_SYM) {
+                        slot->either_types[ec] = TC_NONE;
+                        slot->either_tvars[ec] = toks[b].as.sym; b++;
+                    } else if (b < i - 1 && toks[b].tag == TOK_WORD) {
+                        const char *tn = sym_name(toks[b].as.sym);
+                        slot->either_types[ec] = parse_constraint(tn); b++;
+                    } else { slot->either_types[ec] = TC_NONE; }
+                    ec++;
+                } else b++;
+            }
+            slot->either_count = ec;
+            slot->constraint = TC_TAGGED;
+            /* skip 'either' keyword if present */
+            if (i < end && toks[i].tag == TOK_WORD && strcmp(sym_name(toks[i].as.sym), "either") == 0) i++;
+            slot_start = i;
+        }
         while (i < end) {
             if (toks[i].tag != TOK_WORD && toks[i].tag != TOK_SYM) break;
             const char *w = sym_name(toks[i].as.sym);
@@ -908,6 +939,17 @@ apply_sig:;
             else if (!tc_is_container(s->constraint)) { TypeConstraint r = tvar_resolve(tc, tv); if (r != TC_NONE) at->type = r; at->tvar_id = tv; if (r == TC_BOX) at->flags |= AT_LINEAR; }
         }}
         if (tc_is_container(s->constraint) && s->elem_constraint != TC_NONE && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_bind(tc, ef, s->elem_constraint, line); }
+        if (s->either_count > 0 && at->tvar_id > 0 && tc->union_count < UNION_MAX) {
+            int uid = ++tc->union_count; UnionDef *ud = &tc->unions[uid-1]; ud->count = s->either_count;
+            for (int e = 0; e < s->either_count; e++) {
+                ud->syms[e] = s->either_syms[e];
+                if (s->either_tvars[e] && s->either_types[e] == TC_NONE) {
+                    int tv = FIND_TVAR(s->either_tvars[e]);
+                    ud->types[e] = tv > 0 ? tvar_resolve(tc, tv) : TC_NONE;
+                } else ud->types[e] = s->either_types[e];
+            }
+            tc->tvars[tvar_find(tc, at->tvar_id)].union_id = uid;
+        }
     }
     #undef MAX_TVARS
 }
@@ -1092,8 +1134,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 }
             } else if (sym == S_UNTAG) {
                 int suid = 0;
-                if (tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED && tc->data[tc->sp-3].tvar_id > 0)
-                    suid = tc->tvars[tvar_find(tc, tc->data[tc->sp-3].tvar_id)].union_id;
+                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0)
+                    suid = tc->tvars[tvar_find(tc, tc->data[tc->sp-2].tvar_id)].union_id;
                 tc_check_word(tc, sym, t->line);
                 if (suid > 0 && i >= tc->user_start) {
                     UnionDef *ud = &tc->unions[suid-1]; int brace = tc_find_brace_before(toks, i);
@@ -1103,8 +1145,18 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 }
             } else if (sym == S_DEFAULT) {
                 TypeConstraint pt = TC_NONE;
-                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0)
-                    { int tp = tvar_content(tc, tc->data[tc->sp-2].tvar_id, TC_TAGGED); if (tp > 0) pt = tvar_resolve(tc, tp); }
+                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0) {
+                    int tid = tc->data[tc->sp-2].tvar_id;
+                    int tp = tvar_content(tc, tid, TC_TAGGED); if (tp > 0) pt = tvar_resolve(tc, tp);
+                    if (pt == TC_NONE) {
+                        int uid = tc->tvars[tvar_find(tc, tid)].union_id;
+                        if (uid > 0) { UnionDef *ud = &tc->unions[uid-1];
+                            for (int v = 0; v < ud->count; v++) if (ud->syms[v] == S_OK && ud->types[v] != TC_NONE) { pt = ud->types[v]; break; } }
+                    }
+                }
+                TypeConstraint ft = (tc->sp >= 1) ? tc->data[tc->sp-1].type : TC_NONE;
+                if (pt != TC_NONE && ft != TC_NONE && pt != ft && !tc_constraint_matches(pt, ft) && !tc_constraint_matches(ft, pt))
+                    tc_error(tc, t->line, 0, "'default' fallback type %s doesn't match 'ok payload type %s", constraint_name(ft), constraint_name(pt));
                 tc_check_word(tc, sym, t->line);
                 if (pt != TC_NONE && tc->sp > 0 && tc->data[tc->sp-1].type == TC_NONE) tc->data[tc->sp-1].type = pt;
             } else tc_check_word(tc, sym, t->line);
@@ -1188,21 +1240,18 @@ CMP2(lt, val_less(&stack[sp-bs-as],as,&stack[sp-bs],bs))
 static void prim_print(Frame *e){(void)e;if(sp<=0)die("print: stack underflow");Value top=stack[sp-1];int s=val_slots(top);val_print(&stack[sp-s],s,stdout);printf("\n");sp-=s;}
 static void prim_assert(Frame *e){(void)e;if(!pop_int())die("assertion failed");}
 static void prim_halt(Frame *e){(void)e;exit(0);}
-static void prim_random(Frame *e){(void)e;int64_t max=pop_int();if(max<=0)die("random: max must be positive");spush(val_int(rand()%max));}
-static void eval_default(Value *buf, int s, Value top, Value *scrut, int scrut_s, Frame *env) {
-    if (top.tag == VAL_TUPLE) {
-        if (scrut) { SPUSH(scrut,scrut_s); }
-        eval_body(buf, s, env);
-    } else { SPUSH(buf,s); }
-}
+static void prim_random(Frame *e){(void)e;int64_t max=pop_int();if(max<=0)max=1;spush(val_int(rand()%max));}
+static void push_ok(void) { spush(val_compound(VAL_TAGGED,S_OK,val_slots(stack[sp-1])+1)); }
+static void push_no(void) { spush(val_compound(VAL_TAGGED,S_NO,val_slots(stack[sp-1])+1)); }
+static void push_none(void) { spush(val_compound(VAL_TUPLE,0,1)); spush(val_compound(VAL_TAGGED,S_NO,2)); }
 static void prim_if(Frame *env) {
     POP_VAL(el); POP_BODY(then,"if");
     Value cond=spop(); if(cond.tag!=VAL_INT) die("if: condition must be int, got %s",valtag_name(cond.tag));
     if(cond.as.i) eval_body(then_buf,then_s,env);
-    else eval_default(el_buf,el_s,el_top,NULL,0,env);
+    else if(el_top.tag==VAL_TUPLE) eval_body(el_buf,el_s,env);
+    else { SPUSH(el_buf,el_s); }
 }
 #define POP_CLAUSES(label) \
-    POP_VAL(def); \
     Value clauses_top=stack[sp-1]; \
     if(clauses_top.tag!=VAL_TUPLE&&clauses_top.tag!=VAL_RECORD) die(label ": expected tuple or record of clauses, got %s", valtag_name(clauses_top.tag)); \
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len; \
@@ -1217,9 +1266,9 @@ static void prim_cond(Frame *env) {
         ElemRef body_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i+1);
         SPUSH(scrut_buf,scrut_s);
         eval_body(&clauses_buf[pred_ref.base],pred_ref.slots,env);
-        if(pop_int()){SPUSH(scrut_buf,scrut_s);eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);return;}
+        if(pop_int()){SPUSH(scrut_buf,scrut_s);eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);push_ok();return;}
     }
-    eval_default(def_buf,def_s,def_top,scrut_buf,scrut_s,env);
+    push_none();
 }
 static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag ct,
                             uint32_t ms, Value *pp, int pps, Frame *env) {
@@ -1235,8 +1284,9 @@ static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag c
 static void prim_match(Frame *env) {
     POP_CLAUSES("match");
     Value scrut=spop(); if(scrut.tag!=VAL_SYM) die("match: scrutinee must be a symbol, got %s", valtag_name(scrut.tag));
-    if(!dispatch_clauses("match",clauses_buf,clauses_s,clauses_len,clauses_top.tag,scrut.as.sym,NULL,0,env))
-        eval_default(def_buf,def_s,def_top,NULL,0,env);
+    if(dispatch_clauses("match",clauses_buf,clauses_s,clauses_len,clauses_top.tag,scrut.as.sym,NULL,0,env))
+        push_ok();
+    else push_none();
 }
 static void prim_tag(Frame *e) {
     (void)e;
@@ -1255,8 +1305,9 @@ static void prim_untag(Frame *env) {
     Value payload_buf[payload_s]; VCPY(payload_buf,&stack[sp-tagged_s],payload_s);
     uint32_t tag_sym=tagged_top.as.compound.len;
     sp-=tagged_s;
-    if(!dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
-        eval_default(def_buf,def_s,def_top,NULL,0,env);
+    if(dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
+        push_ok();
+    else push_none();
 }
 static void prim_then(Frame *env) {
     POP_BODY(body,"then");
@@ -1271,17 +1322,26 @@ static void prim_then(Frame *env) {
     }
     /* non-ok: leave tagged value untouched */
 }
-static void prim_default(Frame *env) {
-    POP_VAL(def);
+static void prim_default(Frame *e) {
+    (void)e; POP_VAL(def);
     Value top=stack[sp-1];
     if(top.tag!=VAL_TAGGED) die("default: expected tagged value, got %s", valtag_name(top.tag));
     int tagged_s=val_slots(top);
     if(top.as.compound.len==S_OK){
-        sp--; /* remove header, payload stays */
+        sp--;
     } else {
         sp-=tagged_s;
-        eval_default(def_buf,def_s,def_top,NULL,0,env);
+        SPUSH(def_buf,def_s);
     }
+}
+static void prim_must(Frame *e) {
+    (void)e; Value top=speek();
+    if(top.tag!=VAL_TAGGED) die("must: expected tagged value, got %s", valtag_name(top.tag));
+    if(top.as.compound.len==S_OK) { sp--; return; }
+    int ps=(int)top.as.compound.slots-1;
+    fprintf(stderr,"\n-- MUST FAILED ----------------------------\n\n    expected 'ok tagged, got '%s tagged\n",sym_name(top.as.compound.len));
+    if(ps>0){fprintf(stderr,"    payload: ");val_print(&stack[sp-ps-1],ps,stderr);fprintf(stderr,"\n");}
+    fprintf(stderr,"\n");exit(1);
 }
 static void prim_union(Frame *e) {
     (void)e;
@@ -1325,11 +1385,11 @@ static void prim_pop_op(Frame *e) {
     (void)e; Value top=speek(); if(top.tag==VAL_TAGGED) die("pop: cannot pop from tagged value");
     if(!is_compound(top.tag)) die("pop: expected compound, got %s",valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len;
-    if(len==0) die("pop: empty %s",tag==VAL_LIST?"list":tag==VAL_TUPLE?"tuple":"record");
+    if(len==0) { push_none(); return; }
     int base=sp-s; ElemRef last=compound_elem(&stack[base],s,len,len-1);
     Value eb[LOCAL_MAX]; VCPY(eb,&stack[base+last.base],last.slots);
     sp--; sp-=last.slots; spush(val_compound(tag,len-1,s-last.slots));
-    SPUSH(eb,last.slots);
+    SPUSH(eb,last.slots); push_ok();
 }
 static void prim_get(Frame *e) {
     (void)e; int64_t idx=pop_int(); Value top=speek();
@@ -1337,8 +1397,9 @@ static void prim_get(Frame *e) {
     if(!is_compound(top.tag)) die("get: expected compound, got %s", valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef ref=compound_elem(&stack[base],s,len,(int)idx);
+    if(ref.base<0) { sp-=s; push_none(); return; }
     Value eb[LOCAL_MAX]; VCPY(eb,&stack[base+ref.base],ref.slots);
-    sp-=s; SPUSH(eb,ref.slots);
+    sp-=s; SPUSH(eb,ref.slots); push_ok();
 }
 static void prim_replace_at(Frame *e) {
     (void)e; POP_VAL(v); int64_t idx=pop_int(); Value top=speek();
@@ -1346,10 +1407,11 @@ static void prim_replace_at(Frame *e) {
     if(!is_compound(top.tag)) die("set: expected compound, got %s", valtag_name(top.tag));
     ValTag tag=top.tag; int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
     ElemRef old_ref=compound_elem(&stack[base],s,len,(int)idx);
-    if(old_ref.slots==v_s){VCPY(&stack[base+old_ref.base],v_buf,v_s);return;}
+    if(old_ref.base<0) { push_none(); return; }
+    if(old_ref.slots==v_s){VCPY(&stack[base+old_ref.base],v_buf,v_s);push_ok();return;}
     Value tmp[LOCAL_MAX]; int ts=0;
     for(int i=0;i<len;i++){ElemRef r=compound_elem(&stack[base],s,len,i);Value *src=i==(int)idx?v_buf:&stack[base+r.base];int sz=i==(int)idx?v_s:r.slots;VCPY(&tmp[ts],src,sz);ts+=sz;}
-    sp=base; SPUSH(tmp,ts); spush(val_compound(tag,len,ts+1));
+    sp=base; SPUSH(tmp,ts); spush(val_compound(tag,len,ts+1)); push_ok();
 }
 static void prim_concat(Frame *e) {
     (void)e; Value t2=stack[sp-1]; if(t2.tag==VAL_TAGGED)die("concat: cannot concat tagged values");
@@ -1367,14 +1429,15 @@ static void prim_nth(Frame *env) {
     Value top=data[s-1]; if(!is_compound(top.tag)) die("nth: expected compound (tuple/list/record) bound to '%s, got %s", sym_name(sym), valtag_name(top.tag));
     int len=(int)top.as.compound.len;
     ElemRef ref=compound_elem(data,s,len,(int)idx);
-    SPUSH(&data[ref.base],ref.slots);
+    if(ref.base<0) { push_none(); return; }
+    SPUSH(&data[ref.base],ref.slots); push_ok();
 }
 static void prim_slice_n(int take) {
     int64_t n=pop_int(); Value top=speek();
     const char *label=take?"take-n":"drop-n";
     if(top.tag!=VAL_LIST) die("%s: expected list, got %s", label, valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s;
-    if(n<0||n>len) die("%s: n=%lld out of range (list len %d)", label, (long long)n, len);
+    if(n<0) n=0; if(n>len) n=len;
     Value tmp[LOCAL_MAX]; int tmp_sp=0;
     int start=take?0:(int)n, end_i=take?(int)n:len;
     for(int i=start;i<end_i;i++){ElemRef r=compound_elem(&stack[base],s,len,i);VCPY(&tmp[tmp_sp],&stack[base+r.base],r.slots);tmp_sp+=r.slots;}
@@ -1423,7 +1486,7 @@ static void prim_index_of(Frame *e) {
     (void)e; POP_VAL(val); Value top=speek(); if(top.tag!=VAL_LIST) die("index-of: expected list, got %s",valtag_name(top.tag));
     int s=val_slots(top),len=(int)top.as.compound.len,base=sp-s,r=-1;
     for(int i=0;i<len&&r<0;i++){ElemRef ref=compound_elem(&stack[base],s,len,i);if(val_equal(&stack[base+ref.base],ref.slots,val_buf,val_s))r=i;}
-    sp-=s; spush(val_int(r));
+    sp-=s; if(r<0) { push_none(); } else { spush(val_int(r)); push_ok(); }
 }
 static void prim_scan(Frame *env) {
     POP_BODY(fn,"scan"); POP_VAL(init); POP_LIST_BUF(list,"scan");
@@ -1439,9 +1502,9 @@ static void prim_at(Frame *env) {
     if(next.tag!=VAL_RECORD) die("at: expected record, got %s",valtag_name(next.tag));
     int s=val_slots(next),len=(int)next.as.compound.len,base=sp-s;
     int found; ElemRef ref=record_field(&stack[base],s,len,key,&found);
-    if(!found) die("at: key '%s' not found in record",sym_name(key));
+    if(!found) { sp-=s; push_none(); return; }
     Value vb[LOCAL_MAX]; VCPY(vb,&stack[base+ref.base],ref.slots);
-    sp-=s; SPUSH(vb,ref.slots);
+    sp-=s; SPUSH(vb,ref.slots); push_ok();
 }
 static void rec_set_field(int rb, int rs, int rl, uint32_t key, Value *nv, int ns, int add) {
     Value tmp[LOCAL_MAX]; int ts=0, replaced=0;
@@ -1462,12 +1525,13 @@ static void prim_into(Frame *e) {
 static void prim_edit(Frame *env) {
     POP_BODY(fn,"edit"); uint32_t key=pop_sym(); REC_PREAMBLE("edit");
     int found; ElemRef ref=record_field(&stack[rec_base],rec_s,rec_len,key,&found);
-    if(!found) die("edit: key '%s' not found in record",sym_name(key));
+    if(!found) { push_none(); return; }
     SPUSH(&stack[rec_base+ref.base],ref.slots);
     eval_body(fn_buf,fn_s,env);
     int ns=val_slots(stack[sp-1]);
     if(ns==ref.slots){VCPY(&stack[rec_base+ref.base],&stack[sp-ns],ns);sp-=ns;}
     else{Value nv[LOCAL_MAX];VCPY(nv,&stack[sp-ns],ns);sp-=ns;rec_set_field(rec_base,rec_s,rec_len,key,nv,ns,0);}
+    push_ok();
 }
 typedef struct BoxData { Value *data; int slots; } BoxData;
 static void prim_box(Frame *e){(void)e;Value top=stack[sp-1];int s=val_slots(top);BoxData *bd=malloc(sizeof(BoxData));bd->data=malloc(s*sizeof(Value));bd->slots=s;VCPY(bd->data,&stack[sp-s],s);sp-=s;Value v;v.tag=VAL_BOX;v.loc=0;v.as.box=bd;spush(v);}
@@ -1642,23 +1706,23 @@ static const char *BUILTIN_TYPES =
     "'itof [int lent in  float" MO "'ftoi [float lent in  int" MO
     "'fsqrt" F1E "'fsin" F1E "'fcos" F1E "'ftan" F1E "'ffloor" F1E "'fceil" F1E "'fround" F1E "'fexp" F1E "'flog" F1E
     "'fpow" F2E "'fatan2" F2E
-    "'list [list" MO "'len ['a sized lent in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  'a" MO
-    "'get ['a seq own in  int lent in  'a" MO "'nth [sym lent in  int lent in  'a" MO "'set ['a seq own in  int lent in  'a own in  'a seq" MO "'cat ['a seq own in  'a seq own in  'a seq" MO
+    "'list [list" MO "'len ['a sized lent in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect\n"
+    "'get ['a seq own in  int lent in  {'ok 'a 'no ()} either move out] effect\n'nth [sym lent in  int lent in  {'ok 'a 'no ()} either move out] effect\n'set ['a seq own in  int lent in  'a own in  {'ok 'a 'no ()} either move out] effect\n'cat ['a seq own in  'a seq own in  'a seq" MO
     "'take-n" LNE "'drop-n" LNE "'range [int lent in  int lent in  int list" MO "'sort ['a ord seq own in  'a ord seq" MO
-    "'reverse" L1E "'dedup" L1E "'index-of ['a list own in  'a lent in  int" MO "'select" LIE "'pick" LIE "'keep-mask" LIE
+    "'reverse" L1E "'dedup" L1E "'index-of ['a list own in  'a lent in  {'ok int 'no ()} either move out] effect\n'select" LIE "'pick" LIE "'keep-mask" LIE
     "'rise" LGE "'fall" LGE "'shape" LGE "'classify" LGE "'stack [tuple" MO "'compose [tuple own in  tuple own in  tuple" MO "'rec [rec" MO
     "'random [int lent in  int" MO "'halt [] effect\n'box ['a own in  'a box" MO "'free ['a box own in] effect\n"
-    "'at [rec own in  sym lent in " MO "'into [rec own in  own in  sym lent in  rec" MO "'clone ['a box own in  'a box move out  'a box" MO
+    "'at [rec own in  sym lent in  {'ok 'a 'no ()} either move out] effect\n'into [rec own in  own in  sym lent in  rec" MO "'clone ['a box own in  'a box move out  'a box" MO
     "'clear [int lent in] effect\n'pixel [int lent in  int lent in  int lent in] effect\n'fill-rect [int lent in  int lent in  int lent in  int lent in  int lent in] effect\n"
     "'rotate" LNE "'windows" LNE "'zip ['a list own in  'a list own in  list" MO "'group" LDE "'reshape" LDE "'transpose [list own in  list" MO
-    "'read [list own in  int list" MO "'write [list own in  int list own in] effect\n'ls [list own in  list" MO
-    "'utf8-encode [int list own in  int list" MO "'utf8-decode [int list own in  int list" MO "'str-find [int list own in  int list own in  int" MO
-    "'str-split [int list own in  int list own in  list" MO "'parse-http [int list own in  int move out  list move out  int list" MO "'args [list" MO "'isheadless [int" MO "'cwd [list" MO
+    "'read [list own in  {'ok list 'no list} either move out] effect\n'write [list own in  int list own in  {'ok int 'no list} either move out] effect\n'ls [list own in  {'ok list 'no list} either move out] effect\n"
+    "'utf8-encode [int list own in  {'ok list 'no int} either move out] effect\n'utf8-decode [int list own in  {'ok list 'no int} either move out] effect\n'str-find [int list own in  int list own in  {'ok int 'no ()} either move out] effect\n"
+    "'str-split [int list own in  int list own in  list" MO "'parse-http [int list own in  {'ok rec 'no list} either move out] effect\n'args [list" MO "'isheadless [int" MO "'cwd [list" MO
 #ifndef SLAP_WASM
-    "'tcp-connect [int list own in  int lent in  int box" MO "'tcp-send [int box own in  int list own in  int box" MO
-    "'tcp-recv [int box own in  int lent in  int box move out  int list" MO "'tcp-close [int box own in] effect\n'tcp-listen [int lent in  int box" MO "'tcp-accept [int box own in  int box move out  int box" MO
+    "'tcp-connect [int list own in  int lent in  {'ok box 'no list} either move out] effect\n'tcp-send [int box own in  int list own in  {'ok int 'no list} either move out] effect\n"
+    "'tcp-recv [int box own in  int lent in  int box move out  {'ok list 'no list} either move out] effect\n'tcp-close [int box own in] effect\n'tcp-listen [int lent in  {'ok box 'no list} either move out] effect\n'tcp-accept [int box own in  int box move out  {'ok box 'no list} either move out] effect\n"
 #endif
-    "'tag ['a own in  sym lent in  'a tagged" MO "'default [tagged own in  own in " MO
+    "'tag ['a own in  sym lent in  'a tagged" MO "'default [tagged own in  own in " MO "'must [tagged own in " MO
 ;
 #undef A2E
 #undef I2E
@@ -1677,38 +1741,38 @@ static const char *PRELUDE =
     "'inc (1 plus) [num lent in  num move out] effect def\n'dec (1 sub) [num lent in  num move out] effect def\n'neg (0 swap sub) [num lent in  num move out] effect def\n"
     "'max (over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'min (over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'abs (dup neg max) [num lent in  num move out] effect def\n"
     "'bi ('g swap def 'f swap def dup f swap g) def\n'keep ('f swap def dup f swap) def\n'repeat ('f swap def (dup 0 gt) (1 sub (f) dip) while drop) def\n"
-    "'select (swap 'data swap def (data swap get) map) def\n'pick (swap 'data swap def (data swap get) map) def\n'reduce (swap dup 0 get swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose map) def\n"
+    "'select (swap 'data swap def (data swap get must) map) def\n'pick (swap 'data swap def (data swap get must) map) def\n'reduce (swap dup 0 get must swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose map) def\n"
     "'sqr (dup mul) def\n'cube (dup dup mul mul) def\n'ispos (0 swap lt) def\n'isneg (0 lt) def\n'first (0 get) def\n'last (dup len 1 sub get) def\n'sum (0 (plus) fold) def\n'product (1 (mul) fold) def\n"
-    "'max-of (dup first (max) fold) def\n'min-of (dup first (min) fold) def\n'member (index-of -1 neq) def\n'couple (list rot push swap push) def\n"
+    "'max-of (dup first must (max) fold) def\n'min-of (dup first must (min) fold) def\n'member (index-of (drop 1) then 0 default) def\n'couple (list rot push swap push) def\n"
     "'isany (0 (or) fold) def\n'isall (1 (and) fold) def\n'flatten (list (cat) fold) def\n'sort-desc (sort reverse) def\n'fneg (0.0 swap sub) def\n"
     "'fabs (dup 0.0 lt (fneg) () if) def\n'frecip (1.0 swap div) def\n'fsign (dup 0.0 lt (drop -1.0) (dup 0.0 eq (drop 0.0) (drop 1.0) if) if) def\n'sign (dup 0 lt (drop -1) (dup 0 eq (drop 0) (drop 1) if) if) def\n"
     "'clamp (rot swap min max) def\n'fclamp (swap min max) def\n'lerp ((over sub) dip swap mul plus) def\n'isbetween (rot dup (rot swap le) dip rot rot ge and) def\n"
     "'iszero (0 eq) [int lent in  int move out] effect def\n'iseven (2 mod 0 eq) [int lent in  int move out] effect def\n'isodd (2 mod 0 neq) [int lent in  int move out] effect def\n'divides (mod 0 eq) [int lent in  int lent in  int move out] effect def\n"
-    "'ok ('ok tag) ['a own in  'a tagged move out] effect def\n'no ('no tag) ['a own in  'a tagged move out] effect def\n'times-i ('f swap def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) def\n"
+    "'ok ('ok tag) ['a own in  'a tagged move out] effect def\n'no ('no tag) ['a own in  'a tagged move out] effect def\n'none (() no) [tagged move out] effect def\n'times-i ('f swap def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) def\n"
     "3.14159265358979323846 'pi let\n6.28318530717958647692 'tau let\n2.71828182845904523536 'e let\n'rotate ('n let dup len 'ln let ln 0 eq not (n ln wrap 'nn let nn 0 eq not (dup ln nn sub take-n swap ln nn sub drop-n swap cat) () if) () if) def\n"
-    "'zip ('b swap def 'a swap def a len b len min 'n let 0 n range (dup a swap get swap b swap get couple) map) def\n"
+    "'zip ('b swap def 'a swap def a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) map) def\n"
     "'windows ('n let 'l swap def l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) map) if) def\n"
-    "'reshape ('dims swap def 'data swap def dims 0 get 'rows let dims 1 get 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get) map) map) def\n"
-    "'transpose ('m swap def m 0 get len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get c get) map) map) def\n"
-    "'keep-mask ('mask swap def 0 mask len range (mask swap get 0 neq) where select) def\n'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get g eq) where data swap select) map) def\n"
-    "'classify (dup 'l swap def (l swap index-of) map dup dedup 'u swap def (u swap index-of) map) def\n'byte-mask (255 band) def\n'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) map) def\n"
+    "'reshape ('dims swap def 'data swap def dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) map) map) def\n"
+    "'transpose ('m swap def m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) map) map) def\n"
+    "'keep-mask ('mask swap def 0 mask len range (mask swap get must 0 neq) where select) def\n'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) map) def\n"
+    "'classify (dup 'l swap def (l swap index-of must) map dup dedup 'u swap def (u swap index-of must) map) def\n'byte-mask (255 band) def\n'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) map) def\n"
     "'bits-byte (0 (swap 1 shl bor) fold) def\n'chunks ('n let list swap (dup len 0 eq not) (dup n take-n swap (push) dip n drop-n) while drop) def\n"
     "'icn-decode ((byte-bits) map flatten) def\n'icn-encode (8 chunks (bits-byte) map) def\n'chr-encode (8 chunks 'rows let rows ((1 band) map bits-byte) map rows ((1 shr 1 band) map bits-byte) map cat) def\n"
-    "'chr-decode ('data let data 8 take-n (byte-bits) map 'p0 let data 8 drop-n 8 take-n (byte-bits) map 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get c get p1 r get c get 1 shl bor) map) map flatten) def\n"
-    "'nmt-decode (3 chunks ('c let c 0 get c 1 get 8 shl bor 'addr let c 2 get 'color let rec addr 'addr into color 'color into) map) def\n'nmt-encode ((dup 'addr at dup byte-mask swap 8 shr byte-mask couple swap 'color at push) map flatten) def\n"
-    "'tga-decode ('data let data 12 get data 13 get 8 shl bor 'w let data 14 get data 15 get 8 shl bor 'h let data 16 get 'd let data 18 drop-n 'pixels let rec w 'width into h 'height into d 'depth into pixels 'pixels into) def\n"
-    "'tga-header ('px let 'd let 'h let 'w let list 0 push 0 push 2 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push w byte-mask push w 8 shr byte-mask push h byte-mask push h 8 shr byte-mask push d push 0 push px cat) def\n'tga-encode (dup 'width at swap dup 'height at swap dup 'depth at swap 'pixels at tga-header) def\n"
-    "'gly-parse-rows recur ('input let 'cur let 'rows let 'maxw let input len 0 eq (cur len 0 eq not (cur len maxw max rows cur push) (maxw rows) if) (input first 'ch let input 1 drop-n 'rest let ch 10 eq (cur len maxw max rows cur push list rest gly-parse-rows) (ch 32 eq (cur 0 push) (cur ch 63 sub push) if 'ncur let maxw rows ncur rest gly-parse-rows) if) if) def\n"
-    "'gly-decode ('input let 0 list list input gly-parse-rows 'rows let 'maxw let rows len 'nrows let maxw 'w let nrows 4 mul 'h let list 0 h range ('y let 0 w range ('c let y 4 div 'r let y 4 mod 'bit let rows len r gt (rows r get dup len c gt (c get bit shr 1 band) (drop 0) if) (0) if push) each) each 'pixels let rec w 'width into h 'height into pixels 'pixels into) def\n"
-    "'gly-encode (dup 'width at 'w let dup 'height at 'h let 'pixels at 'px let h 4 div 'nrows let list 0 nrows range ('r let 0 w range ('c let 0 0 4 range ('bit let px r 4 mul bit plus w mul c plus get bit shl bor) each 63 plus push) each r nrows 1 sub lt (10 push) () if) each) def\n"
-    "'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) map 'glyphs let rec widths 'widths into glyphs 'glyphs into) def\n'ufx-encode (dup 'widths at swap 'glyphs at (icn-encode) map flatten cat) def\n"
-    "'ulz-decode ('src let list 0 (dup src len lt) (dup src swap get 'op let 1 plus op 128 band 0 eq (op 127 band 1 plus 'cnt let cnt (dup src swap get swap (push) dip 1 plus) repeat) (op 64 band 0 eq (op 63 band 4 plus 'lng let dup src swap get 1 plus 'off let 1 plus lng (swap dup dup len off sub get push swap) repeat) (op 63 band 8 shl (dup src swap get) dip swap bor 4 plus 'lng let 1 plus dup src swap get 1 plus 'off let 1 plus lng (swap dup dup len off sub get push swap) repeat) if) if) while drop) def\n"
+    "'chr-decode ('data let data 8 take-n (byte-bits) map 'p0 let data 8 drop-n 8 take-n (byte-bits) map 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) map) map flatten) def\n"
+    "'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) map) def\n'nmt-encode ((dup 'addr at must dup byte-mask swap 8 shr byte-mask couple swap 'color at must push) map flatten) def\n"
+    "'tga-decode ('data let data 12 get must data 13 get must 8 shl bor 'w let data 14 get must data 15 get must 8 shl bor 'h let data 16 get must 'd let data 18 drop-n 'pixels let rec w 'width into h 'height into d 'depth into pixels 'pixels into) def\n"
+    "'tga-header ('px let 'd let 'h let 'w let list 0 push 0 push 2 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push w byte-mask push w 8 shr byte-mask push h byte-mask push h 8 shr byte-mask push d push 0 push px cat) def\n'tga-encode (dup 'width at must swap dup 'height at must swap dup 'depth at must swap 'pixels at must tga-header) def\n"
+    "'gly-parse-rows recur ('input let 'cur let 'rows let 'maxw let input len 0 eq (cur len 0 eq not (cur len maxw max rows cur push) (maxw rows) if) (input first must 'ch let input 1 drop-n 'rest let ch 10 eq (cur len maxw max rows cur push list rest gly-parse-rows) (ch 32 eq (cur 0 push) (cur ch 63 sub push) if 'ncur let maxw rows ncur rest gly-parse-rows) if) if) def\n"
+    "'gly-decode ('input let 0 list list input gly-parse-rows 'rows let 'maxw let rows len 'nrows let maxw 'w let nrows 4 mul 'h let list 0 h range ('y let 0 w range ('c let y 4 div 'r let y 4 mod 'bit let rows len r gt (rows r get must dup len c gt (c get must bit shr 1 band) (drop 0) if) (0) if push) each) each 'pixels let rec w 'width into h 'height into pixels 'pixels into) def\n"
+    "'gly-encode (dup 'width at must 'w let dup 'height at must 'h let 'pixels at must 'px let h 4 div 'nrows let list 0 nrows range ('r let 0 w range ('c let 0 0 4 range ('bit let px r 4 mul bit plus w mul c plus get must bit shl bor) each 63 plus push) each r nrows 1 sub lt (10 push) () if) each) def\n"
+    "'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) map 'glyphs let rec widths 'widths into glyphs 'glyphs into) def\n'ufx-encode (dup 'widths at must swap 'glyphs at must (icn-encode) map flatten cat) def\n"
+    "'ulz-decode ('src let list 0 (dup src len lt) (dup src swap get must 'op let 1 plus op 128 band 0 eq (op 127 band 1 plus 'cnt let cnt (dup src swap get must swap (push) dip 1 plus) repeat) (op 64 band 0 eq (op 63 band 4 plus 'lng let dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) (op 63 band 8 shl (dup src swap get must) dip swap bor 4 plus 'lng let 1 plus dup src swap get must 1 plus 'off let 1 plus lng (swap dup dup len off sub get must push swap) repeat) if) if) while drop) def\n"
 #ifndef SLAP_WASM
     "'crlf (list 13 push 10 push) def\n'int-str-digits recur ('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) def\n"
-    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts first parts 1 drop-n (sep swap cat cat) each) if) def\n"
+    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts first must parts 1 drop-n (sep swap cat cat) each) if) def\n"
     "'http-request ('body let 'headers let 'path let 'host let 'method let method \" \" cat path cat \" HTTP/1.1\" cat crlf cat \"Host: \" cat host cat crlf cat headers cat body len 0 gt (\"Content-Length: \" cat body len int-str cat crlf cat) () if crlf cat body cat) def\n"
-    "'http-get ('path let 'port let 'host let host port tcp-connect \"GET\" host path list list http-request (swap tcp-send) dip swap list swap (swap 4096 tcp-recv 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http) def\n"
-    "'http-post ('body let 'content-type let 'path let 'port let 'host let host port tcp-connect \"Content-Type: \" content-type cat crlf cat 'ct-hdr let \"POST\" host path ct-hdr body http-request (swap tcp-send) dip swap list swap (swap 4096 tcp-recv 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http) def\n"
+    "'http-get ('path let 'port let 'host let host port tcp-connect must \"GET\" host path list list http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
+    "'http-post ('body let 'content-type let 'path let 'port let 'host let host port tcp-connect must \"Content-Type: \" content-type cat crlf cat 'ct-hdr let \"POST\" host path ct-hdr body http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
 #endif
 ;
 #define LIST_POP(who,buf,len,ts,offs,szs) do{ \
@@ -1866,26 +1930,27 @@ static void push_byte_list(const unsigned char *buf, size_t len) {
 }
 static void prim_read(Frame *e) {
     (void)e; char *path=pop_string_path("read");
-    FILE *f=fopen(path,"rb"); if(!f)die("read: cannot open '%s'",path);
+    FILE *f=fopen(path,"rb");
+    if(!f) { push_c_string(path); free(path); push_no(); return; }
     fseek(f,0,SEEK_END);long sz=ftell(f);fseek(f,0,SEEK_SET);
     unsigned char *buf=malloc(sz);size_t n=fread(buf,1,sz,f);fclose(f);
-    if((long)n!=sz){free(buf);free(path);die("read: short read on '%s'",path);}
-    push_byte_list(buf,n);free(buf);free(path);
+    if((long)n!=sz) { free(buf); push_c_string(path); free(path); push_no(); return; }
+    push_byte_list(buf,n);free(buf);free(path); push_ok();
 }
 static void prim_write(Frame *e) {
     (void)e; int len;unsigned char *buf=pop_byte_list_buf("write",&len);char *path=pop_string_path("write");
-    FILE *f=fopen(path,"wb");if(!f){free(buf);die("write: cannot open '%s'",path);}
+    FILE *f=fopen(path,"wb");if(!f){free(buf);push_c_string(path);free(path);push_no();return;}
     size_t n=fwrite(buf,1,len,f);fclose(f);
-    if((int)n!=len){free(buf);free(path);die("write: short write on '%s'",path);}
-    free(buf);free(path);
+    if((int)n!=len){free(buf);push_c_string(path);free(path);push_no();return;}
+    free(buf);free(path); spush(val_int(1)); push_ok();
 }
 static void prim_ls(Frame *e) {
     (void)e; char *path=pop_string_path("ls");
-    DIR *d=opendir(path); if(!d)die("ls: cannot open directory '%s'",path);
+    DIR *d=opendir(path); if(!d) { push_c_string(path); free(path); push_no(); return; }
     struct dirent *ent; int base=sp,count=0;
     while((ent=readdir(d))!=NULL){if(strcmp(ent->d_name,".")==0||strcmp(ent->d_name,"..")==0)continue;
         push_c_string(ent->d_name);count++;}
-    closedir(d);spush(val_compound(VAL_LIST,count,sp-base+1));free(path);
+    closedir(d);spush(val_compound(VAL_LIST,count,sp-base+1));free(path); push_ok();
 }
 static void prim_utf8_encode(Frame *e) {
     (void)e; Value top = spop(); if (top.tag != VAL_LIST) die("utf8-encode: expected list of codepoints, got %s", valtag_name(top.tag));
@@ -1895,24 +1960,24 @@ static void prim_utf8_encode(Frame *e) {
     sp -= len; int base = sp, bc = 0;
 #define PB(x) spush(val_int(x))
     for (int i = 0; i < len; i++) { int64_t cp = cps[i];
-        if (cp < 0 || cp > 0x10FFFF) { free(cps); die("utf8-encode: codepoint %lld out of range", (long long)cp); }
+        if (cp < 0 || cp > 0x10FFFF) { free(cps); sp=base; spush(val_int(i)); push_no(); return; }
         if (cp<0x80) { PB(cp); bc++; } else if (cp<0x800) { PB(0xC0|(cp>>6)); PB(0x80|(cp&0x3F)); bc+=2; }
         else if (cp<0x10000) { PB(0xE0|(cp>>12)); PB(0x80|((cp>>6)&0x3F)); PB(0x80|(cp&0x3F)); bc+=3; }
         else { PB(0xF0|(cp>>18)); PB(0x80|((cp>>12)&0x3F)); PB(0x80|((cp>>6)&0x3F)); PB(0x80|(cp&0x3F)); bc+=4; } }
 #undef PB
-    free(cps); spush(val_compound(VAL_LIST, bc, sp - base + 1));
+    free(cps); spush(val_compound(VAL_LIST, bc, sp - base + 1)); push_ok();
 }
 static void prim_utf8_decode(Frame *e) {
     (void)e; int len; unsigned char *bytes = pop_byte_list_buf("utf8-decode", &len);
     int base = sp, nc = 0, i = 0;
     while (i < len) { int64_t cp; int ex; unsigned char b = bytes[i];
         if (b<0x80){cp=b;ex=0;}else if((b&0xE0)==0xC0){cp=b&0x1F;ex=1;}else if((b&0xF0)==0xE0){cp=b&0x0F;ex=2;}
-        else if((b&0xF8)==0xF0){cp=b&0x07;ex=3;}else{free(bytes);die("utf8-decode: invalid lead byte 0x%02X at position %d",b,i);}
-        i++; for(int j=0;j<ex;j++){if(i>=len){free(bytes);die("utf8-decode: truncated sequence at position %d",i);}
-            if((bytes[i]&0xC0)!=0x80){free(bytes);die("utf8-decode: invalid continuation byte 0x%02X at position %d",bytes[i],i);}
+        else if((b&0xF8)==0xF0){cp=b&0x07;ex=3;}else{free(bytes);sp=base;spush(val_int(i));push_no();return;}
+        i++; for(int j=0;j<ex;j++){if(i>=len){free(bytes);sp=base;spush(val_int(i));push_no();return;}
+            if((bytes[i]&0xC0)!=0x80){free(bytes);sp=base;spush(val_int(i));push_no();return;}
             cp=(cp<<6)|(bytes[i]&0x3F);i++;}
         spush(val_int(cp)); nc++; }
-    free(bytes); spush(val_compound(VAL_LIST, nc, sp - base + 1));
+    free(bytes); spush(val_compound(VAL_LIST, nc, sp - base + 1)); push_ok();
 }
 
 #ifndef SLAP_WASM
@@ -1931,40 +1996,41 @@ static void prim_tcp_connect(Frame *e) {
     (void)e; int64_t port=pop_int(); char *host=pop_string_path("tcp-connect");
     struct addrinfo hints={0},*res; hints.ai_family=AF_UNSPEC; hints.ai_socktype=SOCK_STREAM;
     char ps[16]; snprintf(ps,sizeof(ps),"%lld",(long long)port);
-    int err=getaddrinfo(host,ps,&hints,&res); if(err){free(host);die("tcp-connect: getaddrinfo failed for '%s': %s",host,gai_strerror(err));}
-    int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol); if(fd<0){freeaddrinfo(res);free(host);die("tcp-connect: socket() failed");}
-    if(connect(fd,res->ai_addr,res->ai_addrlen)<0){close(fd);freeaddrinfo(res);free(host);die("tcp-connect: connect to '%s:%lld' failed",host,(long long)port);}
-    freeaddrinfo(res);free(host);push_socket_box(fd);
+    int err=getaddrinfo(host,ps,&hints,&res); if(err){free(host);push_c_string("getaddrinfo failed");push_no();return;}
+    int fd=socket(res->ai_family,res->ai_socktype,res->ai_protocol); if(fd<0){freeaddrinfo(res);free(host);push_c_string("socket failed");push_no();return;}
+    if(connect(fd,res->ai_addr,res->ai_addrlen)<0){close(fd);freeaddrinfo(res);free(host);push_c_string("connect failed");push_no();return;}
+    freeaddrinfo(res);free(host);push_socket_box(fd);push_ok();
 }
 static void prim_tcp_send(Frame *e) {
     (void)e; int len; unsigned char *buf = pop_byte_list_buf("tcp-send", &len);
     int fd = pop_socket_fd("tcp-send"); push_socket_box(fd);
-    size_t sent = 0; while (sent < (size_t)len) { ssize_t n = send(fd, buf + sent, len - sent, 0); if (n <= 0) { free(buf); die("tcp-send: send() failed"); } sent += n; }
-    free(buf);
+    size_t sent = 0; while (sent < (size_t)len) { ssize_t n = send(fd, buf + sent, len - sent, 0); if (n <= 0) { free(buf); push_c_string("send failed"); push_no(); return; } sent += n; }
+    free(buf); spush(val_int(1)); push_ok();
 }
 static void prim_tcp_recv(Frame *e) {
-    (void)e; int64_t maxlen = pop_int(); if (maxlen <= 0) die("tcp-recv: max length must be positive (got %lld)", (long long)maxlen);
+    (void)e; int64_t maxlen = pop_int(); if (maxlen <= 0) maxlen = 1;
     int fd = pop_socket_fd("tcp-recv"); push_socket_box(fd);
-    unsigned char *buf = malloc(maxlen); ssize_t n = recv(fd, buf, maxlen, 0); if (n < 0) { free(buf); die("tcp-recv: recv() failed"); }
-    push_byte_list(buf, n); free(buf);
+    unsigned char *buf = malloc(maxlen); ssize_t n = recv(fd, buf, maxlen, 0);
+    if (n < 0) { free(buf); push_c_string("recv failed"); push_no(); return; }
+    push_byte_list(buf, n); free(buf); push_ok();
 }
 static void prim_tcp_close(Frame *e) { (void)e; Value v=spop(); if(v.tag!=VAL_BOX)die("tcp-close: expected box"); BoxData *bd=(BoxData*)v.as.box; close((int)bd->data[0].as.i); free(bd->data); free(bd); }
 static void prim_tcp_listen(Frame *e) {
-    (void)e; int64_t port=pop_int(); int fd=socket(AF_INET,SOCK_STREAM,0); if(fd<0)die("tcp-listen: socket() failed");
+    (void)e; int64_t port=pop_int(); int fd=socket(AF_INET,SOCK_STREAM,0); if(fd<0){push_c_string("socket failed");push_no();return;}
     int opt=1;setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_addr.s_addr=INADDR_ANY;addr.sin_port=htons((uint16_t)port);
-    if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))<0){close(fd);die("tcp-listen: bind to port %lld failed",(long long)port);}
-    if(listen(fd,128)<0){close(fd);die("tcp-listen: listen() failed");} push_socket_box(fd);
+    if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))<0){close(fd);push_c_string("bind failed");push_no();return;}
+    if(listen(fd,128)<0){close(fd);push_c_string("listen failed");push_no();return;} push_socket_box(fd);push_ok();
 }
 static void prim_tcp_accept(Frame *e) {
     (void)e; int sfd=pop_socket_fd("tcp-accept"); struct sockaddr_in ca; socklen_t al=sizeof(ca);
-    int cfd=accept(sfd,(struct sockaddr*)&ca,&al); if(cfd<0)die("tcp-accept: accept() failed"); push_socket_box(sfd); push_socket_box(cfd);
+    int cfd=accept(sfd,(struct sockaddr*)&ca,&al); if(cfd<0){push_socket_box(sfd);push_c_string("accept failed");push_no();return;} push_socket_box(sfd); push_socket_box(cfd); push_ok();
 }
 #endif
 static void prim_str_find(Frame *e) {
     (void)e; int nl,hl; unsigned char *needle=pop_byte_list_buf("str-find",&nl); unsigned char *hay=pop_byte_list_buf("str-find",&hl);
     int r=-1; for(int i=0;i<=hl-nl;i++) if(memcmp(hay+i,needle,nl)==0){r=i;break;}
-    free(needle);free(hay);spush(val_int(r));
+    free(needle);free(hay); if(r<0) { push_none(); } else { spush(val_int(r)); push_ok(); }
 }
 static void prim_str_split(Frame *e) {
     (void)e; int dl,sl; unsigned char *delim=pop_byte_list_buf("str-split",&dl); unsigned char *str=pop_byte_list_buf("str-split",&sl);
@@ -1980,7 +2046,7 @@ static int memfind(const unsigned char *hay, int hlen, const char *needle, int n
 static void prim_parse_http(Frame *e) {
     (void)e; int rlen; unsigned char *raw=pop_byte_list_buf("parse-http",&rlen);
     int split=memfind(raw,rlen,"\r\n\r\n",4,0);
-    if(split<0){free(raw);die("parse-http: no header/body separator found");}
+    if(split<0){free(raw);push_c_string("no header/body separator");push_no();return;}
     int se=memfind(raw,split,"\r\n",2,0); if(se<0)se=split;
     int sp1=-1; for(int i=0;i<se;i++)if(raw[i]==' '){sp1=i;break;}
     int sc=0; if(sp1>=0)for(int i=sp1+1;i<se&&raw[i]>='0'&&raw[i]<='9';i++)sc=sc*10+(raw[i]-'0');
@@ -1997,6 +2063,8 @@ static void prim_parse_http(Frame *e) {
     }
     spush(val_compound(VAL_LIST,hc,sp-rb+1));
     push_byte_list(raw+split+4,rlen-split-4);free(raw);
+    int body_s=val_slots(stack[sp-1]),hdrs_s=val_slots(stack[sp-1-body_s]);
+    spush(val_compound(VAL_TAGGED,S_OK,1+hdrs_s+body_s+1));
 }
 static void push_c_string(const char *s) {
     int len=(int)strlen(s); for(int i=0;i<len;i++) spush(val_int((unsigned char)s[i])); spush(val_compound(VAL_LIST,len,len+1));
@@ -2031,7 +2099,7 @@ static void register_prims(void) {
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
         R(rec,rec),R(into,into),R(edit,edit),R(reverse,reverse),R(dedup,dedup),R(where,where),R(find,find_elem),
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
-        R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),
+        R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),R(must,must),
         R(read,read),R(write,write),R(ls,ls),
         {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},
         {"str-find",prim_str_find},{"str-split",prim_str_split},{"parse-http",prim_parse_http},

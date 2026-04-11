@@ -3,10 +3,10 @@
 -- C(40,20) using DP on a 21-element row
 
 -- upd-row: box j -> box (update row[j] = row[j] + row[j-1])
-'upd-row ('j let ('r let r j get r j 1 sub get plus 'v let r j v set) mutate) def
+'upd-row ('j let ('r let r j get must r j 1 sub get must plus 'v let r j v set must) mutate) def
 
 -- stack: box i
-list 21 (0 give) repeat 0 1 set box 1
+list 21 (0 give) repeat 0 1 set must box 1
 (dup 40 le)
 (
   -- stack: box i
@@ -28,4 +28,4 @@ list 21 (0 give) repeat 0 1 set box 1
 )
 while
 drop
-(20 get) lend swap free print
+(20 get must) lend swap free print

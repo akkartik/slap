@@ -22,42 +22,42 @@ rec
 
 'mousemove (
   'mmy let 'mmx let
-  'mx (drop mmx) edit 'my (drop mmy) edit
+  'mx (drop mmx) edit must 'my (drop mmy) edit must
 ) on
 
 'tick (
   drop
-  'frame (1 plus) edit
-  dup 'frame at 'frame let
+  'frame (1 plus) edit must
+  dup 'frame at must 'frame let
 
   -- Age ripples
   'rages (
     0 (dup NR lt) (
       'ri let
-      dup ri get -1 neq (ri over ri get 1 plus set) () if
+      dup ri get must -1 neq (ri over ri get must 1 plus set must) () if
       ri 1 plus
     ) while drop
-  ) edit
+  ) edit must
 
   -- Spawn ripple from mouse
-  dup 'mx at 'mxv let
+  dup 'mx at must 'mxv let
   frame 12 mod 0 eq mxv -1 neq and (
-    dup 'my at 'myv let
-    dup 'rnext at 'rn let
-    'rxs (rn mxv set) edit
-    'rys (rn myv set) edit
-    'rages (rn 0 set) edit
-    'rnext (drop rn 1 plus NR mod) edit
+    dup 'my at must 'myv let
+    dup 'rnext at must 'rn let
+    'rxs (rn mxv set must) edit must
+    'rys (rn myv set must) edit must
+    'rages (rn 0 set must) edit must
+    'rnext (drop rn 1 plus NR mod) edit must
   ) () if
 
   -- Update fish
   0 (dup N lt) (
     'i let
-    dup 'xs at i get 'x let  dup 'ys at i get 'y let
-    dup 'mx at 'fmx let  dup 'my at 'fmy let
-    dup 'xs at 'xsv let  dup 'ys at 'ysv let
+    dup 'xs at must i get must 'x let  dup 'ys at must i get must 'y let
+    dup 'mx at must 'fmx let  dup 'my at must 'fmy let
+    dup 'xs at must 'xsv let  dup 'ys at must 'ysv let
 
-    dup 'vxs at i get 'vx0 let  dup 'vys at i get 'vy0 let
+    dup 'vxs at must i get must 'vx0 let  dup 'vys at must i get must 'vy0 let
 
     -- Koi turning
     frame i 7 mul plus 3 mod 1 sub 'turn let
@@ -65,8 +65,8 @@ rec
     vy0 vx0 turn mul 8 div plus 'vy1 let
 
     -- Idle bias
-    vx1 bxs i get plus 'vx2 let
-    vy1 bys i get plus 'vy2 let
+    vx1 bxs i get must plus 'vx2 let
+    vy1 bys i get must plus 'vy2 let
 
     -- Flee from mouse
     x fmx sub 'dx let  y fmy sub 'dy let
@@ -82,8 +82,8 @@ rec
     (dup N lt) (
       'aj let
       aj i neq (
-        x xsv aj get sub 'fdx let
-        y ysv aj get sub 'fdy let
+        x xsv aj get must sub 'fdx let
+        y ysv aj get must sub 'fdy let
         fdx abs fdy abs plus 'fdist let
         fdist 30 lt fdist 0 gt and (
           (fdx sign 6 mul plus) dip
@@ -108,15 +108,15 @@ rec
     x fvx 8 div plus 640 wrap 'xf let
     y fvy 8 div plus 480 wrap 'yf let
 
-    'xs (i xf set) edit  'ys (i yf set) edit
-    'vxs (i fvx set) edit  'vys (i fvy set) edit
+    'xs (i xf set must) edit must  'ys (i yf set must) edit must
+    'vxs (i fvx set must) edit must  'vys (i fvy set must) edit must
     i 1 plus
   ) while drop
 ) on
 
 (
   drop
-  dup 'frame at 'frame let
+  dup 'frame at must 'frame let
 
   0 clear
 
@@ -133,14 +133,14 @@ rec
   ) while drop
 
   -- Ripples
-  dup 'rages at 'ragesv let
-  dup 'rxs at 'rxsv let
-  dup 'rys at 'rysv let
+  dup 'rages at must 'ragesv let
+  dup 'rxs at must 'rxsv let
+  dup 'rys at must 'rysv let
   0 (dup NR lt) (
-    dup ragesv swap get 'ra let
+    dup ragesv swap get must 'ra let
     ra -1 neq ra 35 lt and (
-      dup rxsv swap get 'rx let
-      dup rysv swap get 'ry let
+      dup rxsv swap get must 'rx let
+      dup rysv swap get must 'ry let
       ra 2 mul 1 plus 'rr let
       ra 15 lt (2) (1) if 'rc let
       rr neg (dup rr 1 plus lt) (
@@ -156,13 +156,13 @@ rec
   ) while drop
 
   -- Fish
-  dup 'xs at 'xsv let  dup 'ys at 'ysv let
-  dup 'vxs at 'vxsv let
+  dup 'xs at must 'xsv let  dup 'ys at must 'ysv let
+  dup 'vxs at must 'vxsv let
   0 (dup N lt) (
     'i let
-    xsv i get 'fx let  ysv i get 'fy let
-    vxsv i get 'fvx let
-    szs i get 'sz let
+    xsv i get must 'fx let  ysv i get must 'fy let
+    vxsv i get must 'fvx let
+    szs i get must 'sz let
 
     -- Body: diamond
     sz neg (dup sz 1 plus lt) (

@@ -49,13 +49,50 @@ Single-file C interpreter (`slap.c`). Pipeline: **lex → typecheck → eval**.
 `tag` wraps a value with a symbol tag: `123 'ok tag` → `VAL_TAGGED`. Prelude words `ok`/`no` are sugar for `'ok tag`/`'no tag`. Stack layout: `[...payload..., TAGGED_HEADER]` where header reuses `compound` struct with `compound.len` = tag symbol ID, `compound.slots` = total slots.
 
 - **`tag`**: `payload 'sym tag` — creates tagged value
-- **`untag`**: `tagged {'sym1 (body1) 'sym2 (body2)} default untag` — pattern match (like `match` but pushes payload before body)
+- **`untag`**: `tagged {'sym1 (body1) 'sym2 (body2)} untag` — pattern match, returns `result ok` or `none`. Pushes payload before body.
 - **`then`**: `tagged (body) then` — monadic chain (hardcoded `'ok`): unwrap, apply body, re-wrap. Non-ok passes through.
 - **`default`**: `tagged fallback default` — unwrap `'ok` payload, or drop tagged and push fallback.
 - **`union`**: `{'ok 'int 'no 'str} union` — runtime no-op, type annotation only. Drops the schema record.
 - **`ok`/`no`** (prelude): sugar for `'ok tag` / `'no tag`
+- **`none`** (prelude): sugar for `() no` — the empty error value
+- **`must`**: extract `'ok` payload, crash with clear error on `'no`. Used in prelude internals where failure is a bug.
 
 Tagged values are stackable (copyable). `untag` is an HO op with `HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED`. `then` is HO with `HO_BODY_1TO1`. Type constraint: `TC_TAGGED`.
+
+### Fallible operations (return tagged results)
+
+These operations return `value ok` on success and `() no` (or `payload no`) on failure instead of panicking:
+
+| Operation | Success | Failure | Notes |
+|-----------|---------|---------|-------|
+| `pop` | `element ok` | `none` | Empty list/tuple/record |
+| `get` | `element ok` | `none` | Index out of bounds |
+| `set` | `compound ok` | `none` | Index out of bounds |
+| `nth` | `element ok` | `none` | Index out of bounds |
+| `at` | `value ok` | `none` | Key not found |
+| `edit` | `record ok` | `none` | Key not found |
+| `index-of` | `index ok` | `none` | Element not found |
+| `str-find` | `position ok` | `none` | Substring not found |
+| `read` | `bytes ok` | `path no` | File open/read error |
+| `write` | `1 ok` | `path no` | File open/write error |
+| `ls` | `entries ok` | `path no` | Directory open error |
+| `utf8-encode` | `bytes ok` | `position no` | Invalid codepoint |
+| `utf8-decode` | `codepoints ok` | `position no` | Invalid byte sequence |
+| `tcp-connect` | `socket ok` | `message no` | Connection error |
+| `tcp-send` | `1 ok` | `message no` | Send error |
+| `tcp-recv` | `data ok` | `message no` | Receive error |
+| `tcp-listen` | `socket ok` | `message no` | Bind/listen error |
+| `tcp-accept` | `client ok` | `message no` | Accept error |
+| `parse-http` | `status headers body ok` | `message no` | Parse error |
+| `cond` | `result ok` | `none` | No predicate matched |
+| `match` | `result ok` | `none` | No symbol matched |
+| `untag` | `result ok` | `none` | No tag matched |
+
+Pattern: `[] pop (1 plus) then -1 default` → `-1` (empty list, default). `[1 2 3] pop (1 plus) then -1 default` → `4` (success path).
+
+`cond`, `match`, `untag` no longer take a default argument. Use `must`/`default`/`then` on the result.
+
+`take-n`/`drop-n` clamp to valid range instead of panicking. `random` clamps max to 1 minimum. `div`/`mod`/`divmod`/`wrap` still panic on zero (programmer errors).
 
 ### Type system
 
@@ -78,6 +115,19 @@ Protocol constraints in the type checker formalize which operations work on whic
 | Num | `num` (implies Ord) | int, float | `plus`, `sub`, `mul`, `div` |
 
 Hierarchy: Num ⊂ Ord ⊂ Eq. Seq ⊂ Sized. Protocols live entirely in the type checker (`tc_constraint_matches`). No runtime dispatch changes.
+
+### `either` type annotation
+
+Declares tagged variant types in effect annotations: `{'ok type 'no type} either`. Used to give precise types to fallible operations.
+
+```
+'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect
+'read [list own in  {'ok list 'no list} either move out] effect
+```
+
+Supports type variables (`'a`) that resolve against the sig's other slots. `default` enforces that the fallback value matches the `ok` payload type — `[1 2 3] pop () default` is a type error because `()` (tuple) doesn't match the list element type (int).
+
+Parsed in `parse_type_annotation`. Stored in `TypeSlot.either_syms/either_types/either_tvars`. Applied via `UnionDef` creation in `tc_check_word`.
 
 Canonical names for list ops: `push` (was `give`), `pop` (was `grab`), `set` (was `put`), `len` (was `size`), `cat` (was `compose` for lists). `compose` is kept as a separate tuple-concat primitive for function composition. `pull` was removed (use destructuring for tuple access).
 

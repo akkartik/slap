@@ -22,7 +22,7 @@ box
 -- upd-tri: box left-idx right-idx cur-idx -> box
 'upd-tri (
   'ci let 'ri let 'li let
-  ('t let t li get t ri get max t ci get plus 'v let t ci v set) mutate
+  ('t let t li get must t ri get must max t ci get must plus 'v let t ci v set must) mutate
 ) def
 
 -- DP: bottom-up. stack: box r
@@ -49,4 +49,4 @@ box
 while
 drop
 
-(0 get) lend swap free print
+(0 get must) lend swap free print

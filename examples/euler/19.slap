@@ -1,5 +1,5 @@
 -- Project Euler #19: Counting Sundays
--- How many Sundays fell on the first of the month from 1 Jan 1901 to 31 Dec 2000?
+-- How many Sundays fell on the first must of the month from 1 Jan 1901 to 31 Dec 2000?
 -- Answer: 171
 
 'is-leap (
@@ -15,19 +15,19 @@
 
 'days-in-month (
   'mo let 'yr let
-  mdays mo get
+  mdays mo get must
   mo 1 eq yr is-leap and (1 plus) () if
 ) def
 
 'step-month (
-  dup 'y at 1901 ge over 'dow at 0 eq and ('cnt (inc) edit) () if
-  dup 'y at over 'm at days-in-month over 'dow at plus 7 mod 'dow into
-  dup 'm at 11 eq
-    ('y (inc) edit 'm (drop 0) edit)
-    ('m (inc) edit)
+  dup 'y at must 1901 ge over 'dow at must 0 eq and ('cnt (inc) edit must) () if
+  dup 'y at must over 'm at must days-in-month over 'dow at must plus 7 mod 'dow into
+  dup 'm at must 11 eq
+    ('y (inc) edit must 'm (drop 0) edit must)
+    ('m (inc) edit must)
   if
 ) def
 
 rec 0 'cnt into 1 'dow into 1900 'y into 0 'm into
 1212 (step-month) repeat
-'cnt at print
+'cnt at must print

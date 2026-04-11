@@ -33,7 +33,7 @@ prefix len 'pflen let
 
 -- Find max window
 pflen 1 sub
-(dup prefix swap get 1000000 ge) (1 sub) while
+(dup prefix swap get must 1000000 ge) (1 sub) while
 'maxw let
 
 -- inner-scan: w -> 0 (not found) or val (found, >0)
@@ -44,7 +44,7 @@ pflen 1 sub
   (dup isw plus pflen lt (over 0 eq) (0) if)
   (
     'isi let
-    prefix isi isw plus get prefix isi get sub 'is-sum let
+    prefix isi isw plus get must prefix isi get must sub 'is-sum let
     is-sum 1000000 lt is-sum is-prime and (
       drop is-sum
     ) () if
