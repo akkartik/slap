@@ -1526,5 +1526,47 @@ none () no eq assert
 -- ===== Semigroup: cat on tuples =====
 (1 2) (3 4) cat (1 2 3 4) eq assert
 
+-- ===== Parser combinators =====
+
+-- parse-int basics
+"42" parse-int drop 42 eq assert
+"0" parse-int drop 0 eq assert
+"-7" parse-int drop -7 eq assert
+"123abc" parse-int "abc" eq assert 123 eq assert
+"1" parse-int drop 1 eq assert
+"-123" parse-int drop -123 eq assert
+"007" parse-int drop 7 eq assert
+
+-- parse-exact
+"=xyz" "=" parse-exact "xyz" eq assert
+"hello world" "hello" parse-exact " world" eq assert
+"abcabc" "abc" parse-exact "abc" eq assert
+
+-- parse-spaces
+"   abc" parse-spaces "abc" eq assert
+"abc" parse-spaces "abc" eq assert
+"" parse-spaces "" eq assert
+
+-- parse-while
+"abc123" (dup 97 ge swap 122 le and) parse-while swap "abc" eq assert "123" eq assert
+"123abc" (dup 48 ge swap 57 le and) parse-while swap "123" eq assert "abc" eq assert
+"xyz" (dup 97 ge swap 122 le and) parse-while swap "xyz" eq assert "" eq assert
+"" (dup 97 ge swap 122 le and) parse-while swap "" eq assert "" eq assert
+
+-- parse-until
+"hello=world" "=" parse-until swap "hello" eq assert "world" eq assert
+"a::b::c" "::" parse-until swap "a" eq assert "b::c" eq assert
+
+-- combined: parse "42=958"
+"42=958" parse-int "=" parse-exact parse-int
+drop 958 eq assert 42 eq assert
+
+-- combined: parse "  123 + 456  "
+"  123 + 456  " parse-spaces parse-int parse-spaces "+" parse-exact parse-spaces parse-int
+drop 456 eq assert 123 eq assert
+
+-- combined: parse key=value
+"name=alice" "=" parse-until swap "name" eq assert "alice" eq assert
+
 -- ===== Done =====
 "All tests passed!" print

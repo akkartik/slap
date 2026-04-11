@@ -299,3 +299,26 @@ tuck
 -- EXPECT: MUST FAILED
 [] min-of
 
+-- ===== Parser panics =====
+
+-- EXPECT: parse-int: empty input
+"" parse-int
+
+-- EXPECT: parse-int: expected digit
+"abc" parse-int
+
+-- EXPECT: parse-int: expected digit after '-'
+"-" parse-int
+
+-- EXPECT: parse-int: expected digit after '-'
+"-abc" parse-int
+
+-- EXPECT: parse-exact: input too short
+"a" "abc" parse-exact
+
+-- EXPECT: parse-exact: mismatch
+"xyz" "abc" parse-exact
+
+-- EXPECT: str-find: not found
+"hello" "=" parse-until
+
