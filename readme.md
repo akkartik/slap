@@ -126,11 +126,8 @@ answer                -- 42
 -- if: condition then two branches
 10 dup 5 lt (2 mul) (3 mul) if    -- 30
 
--- cond: multi-way conditional
-10 {(5 lt) (2 mul) (20 lt) (3 mul)} -1 cond  -- 30
-
--- match: dispatch on symbol
-'red {'red (0) 'green (1) 'blue (2)} -1 match  -- 0
+-- cond: multi-way conditional with default
+10 0 {(5 lt) (2 mul) (20 lt) (3 mul)} cond  -- 30
 
 -- while: loop
 1 (dup 100 lt) (2 mul) while  -- 128
@@ -281,7 +278,7 @@ Tag a value with a symbol to create a sum type. Use `ok`/`no` for result types, 
 42 'custom tag                  -- 42 'custom tagged
 
 -- pattern matching with untag
-123 'foo tag {'foo (1 plus) 'bar (2 mul)} -1 untag  -- 124
+123 'foo tag {'foo (1 plus) 'bar (2 mul)} untag  -- 124
 
 -- monadic chaining with then/default
 'safe-div ('d let 'n let
@@ -467,7 +464,7 @@ Built-in protocols group types by capability. Use in effect annotations:
 | `ok` | x → x 'ok tagged | `42 ok` → `42 'ok tagged` |
 | `no` | x → x 'no tagged | `"err" no` → `"err" 'no tagged` |
 | `tag` | x 'sym → tagged | `1 'foo tag` → `1 'foo tagged` |
-| `untag` | tagged clauses default → result | `1 'ok tag {'ok (inc)} -1 untag` → `2` |
+| `untag` | tagged clauses → result | `1 'ok tag {'ok (inc)} untag` → `2` |
 | `then` | tagged body → tagged | `42 ok (inc) then` → `43 'ok tagged` |
 | `default` | tagged fallback → value | `42 ok -1 default` → `42` |
 

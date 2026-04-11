@@ -49,7 +49,7 @@ Single-file C interpreter (`slap.c`). Pipeline: **lex → typecheck → eval**.
 `tag` wraps a value with a symbol tag: `123 'ok tag` → `VAL_TAGGED`. Prelude words `ok`/`no` are sugar for `'ok tag`/`'no tag`. Stack layout: `[...payload..., TAGGED_HEADER]` where header reuses `compound` struct with `compound.len` = tag symbol ID, `compound.slots` = total slots.
 
 - **`tag`**: `payload 'sym tag` — creates tagged value
-- **`untag`**: `tagged {'sym1 (body1) 'sym2 (body2)} untag` — pattern match, returns `result ok` or `none`. Pushes payload before body.
+- **`untag`**: `tagged {'sym1 (body1) 'sym2 (body2)} untag` — exhaustive pattern match. Pushes payload before body. Returns branch result directly. Panics on unhandled tag at runtime; typechecker enforces exhaustiveness when union is known.
 - **`then`**: `tagged (body) then` — monadic chain (hardcoded `'ok`): unwrap, apply body, re-wrap. Non-ok passes through.
 - **`default`**: `tagged fallback default` — unwrap `'ok` payload, or drop tagged and push fallback.
 - **`union`**: `{'ok 'int 'no 'str} union` — runtime no-op, type annotation only. Drops the schema record.
@@ -57,7 +57,7 @@ Single-file C interpreter (`slap.c`). Pipeline: **lex → typecheck → eval**.
 - **`none`** (prelude): sugar for `() no` — the empty error value
 - **`must`**: extract `'ok` payload, crash with clear error on `'no`. Used in prelude internals where failure is a bug.
 
-Tagged values are stackable (copyable). `untag` is an HO op with `HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED`. `then` is HO with `HO_BODY_1TO1`. Type constraint: `TC_TAGGED`.
+Tagged values are stackable (copyable). `untag` is an HO op with `HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED`, output type inferred from branches (not wrapped in ok/no). `then` is HO with `HO_BODY_1TO1`. Type constraint: `TC_TAGGED`.
 
 ### Fallible operations (return tagged results)
 
@@ -84,13 +84,12 @@ These operations return `value ok` on success and `() no` (or `payload no`) on f
 | `tcp-listen` | `socket ok` | `message no` | Bind/listen error |
 | `tcp-accept` | `client ok` | `message no` | Accept error |
 | `parse-http` | `status headers body ok` | `message no` | Parse error |
-| `cond` | `result ok` | `none` | No predicate matched |
-| `match` | `result ok` | `none` | No symbol matched |
-| `untag` | `result ok` | `none` | No tag matched |
 
 Pattern: `[] pop (1 plus ok) then -1 default` → `-1` (empty list, default). `[1 2 3] pop (1 plus ok) then -1 default` → `4` (success path).
 
-`cond`, `match`, `untag` no longer take a default argument. Use `must`/`default`/`then` on the result.
+**`cond`**: `scrutinee default {(pred) (body) ...} cond` — evaluates predicates in order (each receives scrutinee), returns matching body result or default. No ok/no wrapping.
+
+**`match` removed** — use `cond` with symbol equality: `'red -1 {('red eq) (drop 0) ('green eq) (drop 1)} cond`.
 
 `take-n`/`drop-n` clamp to valid range instead of panicking. `random` clamps max to 1 minimum. `div`/`mod`/`divmod`/`wrap` still panic on zero (programmer errors).
 

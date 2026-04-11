@@ -93,10 +93,10 @@ true assert
 "fail" no "" default print
 
 -- exhaustive untag with union
-42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag must print
+42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag print
 
 -- union through then
-42 ok {'ok 'int 'no 'str} union (1 plus ok) then {'ok () 'no (drop 0)} untag must print
+42 ok {'ok 'int 'no 'str} union (1 plus ok) then {'ok () 'no (drop 0)} untag print
 
 -- ===== Protocol constraints =====
 

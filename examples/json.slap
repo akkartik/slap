@@ -77,11 +77,11 @@
 'json-parse (jval ok parse-spaces must dup len 0 gt ("json: trailing input" no must) () if drop) def
 
 -- Unwrap helpers
-'json->int ({'int ()} untag must) def
-'json->str ({'str ()} untag must) def
-'json->bool ({'bool ()} untag must) def
-'json->arr ({'arr ()} untag must) def
-'json->obj ({'obj ()} untag must) def
+'json->int ({'int ()} untag) def
+'json->str ({'str ()} untag) def
+'json->bool ({'bool ()} untag) def
+'json->arr ({'arr ()} untag) def
+'json->obj ({'obj ()} untag) def
 
 -- ===== Tests =====
 

@@ -87,8 +87,8 @@ stack pop
 -- EXPECT: expected list
 42 (1 eq) filter
 
--- EXPECT: scrutinee must be a symbol
-1 {'a (1)} match
+-- EXPECT: unhandled tag 'unknown'
+42 'unknown tag {'foo ()} untag
 
 -- EXPECT: check: expected preceding type word
 (check)
@@ -279,10 +279,7 @@ tuck
 42 loop
 
 -- EXPECT: cond: expected tuple or record
-1 1 cond
-
--- EXPECT: match: expected tuple or record
-'x 1 match
+1 1 1 cond
 
 -- EXPECT: untag: expected tuple or record
 1 'ok tag 1 untag

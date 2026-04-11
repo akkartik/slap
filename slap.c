@@ -386,10 +386,10 @@ static void syms_init(void);
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
 typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT } OwnMode;
 typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_MONOID, TC_FUNCTOR, TC_APPLICATIVE, TC_FOLDABLE, TC_MONAD } TypeConstraint;
-enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4, HO_SCRUTINEE_SYM=8,
+enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 25
+#define HO_OP_COUNT 24
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
@@ -397,12 +397,12 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,1,TC_FUNCTOR,HO_BODY_1TO1},
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
-    {"cond",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE},{"match",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_SYM},
+    {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
     {"where",0,2,1,TC_LIST,0},{"find",0,2,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
-    {"untag",0,2,1,TC_TAGGED,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
+    {"untag",0,2,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
     {"then",0,2,1,TC_MONAD,HO_BODY_1TO1},
     {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
@@ -863,8 +863,6 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
             if (bouts[i] != TC_NONE && ref != TC_NONE && bouts[i] != ref && !tc_constraint_matches(ref, bouts[i]) && !tc_constraint_matches(bouts[i], ref))
                 tc_error(tc, line, 0, "'%s' branches produce different types: %s vs %s", ho->name, constraint_name(ref), constraint_name(bouts[i]));
     }
-    if ((ho->flags & HO_SCRUTINEE_SYM) && lpt != TC_SYM && lpt != TC_NONE)
-        tc_error(tc, line, 0, "'match' scrutinee must be a symbol, got %s", constraint_name(lpt));
     if ((ho->flags & HO_SCRUTINEE_TAGGED) && lpt != TC_TAGGED && lpt != TC_NONE)
         tc_error(tc, line, 0, "'%s' expected tagged value, got %s", ho->name, constraint_name(lpt));
     if ((ho->flags & HO_BODY_1TO1) && (ho->flags & HO_SCRUTINEE_TAGGED) && bteff && bteff->in_count > 0 && lptv > 0) {
@@ -895,12 +893,17 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
         if (otp > 0) { if (bo != TC_NONE) tvar_bind(tc, otp, bo, line); else if (tptv > 0) tvar_unify(tc, otp, tptv, line); }
         if (lptv > 0) { int uid = tc->tvars[tvar_find(tc, lptv)].union_id; if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid; }
     }
-    if ((ho->flags & HO_BRANCHES_AGREE) && (ho->flags & HO_SCRUTINEE_TAGGED) && tptv > 0 && tc->sp > 0) {
-        TypeConstraint pt = tvar_resolve(tc, tptv);
-        if (out == TC_NONE && pt != TC_NONE) {
-            AbstractType *o = &tc->data[tc->sp-1]; o->type = pt;
-            if (pt == TC_TAGGED) { o->tvar_id=tvar_fresh(tc);tc->tvars[o->tvar_id].bound=TC_TAGGED;
-                int sub=tvar_fresh(tc);tc->tvars[o->tvar_id].tag_p=sub;int inner=tc->tvars[tvar_find(tc,tptv)].tag_p;if(inner>0)tvar_unify(tc,sub,inner,line); }
+    if ((ho->flags & HO_BRANCHES_AGREE) && (ho->flags & HO_SCRUTINEE_TAGGED) && tc->sp > 0) {
+        if (out == TC_NONE && bo != TC_NONE) {
+            AbstractType *o = &tc->data[tc->sp-1]; o->type = bo;
+            if (bo == TC_TAGGED) { o->tvar_id=tvar_fresh(tc);tc->tvars[o->tvar_id].bound=TC_TAGGED; }
+        } else if (out == TC_NONE && tptv > 0) {
+            TypeConstraint pt = tvar_resolve(tc, tptv);
+            if (pt != TC_NONE) {
+                AbstractType *o = &tc->data[tc->sp-1]; o->type = pt;
+                if (pt == TC_TAGGED) { o->tvar_id=tvar_fresh(tc);tc->tvars[o->tvar_id].bound=TC_TAGGED;
+                    int sub=tvar_fresh(tc);tc->tvars[o->tvar_id].tag_p=sub;int inner=tc->tvars[tvar_find(tc,tptv)].tag_p;if(inner>0)tvar_unify(tc,sub,inner,line); }
+            }
         }
     }
 }
@@ -1295,6 +1298,7 @@ static void prim_if(Frame *env) {
     Value clauses_buf[clauses_s]; VCPY(clauses_buf,&stack[sp-clauses_s],clauses_s); sp-=clauses_s
 static void prim_cond(Frame *env) {
     POP_CLAUSES("cond");
+    POP_VAL(def);
     POP_VAL(scrut);
     if(clauses_len%2!=0) die("cond: need even number of clauses (pred/body pairs)");
     for(int i=0;i<clauses_len;i+=2){
@@ -1302,9 +1306,9 @@ static void prim_cond(Frame *env) {
         ElemRef body_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i+1);
         SPUSH(scrut_buf,scrut_s);
         eval_body(&clauses_buf[pred_ref.base],pred_ref.slots,env);
-        if(pop_int()){SPUSH(scrut_buf,scrut_s);eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);push_ok();return;}
+        if(pop_int()){SPUSH(scrut_buf,scrut_s);eval_body(&clauses_buf[body_ref.base],body_ref.slots,env);return;}
     }
-    push_none();
+    SPUSH(def_buf,def_s);
 }
 static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag ct,
                             uint32_t ms, Value *pp, int pps, Frame *env) {
@@ -1316,13 +1320,6 @@ static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag c
             if(pat.tag==VAL_SYM&&pat.as.sym==ms){ElemRef br=compound_elem(cb,cs,cl,i+1);DC_PUSH();eval_body(&cb[br.base],br.slots,env);return 1;}} }
 #undef DC_PUSH
     return 0;
-}
-static void prim_match(Frame *env) {
-    POP_CLAUSES("match");
-    Value scrut=spop(); if(scrut.tag!=VAL_SYM) die("match: scrutinee must be a symbol, got %s", valtag_name(scrut.tag));
-    if(dispatch_clauses("match",clauses_buf,clauses_s,clauses_len,clauses_top.tag,scrut.as.sym,NULL,0,env))
-        push_ok();
-    else push_none();
 }
 static void prim_tag(Frame *e) {
     (void)e;
@@ -1341,9 +1338,8 @@ static void prim_untag(Frame *env) {
     Value payload_buf[payload_s]; VCPY(payload_buf,&stack[sp-tagged_s],payload_s);
     uint32_t tag_sym=tagged_top.as.compound.len;
     sp-=tagged_s;
-    if(dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
-        push_ok();
-    else push_none();
+    if(!dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
+        die("untag: unhandled tag '%s'", sym_name(tag_sym));
 }
 #define LIST_ITER(label) POP_BODY(fn,label); POP_LIST_BUF(list,label); \
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs)
@@ -1982,7 +1978,7 @@ static const char *PRELUDE =
     "'parse-while-acc recur ('pred let 'acc let dup len 0 gt (dup 0 get must 'ch let ch pred apply (1 drop-n acc ch push pred parse-while-acc) (acc swap) if) (acc swap) if) def\n"
     "'parse-while-core ('pred let list pred parse-while-acc) def\n"
     "'parse-while ('pred let list (pred parse-while-core ok) pthen) def\n"
-    "'parse-until-core ('delim let dup delim str-find {'ok ('pos let dup pos take-n swap pos delim len plus drop-n ok) 'no (drop drop \"parse-until: delimiter not found\" no)} untag must) def\n"
+    "'parse-until-core ('delim let dup delim str-find {'ok ('pos let dup pos take-n swap pos delim len plus drop-n ok) 'no (drop drop \"parse-until: delimiter not found\" no)} untag) def\n"
     "'parse-until ('delim let list (delim parse-until-core) pthen) def\n"
     "'parse-float-int recur ('pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv 10.0 mul pfd 48 sub itof plus parse-float-int) (pfv swap) if) (pfv swap) if) def\n"
     "'parse-float-frac recur ('pff let 'pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv pfd 48 sub itof pff div plus pff 10.0 mul parse-float-frac) (pfv swap) if) (pfv swap) if) def\n"
@@ -2314,7 +2310,7 @@ static void register_prims(void) {
         R(band,band),R(bor,bor),R(bxor,bxor),R(bnot,bnot),R(shl,shl),R(shr,shr),
         R(eq,eq),R(lt,lt),R(and,and),R(or,or),
         R(print,print),R(assert,assert),R(halt,halt),R(random,random),
-        R(if,if),R(cond,cond),R(match,match),R(loop,loop),R(while,while),
+        R(if,if),R(cond,cond),R(loop,loop),R(while,while),
         R(itof,itof),R(ftoi,ftoi),R(fsqrt,fsqrt),R(fsin,fsin),R(fcos,fcos),R(ftan,ftan),
         R(ffloor,ffloor),R(fceil,fceil),R(fround,fround),R(fexp,fexp),R(flog,flog),R(fpow,fpow),R(fatan2,fatan2),
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
