@@ -630,6 +630,27 @@ Interactive SDL demos in `examples/`:
 | `snake.slap` | Snake game with arrow key controls |
 | `dots.slap`, `fish.slap`, `gradient.slap`, `zoom.slap` | More graphics demos |
 
+## libraries
+
+Slap has no import statement. A program is whatever you pipe into `slap`, so you compose files by concatenating them:
+
+```bash
+cat lib.slap main.slap | slap
+```
+
+Order matters — definitions must appear before use. This works for remote libraries too:
+
+```bash
+curl -s https://example.com/lib.slap | cat - main.slap | slap
+```
+
+Or pre-fetch and cache:
+
+```bash
+curl -so lib.slap https://example.com/lib.slap
+cat lib.slap main.slap | slap
+```
+
 ## testing
 
 ```bash
