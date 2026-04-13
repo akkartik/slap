@@ -35,33 +35,39 @@
 -- ========== RSS 2.0 ==========
 
 -- Item decoder: expects an <item> element. Produces a normalized item record.
+-- One xd-all-of + one xd-map instead of 6 nested xd-and-then's: one let total
+-- during decoding instead of six, which greatly reduces the per-item frame
+-- save/restore overhead on large feeds.
 '_rss2-item (
-  "title" _rss-opt-text ('t let
-    "link" _rss-opt-text ('lk let
-      "description" _rss-opt-text ('s let
-        "pubDate" _rss-opt-text ('pd let
-          "guid" _rss-opt-text ('id let
-            xd-attrs ('a let
-              rec t 'title into lk 'link into s 'summary into pd 'published into id 'id into a 'attrs into
-              xd-succeed
-            ) xd-and-then
-          ) xd-and-then
-        ) xd-and-then
-      ) xd-and-then
-    ) xd-and-then
-  ) xd-and-then) def
+  list
+    "title"       _rss-opt-text push
+    "link"        _rss-opt-text push
+    "description" _rss-opt-text push
+    "pubDate"     _rss-opt-text push
+    "guid"        _rss-opt-text push
+    xd-attrs push
+  xd-all-of
+  ('vs let
+    rec vs 0 get must 'title into
+        vs 1 get must 'link into
+        vs 2 get must 'summary into
+        vs 3 get must 'published into
+        vs 4 get must 'id into
+        vs 5 get must 'attrs into) xd-map) def
 
 '_rss2-channel (
-  "title" _rss-opt-text ('ct let
-    "link" _rss-opt-text ('clk let
-      "description" _rss-opt-text ('cd let
-        "item" _rss2-item xd-children ('items let
-          rec "rss" 'kind into ct 'title into clk 'link into cd 'description into items 'items into
-          xd-succeed
-        ) xd-and-then
-      ) xd-and-then
-    ) xd-and-then
-  ) xd-and-then) def
+  list
+    "title"       _rss-opt-text push
+    "link"        _rss-opt-text push
+    "description" _rss-opt-text push
+    "item" _rss2-item xd-children push
+  xd-all-of
+  ('vs let
+    rec "rss" 'kind into
+        vs 0 get must 'title into
+        vs 1 get must 'link into
+        vs 2 get must 'description into
+        vs 3 get must 'items into) xd-map) def
 
 '_rss2-feed ("channel" _rss2-channel xd-child) def
 
@@ -73,32 +79,35 @@
 '_atom-link ("link" _atom-href-of-link xd-child xd-maybe (_rss-or-empty) xd-map) def
 
 '_atom-entry (
-  "title" _rss-opt-text ('t let
-    _atom-link ('lk let
-      _atom-summary-dec ('s let
-        _atom-published-dec ('pd let
-          "id" _rss-opt-text ('id let
-            xd-attrs ('a let
-              rec t 'title into lk 'link into s 'summary into pd 'published into id 'id into a 'attrs into
-              xd-succeed
-            ) xd-and-then
-          ) xd-and-then
-        ) xd-and-then
-      ) xd-and-then
-    ) xd-and-then
-  ) xd-and-then) def
+  list
+    "title" _rss-opt-text push
+    _atom-link push
+    _atom-summary-dec push
+    _atom-published-dec push
+    "id" _rss-opt-text push
+    xd-attrs push
+  xd-all-of
+  ('vs let
+    rec vs 0 get must 'title into
+        vs 1 get must 'link into
+        vs 2 get must 'summary into
+        vs 3 get must 'published into
+        vs 4 get must 'id into
+        vs 5 get must 'attrs into) xd-map) def
 
 '_atom-feed (
-  "title" _rss-opt-text ('ft let
-    _atom-link ('flk let
-      "subtitle" _rss-opt-text ('fd let
-        "entry" _atom-entry xd-children ('items let
-          rec "atom" 'kind into ft 'title into flk 'link into fd 'description into items 'items into
-          xd-succeed
-        ) xd-and-then
-      ) xd-and-then
-    ) xd-and-then
-  ) xd-and-then) def
+  list
+    "title" _rss-opt-text push
+    _atom-link push
+    "subtitle" _rss-opt-text push
+    "entry" _atom-entry xd-children push
+  xd-all-of
+  ('vs let
+    rec "atom" 'kind into
+        vs 0 get must 'title into
+        vs 1 get must 'link into
+        vs 2 get must 'description into
+        vs 3 get must 'items into) xd-map) def
 
 -- ========== Dispatch on root tag ==========
 

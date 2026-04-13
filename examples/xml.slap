@@ -354,6 +354,12 @@
 'xd-succeed ('v let list 'succeed push v push 'xdec tag) def
 'xd-fail ('m let list 'fail push m push 'xdec tag) def
 
+-- xd-all-of: (list-of-decoders -- decoder).
+-- Applies each decoder to the current element and returns a list of their
+-- results. Fails if any sub-decoder fails. Useful for building records
+-- without the exponential let-nesting of xd-and-then chains.
+'xd-all-of ('ds let list 'allOf push ds push 'xdec tag) def
+
 -- ========== _xapply: (elem path dec -- result-tagged) ==========
 
 -- _xa-children-loop: (items idx path inner acc -- resultTagged)
@@ -376,6 +382,16 @@
     {'ok ('c let
         c path "/" cat k cat keys 1 drop-n inner _xa-at-walk)
      'no (drop path "/" cat k cat ": no such child" cat no)} untag
+  ) if) def
+
+-- _xa-all-of-loop: (decs idx elem path acc -- resultTagged).
+-- Walks each decoder, appending results to acc; short-circuits on first 'no.
+'_xa-all-of-loop recur ('acc let 'path let 'elem let 'idx let 'decs let
+  idx decs len ge (acc ok) (
+    elem path decs idx get must _xapply
+    {'ok ('v let
+       decs idx 1 plus elem path acc v push _xa-all-of-loop)
+     'no (no)} untag
   ) if) def
 
 -- _xa-one-of-loop: (elem path decoders -- resultTagged)
@@ -435,6 +451,8 @@
     elem path node 1 get must _xapply
     {'ok (swap apply _xapply)
      'no ((drop drop drop) dip no)} untag
+  ) (dname 'allOf eq (
+    node 1 get must 0 elem path list _xa-all-of-loop
   ) (dname 'oneOf eq (
     elem path node 1 get must _xa-one-of-loop
   ) (dname 'maybe eq (
@@ -447,7 +465,7 @@
     path ": " cat node 1 get must cat no
   ) (
     path ": unknown decoder" cat no
-  ) if) if) if) if) if) if) if) if) if) if) if) if) if) if) if) def
+  ) if) if) if) if) if) if) if) if) if) if) if) if) if) if) if) if) def
 
 -- ========== Public entry ==========
 

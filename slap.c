@@ -14,11 +14,11 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #endif
-#define STACK_MAX  1048576
+#define STACK_MAX  2097152
 #define SYM_MAX   4096
 #define FRAME_MAX 1024
 #define FRAME_HASH_SIZE 2048
-#define FRAME_VALS_MAX 262144
+#define FRAME_VALS_MAX 4194304
 #define TOK_MAX   65536
 #define LOCAL_MAX 16384
 typedef enum { VAL_INT, VAL_FLOAT, VAL_SYM, VAL_WORD, VAL_XT, VAL_TUPLE, VAL_LIST, VAL_RECORD, VAL_BOX, VAL_TAGGED } ValTag;
@@ -198,7 +198,7 @@ struct Frame {
     Binding bindings[FRAME_MAX]; Value vals[FRAME_VALS_MAX];
     int16_t hash[FRAME_HASH_SIZE]; // maps sym hash -> binding index+1 (0=empty)
 };
-#define SAVE_BUF_MAX 262144
+#define SAVE_BUF_MAX 4194304
 static Value save_buf[SAVE_BUF_MAX];
 static int save_buf_sp=0;
 static int frame_save_active=0;
@@ -223,10 +223,12 @@ static void frame_bind(Frame *f, uint32_t sym, Value *vals, int slots, BindKind 
             if (f->hash[s] == 0 || f->bindings[f->hash[s]-1].sym == sym) { f->hash[s] = (int16_t)(idx + 1); break; } }
     }
     if(frame_save_active&&f==frame_save_target&&(b-f->bindings)<frame_save_sbc){
-        if(save_buf_sp+4+b->slots>SAVE_BUF_MAX) die("frame save buffer overflow (%d slots)",save_buf_sp+4+b->slots);
+        if(save_buf_sp+5+b->slots>SAVE_BUF_MAX) die("frame save buffer overflow (%d slots)",save_buf_sp+5+b->slots);
         save_buf[save_buf_sp++]=val_int((int)(b-f->bindings));
-        save_buf[save_buf_sp++]=val_int(b->offset|(b->allocated<<16));
-        save_buf[save_buf_sp++]=val_int(b->slots|((int)b->kind<<16)|(b->recur<<17));
+        save_buf[save_buf_sp++]=val_int(b->offset);
+        save_buf[save_buf_sp++]=val_int(b->allocated);
+        save_buf[save_buf_sp++]=val_int(b->slots);
+        save_buf[save_buf_sp++]=val_int(((int)b->kind<<1)|b->recur);
         VCPY(&save_buf[save_buf_sp],&f->vals[b->offset],b->slots);save_buf_sp+=b->slots;}
     if (slots <= b->allocated) VCPY(&f->vals[b->offset],vals,slots);
     else { int off = f->vals_used; if (off + slots > FRAME_VALS_MAX) die("frame value storage full");
@@ -1758,8 +1760,10 @@ static void dispatch_word(uint32_t sym, Frame *env) {
             if(save_buf_sp>sb0){
                 for(int p=sb0;p<save_buf_sp;){
                     int bi=(int)save_buf[p++].as.i;
-                    int oa=(int)save_buf[p++].as.i; int off=oa&0xFFFF,alloc=oa>>16;
-                    int skr=(int)save_buf[p++].as.i; int sl=skr&0xFFFF,kr=skr>>16;
+                    int off=(int)save_buf[p++].as.i;
+                    int alloc=(int)save_buf[p++].as.i;
+                    int sl=(int)save_buf[p++].as.i;
+                    int kr=(int)save_buf[p++].as.i;
                     VCPY(&ee->vals[off],&save_buf[p],sl);p+=sl;
                     ee->bindings[bi].offset=off;ee->bindings[bi].allocated=alloc;
                     ee->bindings[bi].slots=sl;ee->bindings[bi].kind=kr>>1;ee->bindings[bi].recur=kr&1;}
