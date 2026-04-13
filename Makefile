@@ -33,5 +33,9 @@ test: slap
 	@echo 'args len 0 eq assert' | ./slap
 	@rm -f _test_fs.bin
 	@python3 tests/run_euler.py
+	@./slap < examples/xml.slap > /dev/null
+	@./slap --check < examples/xml.slap
+	@cat examples/xml.slap examples/rss.slap | ./slap > /dev/null
+	@cat examples/xml.slap examples/rss.slap | ./slap --check
 	@echo "All test suites passed."
 .PHONY: clean test

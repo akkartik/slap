@@ -286,6 +286,53 @@
 -- Applies the quotation to build a decoder, then runs it. Use for inline decoders.
 'jd-eval ('_e-q let '_e-src let _e-src _e-q apply jd-run) def
 
+-- ========== JSON encoder helpers (je-*) ==========
+-- Each je-* returns a fragment-string ready to concatenate.
+
+-- _je-escape-str-loop: (s acc -- acc s')  (acc on top)
+-- Escapes for JSON: \\ \" \n \r \t; control chars <0x20 become \uXXXX.
+'_je-escape-str-loop recur ('acc let
+  dup len 0 gt (
+    dup 0 get must 'c let
+    1 drop-n
+    c 92 eq (acc "\\\\" cat _je-escape-str-loop) (
+    c 34 eq (acc "\\\"" cat _je-escape-str-loop) (
+    c 10 eq (acc "\\n" cat _je-escape-str-loop) (
+    c 13 eq (acc "\\r" cat _je-escape-str-loop) (
+    c 9 eq (acc "\\t" cat _je-escape-str-loop) (
+      acc c push _je-escape-str-loop
+    ) if) if) if) if) if
+  ) (acc swap) if) def
+
+'je-str ('s let
+  s list 34 push _je-escape-str-loop drop 34 push) def
+
+'je-int (int-str) def
+
+-- je-list: (list-of-json-string-fragments -- json-array-string)
+-- Stack layout for fold: (iter-list init body).  Since we put items-rest first
+-- then build acc on top, the order is already correct.
+'je-list ('items let
+  items len 0 eq ("[]") (
+    items 0 get must 'first-item let
+    items 1 drop-n                                 -- (items-rest)
+    list 91 push first-item cat                     -- (items-rest acc="[first")
+    ("," swap cat cat) fold
+    93 push) if) def
+
+-- je-obj: (list-of-[key-str value-fragment] couples -- json-object-string)
+-- Keys are plain strings (encoded via je-str); values are already JSON fragments.
+'je-obj ('pairs let
+  pairs len 0 eq ("{}") (
+    pairs 0 get must 'p0 let
+    pairs 1 drop-n                                 -- (pairs-rest)
+    list 123 push
+      p0 0 get must je-str cat ":" cat p0 1 get must cat
+    ('kv let
+      "," cat kv 0 get must je-str cat ":" cat kv 1 get must cat
+    ) fold
+    125 push) if) def
+
 -- ========== Tests ==========
 
 -- Primitives
@@ -383,5 +430,23 @@
 
 "3.14" jd-int jd-run {'no ()} untag "$: expected int, got float" eq assert
 "42" jd-float jd-run {'no ()} untag "$: expected float, got int" eq assert
+
+-- ========== Encoder tests ==========
+
+"hi" je-str "\"hi\"" eq assert
+"" je-str "\"\"" eq assert
+"a\"b" je-str "\"a\\\"b\"" eq assert
+"a\nb" je-str "\"a\\nb\"" eq assert
+42 je-int "42" eq assert
+-7 je-int "-7" eq assert
+
+list je-list "[]" eq assert
+list 42 je-int push je-list "[42]" eq assert
+list 1 je-int push 2 je-int push 3 je-int push je-list "[1,2,3]" eq assert
+
+list je-obj "{}" eq assert
+list "a" 1 je-int couple push je-obj "{\"a\":1}" eq assert
+list "a" 1 je-int couple push "b" "hi" je-str couple push je-obj
+  "{\"a\":1,\"b\":\"hi\"}" eq assert
 
 "All JSON tests passed!" print

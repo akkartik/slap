@@ -1,0 +1,359 @@
+-- rss.slap: RSS 2.0 + Atom feed parser built on xd-*.
+-- Requires xml.slap to be loaded first.
+-- Run tests via: cat examples/xml.slap examples/rss.slap | ./slap
+--
+-- rss-parse: (source-string -- feed-record ok | err no)
+-- Feed record: {'kind "rss"|"atom" 'title 'link 'description 'items [...]}
+-- Item record: {'title 'link 'summary 'published 'id}
+
+-- ========== Helpers ==========
+
+-- Replace () (from xd-maybe miss) with empty string "".
+-- Used as an xd-map function: (v -- v-or-empty)
+'_rss-or-empty ('v let v () eq ("") (v) if) def
+
+-- Optional text child: if <name> exists, return its trimmed text; else "".
+-- Usage: name _rss-opt-text   builds a decoder.
+'_rss-opt-text ('n let
+  n xd-text xd-child xd-maybe (_rss-or-empty) xd-map) def
+
+-- Try the first child tag's text; if empty, fall back to the second.
+-- Can't easily use a generic helper here: let bindings for `n1`/`n2` would be
+-- clobbered by a later call, and the returned decoder's body runs later. Instead
+-- each fallback case lives in its own def so the tag names are captured at
+-- definition time via auto-exec quotations.
+'_atom-summary-dec (
+  "summary" _rss-opt-text ('v let
+    v "" eq ("content" _rss-opt-text) (v xd-succeed) if
+  ) xd-and-then) def
+
+'_atom-published-dec (
+  "published" _rss-opt-text ('v let
+    v "" eq ("updated" _rss-opt-text) (v xd-succeed) if
+  ) xd-and-then) def
+
+-- ========== RSS 2.0 ==========
+
+-- Item decoder: expects an <item> element. Produces a normalized item record.
+'_rss2-item (
+  "title" _rss-opt-text ('t let
+    "link" _rss-opt-text ('lk let
+      "description" _rss-opt-text ('s let
+        "pubDate" _rss-opt-text ('pd let
+          "guid" _rss-opt-text ('id let
+            xd-attrs ('a let
+              rec t 'title into lk 'link into s 'summary into pd 'published into id 'id into a 'attrs into
+              xd-succeed
+            ) xd-and-then
+          ) xd-and-then
+        ) xd-and-then
+      ) xd-and-then
+    ) xd-and-then
+  ) xd-and-then) def
+
+'_rss2-channel (
+  "title" _rss-opt-text ('ct let
+    "link" _rss-opt-text ('clk let
+      "description" _rss-opt-text ('cd let
+        "item" _rss2-item xd-children ('items let
+          rec "rss" 'kind into ct 'title into clk 'link into cd 'description into items 'items into
+          xd-succeed
+        ) xd-and-then
+      ) xd-and-then
+    ) xd-and-then
+  ) xd-and-then) def
+
+'_rss2-feed ("channel" _rss2-channel xd-child) def
+
+-- ========== Atom ==========
+
+-- Atom <link href="..." rel="alternate"/> → just grab href of first link.
+-- Tries first <link> child's href; "" if missing.
+'_atom-href-of-link ("href" xd-attr xd-maybe (_rss-or-empty) xd-map) def
+'_atom-link ("link" _atom-href-of-link xd-child xd-maybe (_rss-or-empty) xd-map) def
+
+'_atom-entry (
+  "title" _rss-opt-text ('t let
+    _atom-link ('lk let
+      _atom-summary-dec ('s let
+        _atom-published-dec ('pd let
+          "id" _rss-opt-text ('id let
+            xd-attrs ('a let
+              rec t 'title into lk 'link into s 'summary into pd 'published into id 'id into a 'attrs into
+              xd-succeed
+            ) xd-and-then
+          ) xd-and-then
+        ) xd-and-then
+      ) xd-and-then
+    ) xd-and-then
+  ) xd-and-then) def
+
+'_atom-feed (
+  "title" _rss-opt-text ('ft let
+    _atom-link ('flk let
+      "subtitle" _rss-opt-text ('fd let
+        "entry" _atom-entry xd-children ('items let
+          rec "atom" 'kind into ft 'title into flk 'link into fd 'description into items 'items into
+          xd-succeed
+        ) xd-and-then
+      ) xd-and-then
+    ) xd-and-then
+  ) xd-and-then) def
+
+-- ========== Dispatch on root tag ==========
+
+'_rss-dispatch ('root-tag let
+  root-tag "rss" eq (_rss2-feed) (
+  root-tag "feed" eq (_atom-feed) (
+    "unknown feed format: " root-tag cat xd-fail
+  ) if) if) def
+
+'_rss-root (xd-tag (_rss-dispatch) xd-and-then) def
+
+-- rss-parse: (source -- feed-record ok | err no)
+'rss-parse ('src let src _rss-root xd-run) def
+
+-- ========== Accessors ==========
+'rss-kind        ('r let r 'kind at must) def
+'rss-title       ('r let r 'title at must) def
+'rss-link        ('r let r 'link at must) def
+'rss-description ('r let r 'description at must) def
+'rss-items       ('r let r 'items at must) def
+'rss-item-title     ('i let i 'title at must) def
+'rss-item-link      ('i let i 'link at must) def
+'rss-item-summary   ('i let i 'summary at must) def
+'rss-item-published ('i let i 'published at must) def
+'rss-item-id        ('i let i 'id at must) def
+'rss-item-attrs     ('i let i 'attrs at must) def
+
+-- ========== RSS 2.0 generation (rss-to-xml) ==========
+
+-- _rss-text-elem: (name-str value-str -- element-record).
+-- Builds <name>value</name>.
+'_rss-text-elem ('v let 'n let
+  n list list v xe-text push xe-elem) def
+
+-- _rss-make-item: (normalized-item-record -- item-element-record).
+'_rss-make-item ('item let
+  list
+  "title"       item rss-item-title     _rss-text-elem push
+  "link"        item rss-item-link      _rss-text-elem push
+  "description" item rss-item-summary   _rss-text-elem push
+  "pubDate"     item rss-item-published _rss-text-elem push
+  "guid"        item rss-item-id        _rss-text-elem push
+  'kids let
+  "item" list kids xe-elem) def
+
+-- _rss-make-channel: (feed-record -- channel-element-record).
+'_rss-make-channel ('feed let
+  list
+  "title"       feed rss-title       _rss-text-elem push
+  "link"        feed rss-link        _rss-text-elem push
+  "description" feed rss-description _rss-text-elem push
+  feed rss-items (_rss-make-item) each cat
+  'kids let
+  "channel" list kids xe-elem) def
+
+-- ========== Atom generation ==========
+
+-- _atom-link-elem: (href-str -- link-element-record).
+-- <link href="..." rel="alternate"/>.
+'_atom-link-elem ('href let
+  "link"
+  list "href" href couple push "rel" "alternate" couple push
+  list
+  xe-elem) def
+
+-- _atom-make-entry: (normalized-item-record -- entry-element-record).
+-- Uses 'summary for <summary>, 'published for <published>, 'id for <id>,
+-- and builds <link href=...> from 'link.
+'_atom-make-entry ('item let
+  list
+  "title"     item rss-item-title     _rss-text-elem push
+  item rss-item-link _atom-link-elem push
+  "summary"   item rss-item-summary   _rss-text-elem push
+  "published" item rss-item-published _rss-text-elem push
+  "id"        item rss-item-id        _rss-text-elem push
+  'kids let
+  "entry" list kids xe-elem) def
+
+-- _atom-make-feed: (feed-record -- feed-element-record).
+'_atom-make-feed ('feed let
+  list
+  "title"    feed rss-title       _rss-text-elem push
+  feed rss-link _atom-link-elem push
+  "subtitle" feed rss-description _rss-text-elem push
+  feed rss-items (_atom-make-entry) each cat
+  'kids let
+  "feed"
+    list "xmlns" "http://www.w3.org/2005/Atom" couple push
+    kids xe-elem) def
+
+-- rss-to-xml: (feed-record -- xml-string).
+-- Dispatches on feed's 'kind field: "rss" → RSS 2.0, "atom" → Atom.
+'rss-to-xml ('feed let
+  feed rss-kind "atom" eq (
+    feed _atom-make-feed xml-render
+  ) (
+    feed _rss-make-channel 'ch let
+    "rss" list "version" "2.0" couple push list ch push xe-elem
+    xml-render
+  ) if) def
+
+-- ========== Tests ==========
+
+-- RSS 2.0 sample
+'_rss-sample (
+"<?xml version=\"1.0\"?>
+<rss version=\"2.0\">
+  <channel>
+    <title>My Blog</title>
+    <link>http://example.com</link>
+    <description>A sample blog</description>
+    <item>
+      <title>First Post</title>
+      <link>http://example.com/1</link>
+      <description>Hello &amp; welcome</description>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>
+      <guid>http://example.com/1</guid>
+    </item>
+    <item>
+      <title>Second Post</title>
+      <link>http://example.com/2</link>
+      <description><![CDATA[<p>html body</p>]]></description>
+      <pubDate>Tue, 02 Jan 2024 00:00:00 +0000</pubDate>
+      <guid>http://example.com/2</guid>
+    </item>
+  </channel>
+</rss>") def
+
+_rss-sample rss-parse {'ok () 'no (drop "fail")} untag 'feed let
+feed rss-kind "rss" eq assert
+feed rss-title "My Blog" eq assert
+feed rss-link "http://example.com" eq assert
+feed rss-description "A sample blog" eq assert
+feed rss-items 'items let
+items len 2 eq assert
+items 0 get must rss-item-title "First Post" eq assert
+items 0 get must rss-item-link "http://example.com/1" eq assert
+items 0 get must rss-item-summary "Hello & welcome" eq assert
+items 0 get must rss-item-id "http://example.com/1" eq assert
+items 1 get must rss-item-title "Second Post" eq assert
+items 1 get must rss-item-summary "<p>html body</p>" eq assert
+
+-- Atom sample
+'_atom-sample (
+"<?xml version=\"1.0\"?>
+<feed xmlns=\"http://www.w3.org/2005/Atom\">
+  <title>Atom Blog</title>
+  <link href=\"http://example.com\" rel=\"alternate\"/>
+  <subtitle>A sample atom feed</subtitle>
+  <entry>
+    <title>Atom First</title>
+    <link href=\"http://example.com/a1\"/>
+    <summary>first entry</summary>
+    <published>2024-01-01T00:00:00Z</published>
+    <id>urn:uuid:1</id>
+  </entry>
+  <entry>
+    <title>Atom Second</title>
+    <link href=\"http://example.com/a2\"/>
+    <summary>second entry</summary>
+    <published>2024-01-02T00:00:00Z</published>
+    <id>urn:uuid:2</id>
+  </entry>
+</feed>") def
+
+_atom-sample rss-parse {'ok () 'no (drop "fail")} untag 'afeed let
+afeed rss-kind "atom" eq assert
+afeed rss-title "Atom Blog" eq assert
+afeed rss-link "http://example.com" eq assert
+afeed rss-description "A sample atom feed" eq assert
+afeed rss-items 'aitems let
+aitems len 2 eq assert
+aitems 0 get must rss-item-title "Atom First" eq assert
+aitems 0 get must rss-item-link "http://example.com/a1" eq assert
+aitems 0 get must rss-item-id "urn:uuid:1" eq assert
+
+-- Adversarial: unknown root
+"<html><body>hi</body></html>" rss-parse {'no ()} untag
+  "/html: unknown feed format: html" eq assert
+
+-- Missing optional field: no description in channel
+'_rss-no-desc (
+"<rss><channel><title>X</title><link>Y</link></channel></rss>") def
+_rss-no-desc rss-parse {'ok () 'no (drop "fail")} untag 'nd let
+nd rss-description "" eq assert
+nd rss-items len 0 eq assert
+
+-- Atom content fallback (no <summary>, has <content>)
+'_atom-content-sample (
+"<feed><title>F</title>
+  <entry><title>T</title><content>body via content</content><id>1</id></entry>
+</feed>") def
+_atom-content-sample rss-parse {'ok () 'no (drop "fail")} untag 'ac let
+ac rss-items 0 get must rss-item-summary "body via content" eq assert
+
+-- Atom updated fallback (no <published>, has <updated>)
+'_atom-updated-sample (
+"<feed><title>F</title>
+  <entry><title>T</title><updated>2024-03-01</updated><id>1</id></entry>
+</feed>") def
+_atom-updated-sample rss-parse {'ok () 'no (drop "fail")} untag 'au let
+au rss-items 0 get must rss-item-published "2024-03-01" eq assert
+
+-- Item attrs exposed (podcast enclosure pattern)
+'_rss-pod-sample (
+"<rss><channel><title>Pod</title>
+  <item isPermaLink=\"true\"><title>Ep1</title><guid>ep1</guid></item>
+</channel></rss>") def
+_rss-pod-sample rss-parse {'ok () 'no (drop "fail")} untag 'pod let
+pod rss-items 0 get must rss-item-attrs 'pod-attrs let
+pod-attrs len 1 eq assert
+pod-attrs 0 get must 0 get must "isPermaLink" eq assert
+pod-attrs 0 get must 1 get must "true" eq assert
+
+-- rss-to-xml: roundtrip via parse → generate → reparse.
+-- Build a feed record by hand and serialize.
+rec "rss" 'kind into
+    "My Feed" 'title into
+    "http://example.com" 'link into
+    "A feed" 'description into
+    list
+      rec "Post 1" 'title into "http://a/1" 'link into "body 1" 'summary into
+          "Mon, 01 Jan 2024" 'published into "http://a/1" 'id into list 'attrs into
+      push
+    'items into
+'built-feed let
+
+built-feed rss-to-xml 'xml-out let
+
+-- The generated XML should reparse to the same normalized fields.
+xml-out rss-parse {'ok () 'no (drop "fail")} untag 'rt let
+rt rss-kind "rss" eq assert
+rt rss-title "My Feed" eq assert
+rt rss-items 0 get must rss-item-title "Post 1" eq assert
+rt rss-items 0 get must rss-item-link "http://a/1" eq assert
+
+-- Atom output roundtrip: build an atom feed, serialize, reparse.
+rec "atom" 'kind into
+    "Atom Feed" 'title into
+    "http://example.com" 'link into
+    "Atom desc" 'description into
+    list
+      rec "Atom Post" 'title into "http://a/1" 'link into "atom body" 'summary into
+          "2024-01-01T00:00:00Z" 'published into "urn:uuid:1" 'id into list 'attrs into
+      push
+    'items into
+'atom-feed let
+
+atom-feed rss-to-xml 'atom-xml let
+atom-xml rss-parse {'ok () 'no (drop "fail")} untag 'art let
+art rss-kind "atom" eq assert
+art rss-title "Atom Feed" eq assert
+art rss-link "http://example.com" eq assert
+art rss-items 0 get must rss-item-title "Atom Post" eq assert
+art rss-items 0 get must rss-item-link "http://a/1" eq assert
+art rss-items 0 get must rss-item-id "urn:uuid:1" eq assert
+
+"All RSS tests passed!" print

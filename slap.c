@@ -16,8 +16,8 @@
 #endif
 #define STACK_MAX  65536
 #define SYM_MAX   4096
-#define FRAME_MAX 256
-#define FRAME_HASH_SIZE 512
+#define FRAME_MAX 1024
+#define FRAME_HASH_SIZE 2048
 #define FRAME_VALS_MAX 65536
 #define TOK_MAX   65536
 #define LOCAL_MAX 16384
