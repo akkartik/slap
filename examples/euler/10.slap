@@ -1,33 +1,38 @@
 -- Project Euler #10: Summation of Primes
 -- Sum of all primes below 2,000,000.
 -- Answer: 142913828922
+--
+-- Odd-only Sieve of Eratosthenes: arr[k] represents 2k+1. Size 1,000,000
+-- covers odd numbers up to 1,999,999. Mark composites during `mutate`
+-- (set only, no reads), then `lend` and sum via O(1) `nth` reads.
 
--- is-prime: n -> bool (trial division from 5 by 6)
-'is-prime (
-  'n let
-  n 2 lt (0) (
-  n 3 le (1) (
-  n 2 mod 0 eq (0) (
-  n 3 mod 0 eq (0) (
-    1 5
-    (dup dup mul n le (over) dip and)
-    (
-      n over mod 0 eq (nip 0 swap) (
-        n over 2 plus mod 0 eq (nip 0 swap) () if
-      ) if
-      6 plus
-    )
-    while
+list 1000000 (1 push) repeat box 'sv let
+
+sv (
+  0 0 set must                                    -- 1 is not prime
+  1
+  (dup 2 mul 1 plus dup mul 2000000 lt)          -- (2i+1)^2 < 2M
+  (
+    'i let
+    i 2 mul 1 plus 'p let                         -- p = 2i+1
+    i i 1 plus mul 2 mul                          -- initial j = 2*i*(i+1)
+    (dup 1000000 lt)
+    (dup (0 set must) dip p plus) while
     drop
-  ) if) if) if) if
-) def
+    i 1 plus
+  ) while
+  drop
+) mutate 'svb let
 
--- stack: total n
-2 3
-(dup 2000000 lt)
-(
-  dup is-prime (dup (plus) dip) () if
-  2 plus
-)
-while
-drop print
+svb (
+  'data let
+  2 1                                              -- sum=2 (even prime), k=1
+  (dup 1000000 lt)
+  (
+    'k let
+    'data k nth must 1 eq (k 2 mul 1 plus plus) () if
+    k 1 plus
+  ) while
+  drop
+) lend
+swap free print

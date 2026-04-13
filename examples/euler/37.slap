@@ -1,71 +1,64 @@
 -- Project Euler #37: Truncatable Primes
--- Sum of the 11 primes that are truncatable from both left and right
+-- Sum of the 11 primes that are truncatable from both left and right.
 -- Answer: 748317
+--
+-- All 11 truncatable primes are < 10^6. Sieve once, then every primality
+-- check (including during left/right truncation walks) is an O(1) nth.
 
--- is-prime: n -> bool (while loop, not recursive)
-'is-prime (
-  'n let
-  n 2 lt (0) (
-  n 2 eq (1) (
-  n 2 mod 0 eq (0) (
-    -- stack: result i
-    1 3
-    (dup dup mul n le (over) dip and)
-    (
-      n over mod 0 eq (nip 0 swap) () if
-      2 plus
-    )
-    while
+list 1000000 (1 push) repeat box 'sv let
+
+sv (
+  0 0 set must 1 0 set must
+  2
+  (dup dup mul 1000000 lt)
+  (
+    'i let
+    i i mul
+    (dup 1000000 lt)
+    (dup (0 set must) dip i plus) while
     drop
-  ) if) if) if
-) def
+    i 1 plus
+  ) while
+  drop
+) mutate 'svb let
 
--- left-trunc: n -> bool
-'left-trunc (
-  'lt-n let
-  -- find largest power of 10 <= lt-n
-  1 (dup 10 mul lt-n le) (10 mul) while
-  -- stack: result pow
-  1 swap
-  (dup 1 gt (over) dip and)
+svb (
+  'data let
+  'prime? ('data swap nth must 1 eq) def
+
+  'left-trunc (
+    'ltn let
+    1 (dup 10 mul ltn le) (10 mul) while
+    1 swap
+    (dup 1 gt (over) dip and)
+    (
+      ltn over mod
+      dup 0 eq (drop (drop 0) dip) (
+        prime? not ((drop 0) dip) () if
+      ) if
+      10 div
+    ) while
+    drop
+  ) def
+
+  'right-trunc (
+    1 swap
+    (dup 9 gt (over) dip and)
+    (10 div dup prime? not ((drop 0) dip) () if) while
+    drop
+  ) def
+
+  0 0 11
+  (over 11 lt)
   (
-    lt-n over mod
-    dup 0 eq (
-      drop (drop 0) dip
-    ) (
-      is-prime not ((drop 0) dip) () if
-    ) if
-    10 div
+    dup prime?
+    over left-trunc and
+    over right-trunc and (
+      dup (rot) dip plus rot rot swap inc swap
+    ) () if
+    2 plus
   )
   while
-  drop
-) def
-
--- right-trunc: n -> bool
-'right-trunc (
-  1 swap
-  (dup 9 gt (over) dip and)
-  (
-    10 div
-    dup is-prime not ((drop 0) dip) () if
-  )
-  while
-  drop
-) def
-
--- stack: total found n
-0 0 11
-(over 11 lt)
-(
-  -- stack: total found n
-  dup is-prime
-  over left-trunc and
-  over right-trunc and (
-    -- stack: total found n (all checks passed)
-    dup (rot) dip plus rot rot swap inc swap
-    -- stack: total+n found+1 n
-  ) () if
-  2 plus
-)
-while
-drop drop print
+  drop drop
+) lend
+swap free print

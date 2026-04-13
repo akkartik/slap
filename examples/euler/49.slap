@@ -1,6 +1,6 @@
 -- Project Euler #49: Prime Permutations
--- 4-digit primes: arithmetic sequence of 3 that are permutations of each other
--- Answer: 296962999629 (not the 1487 sequence)
+-- 4-digit primes forming an arithmetic triple that are digit-permutations.
+-- Answer: 296962999629 (not the 1487,4817,8147 sequence).
 
 'is-prime (
   'ip-n let
@@ -17,69 +17,68 @@
   ) if
 ) def
 
-'digit-sig (
-  'dsn let
-  dsn 1000 div 'ds-a let
-  dsn 100 div 10 mod 'ds-b let
-  dsn 10 div 10 mod 'ds-c let
-  dsn 10 mod 'ds-d let
-  -- sort 4 values with unique names per comparison
-  ds-a ds-b gt (ds-b ds-a) (ds-a ds-b) if 'srt-b1 let 'srt-a1 let
-  ds-c ds-d gt (ds-d ds-c) (ds-c ds-d) if 'srt-d1 let 'srt-c1 let
-  srt-a1 srt-c1 gt (srt-c1 srt-a1) (srt-a1 srt-c1) if 'srt-c2 let 'srt-a2 let
-  srt-b1 srt-d1 gt (srt-d1 srt-b1) (srt-b1 srt-d1) if 'srt-d2 let 'srt-b2 let
-  srt-b2 srt-c2 gt (srt-c2 srt-b2) (srt-b2 srt-c2) if 'srt-c3 let 'srt-b3 let
-  srt-a2 1000 mul srt-b3 100 mul plus srt-c3 10 mul plus srt-d2 plus
+-- digit-key: 4-digit n -> sorted-digit list (4 bytes in [0,9]; valid dict key)
+'digit-key (
+  'dk-n let
+  list
+    dk-n 1000 div push
+    dk-n 100 div 10 mod push
+    dk-n 10 div 10 mod push
+    dk-n 10 mod push
+  sort
 ) def
 
--- Build encoded list: sig*10000+prime for all 4-digit odd primes
-list
-1001
+-- add-prime: dict p -> dict  (append p to the group keyed by its digit-key)
+'add-prime (
+  'ap-p let
+  ap-p digit-key 'ap-k let
+  ap-k of list default
+  ap-p push
+  ap-k swap insert
+) def
+
+-- Build dict: sorted-digits -> list of 4-digit odd primes (ascending).
+dict 1001
 (dup 9999 le)
-(dup is-prime (swap over dup digit-sig 10000 mul swap plus give swap) () if 2 plus)
-while
+(
+  'bn-n let
+  bn-n is-prime (bn-n add-prime) () if
+  bn-n 2 plus
+) while
 drop
-sort 'encoded let
-encoded len 'elen let
 
--- Search for arithmetic sequences of 3 with same digit signature
-'check-triple (
-  'ct-esig let 'ct-ep1 let 'ct-ev2 let
-  ct-ev2 10000 div ct-esig eq (
-    ct-ev2 10000 mod 'ct-ep2 let
-    ct-ep2 ct-ep1 sub 'ct-ediff let
-    ct-ep2 ct-ediff plus 'ct-ep3 let
-    ct-ep3 9999 le ct-ep3 is-prime and (ct-ep3 digit-sig ct-esig eq) (0) if (
-      ct-ep1 1487 neq (
-        ct-ep1 100000000 mul ct-ep2 10000 mul plus ct-ep3 plus
-      ) (0) if
-    ) (0) if
-  ) (0) if
-) def
-
-'search-inner (
-  'si-esig let 'si-ep1 let 'si-start let
-  -- stack: result j
-  0 si-start
-  (dup elen lt (over 0 eq) (0) if)
+-- scan-group: sorted list g -> composed 12-digit answer or 0.
+-- Linear k = i*n+j scan, i<j. For each pair compute candidate = 2*p2-p1
+-- and check membership; emit answer on first hit (excluding the 1487 run).
+'scan-group (
+  'sg-g let
+  sg-g len 'sg-n let
+  0 0
+  (dup sg-n sg-n mul lt (over 0 eq) (0) if)
   (
-    'si-j let
-    'encoded si-j nth must si-ep1 si-esig check-triple
+    'sg-k let
+    sg-k sg-n div 'sg-i let
+    sg-k sg-n mod 'sg-j let
+    sg-j sg-i le (0) (
+      sg-g sg-i get must 'sg-p1 let
+      sg-g sg-j get must 'sg-p2 let
+      sg-p2 2 mul sg-p1 sub 'sg-c let
+      sg-p1 1487 neq sg-c 9999 le and sg-g sg-c member and (
+        sg-p1 100000000 mul sg-p2 10000 mul plus sg-c plus
+      ) (0) if
+    ) if
     dup 0 gt (nip) (drop) if
-    si-j 1 plus
+    sg-k 1 plus
   ) while
   drop
 ) def
 
-0 0
-(dup elen lt (over 0 eq) (0) if)
-(
-  'ei-i let
-  'encoded ei-i nth must 'ei-ev let
-  ei-ev 10000 div 'ei-esig let
-  ei-ev 10000 mod 'ei-ep1 let
-  ei-i 1 plus ei-ep1 ei-esig search-inner
-  dup 0 gt (nip) (drop) if
-  ei-i 1 plus
-) while
-drop print
+-- Fold over dict entries; acc carries first answer found (0 = not yet).
+0 (
+  second 'fb-g let
+  dup 0 gt () (
+    drop
+    fb-g len 3 lt (0) (fb-g scan-group) if
+  ) if
+) fold
+print

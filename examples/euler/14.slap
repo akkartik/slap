@@ -1,28 +1,27 @@
 -- Project Euler #14: Longest Collatz Sequence
 -- Which starting number under 1,000,000 produces the longest Collatz chain?
 -- Answer: 837799
+--
+-- Max must start at n > N/2: any n <= N/2 has 2n also in range with
+-- chain(2n) = chain(n)+1, so n can't be maximal. Halves the search.
 
--- collatz-len: n -> chain-length
--- stack: n cnt (no dip, uses swap instead)
 'collatz-len (
   1
   (over 1 neq)
-  (over iseven
-    (swap 2 div swap 1 plus)
-    (swap 3 mul 1 plus 2 div swap 2 plus)
+  (over 1 band 0 eq
+    (swap 1 shr swap 1 plus)
+    (swap 3 mul 1 plus 1 shr swap 2 plus)
   if)
   while
   nip
 ) def
 
 -- stack: best-len best-start i
-0 1 1
+0 1 500001
 (dup 1000000 lt)
 (
   dup collatz-len
-  -- stack: bl bs i cl
   (rot) dip
-  -- stack: bs i bl cl
   over over swap gt (
     nip (nip) dip swap dup
   ) (
