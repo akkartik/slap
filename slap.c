@@ -409,14 +409,14 @@ typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, T
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 22
+#define HO_OP_COUNT 23
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
     {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,1,TC_FUNCTOR,HO_BODY_1TO1},
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
-    {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
+    {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},{"case",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
     {"find",0,3,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
@@ -1472,11 +1472,33 @@ static void prim_if(Frame *env) {
     int clauses_s=val_slots(clauses_top),clauses_len=(int)clauses_top.as.compound.len; \
     if(clauses_s>LOCAL_MAX) die(label ": clauses too large (%d slots, max %d)",clauses_s,LOCAL_MAX); \
     Value clauses_buf[clauses_s]; VCPY(clauses_buf,&stack[sp-clauses_s],clauses_s); sp-=clauses_s
-static void prim_cond(Frame *env) {
-    POP_CLAUSES("cond");
+static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag ct,
+                            uint32_t ms, Value *pp, int pps, Frame *env);
+/* Unified scrutinee/default/clauses dispatch.
+   - Scrutinee TAGGED → match by tag symbol (payload pushed on match).
+   - Scrutinee anything else → evaluate each clause predicate against a
+     fresh copy of the scrutinee; on truthy, push scrutinee and run body.
+   If nothing matches, the default is pushed.
+
+   Exposed under three names: `cond`, `untag`, and `case`. The word kept
+   in error messages is the symbolic one the caller used. */
+static void prim_case(Frame *env) {
+    POP_CLAUSES("case");
     POP_VAL(def);
-    POP_VAL(scrut);
-    if(clauses_len%2!=0) die("cond: need even number of clauses (pred/body pairs)");
+    if (sp <= 0) die("case: stack underflow");
+    Value top = stack[sp-1];
+    if (top.tag == VAL_TAGGED) {
+        int tagged_s=val_slots(top), payload_s=tagged_s-1;
+        if(payload_s>LOCAL_MAX) die("case: payload too large (%d slots, max %d)",payload_s,LOCAL_MAX);
+        Value payload_buf[payload_s]; VCPY(payload_buf,&stack[sp-tagged_s],payload_s);
+        uint32_t tag_sym=top.as.compound.len;
+        sp-=tagged_s;
+        if(!dispatch_clauses("case",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
+            SPUSH(def_buf,def_s);
+        return;
+    }
+    int scrut_s=val_slots(top); Value scrut_buf[scrut_s]; VCPY(scrut_buf,&stack[sp-scrut_s],scrut_s); sp-=scrut_s;
+    if(clauses_len%2!=0) die("case: need even number of clauses (pred/body pairs)");
     for(int i=0;i<clauses_len;i+=2){
         ElemRef pred_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i);
         ElemRef body_ref=compound_elem(clauses_buf,clauses_s,clauses_len,i+1);
@@ -1504,19 +1526,6 @@ static void prim_tag(Frame *e) {
     Value payload_top=stack[sp-1];
     int payload_s=val_slots(payload_top);
     spush(val_compound(VAL_TAGGED,tag_sym,payload_s+1));
-}
-static void prim_untag(Frame *env) {
-    POP_CLAUSES("untag");
-    POP_VAL(def);
-    Value tagged_top=stack[sp-1];
-    if(tagged_top.tag!=VAL_TAGGED) die("untag: expected tagged value, got %s", valtag_name(tagged_top.tag));
-    int tagged_s=val_slots(tagged_top), payload_s=tagged_s-1;
-    if(payload_s>LOCAL_MAX) die("untag: payload too large (%d slots, max %d)",payload_s,LOCAL_MAX);
-    Value payload_buf[payload_s]; VCPY(payload_buf,&stack[sp-tagged_s],payload_s);
-    uint32_t tag_sym=tagged_top.as.compound.len;
-    sp-=tagged_s;
-    if(!dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
-        SPUSH(def_buf,def_s);
 }
 #define LIST_ITER(label) POP_BODY(fn,label); POP_LIST_BUF(list,label); \
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs)
@@ -2677,7 +2686,7 @@ static void register_prims(void) {
         R(band,band),R(bor,bor),R(bxor,bxor),R(bnot,bnot),R(shl,shl),R(shr,shr),
         R(eq,eq),R(lt,lt),R(and,and),R(or,or),
         R(print,print),R(assert,assert),R(halt,halt),R(random,random),
-        R(if,if),R(cond,cond),R(loop,loop),R(while,while),
+        R(if,if),R(cond,case),R(case,case),R(loop,loop),R(while,while),
         R(itof,itof),R(ftoi,ftoi),R(fsqrt,fsqrt),R(fsin,fsin),R(fcos,fcos),R(ftan,ftan),
         R(ffloor,ffloor),R(fceil,fceil),R(fround,fround),R(fexp,fexp),R(flog,flog),R(fpow,fpow),R(fatan2,fatan2),
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
@@ -2689,7 +2698,7 @@ static void register_prims(void) {
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
         R(dict,dict),R(insert,insert),R(of,of),R(remove,remove),
         {"dict-keys",prim_keys},{"dict-values",prim_values},
-        R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
+        R(tag,tag),R(untag,case),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
         R(read,read),R(write,write),R(ls,ls),
         {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},
         {"str-find",prim_str_find},{"str-split",prim_str_split},{"parse-http",prim_parse_http},

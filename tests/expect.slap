@@ -916,6 +916,12 @@ list "hi" push "--" str-join "hi" eq assert
 -- untag default fires on unhandled tag (A5)
 123 'bar tag 999 {'foo (1 plus)} untag 999 eq assert
 
+-- case unifies cond + untag
+1 'foo tag 999 {'foo (1 plus) 'bar (2 plus)} case 2 eq assert
+1 'baz tag 999 {'foo (1 plus) 'bar (2 plus)} case 999 eq assert
+5 'unknown {(3 lt) ('small) (10 lt) ('medium)} case 'medium eq assert
+15 'unknown {(3 lt) ('small) (10 lt) ('medium)} case 'unknown eq assert
+
 -- record clauses
 123 'foo tag () {'foo (1 plus) 'bar (2 plus)} untag 124 eq assert
 456 'bar tag () {'foo (1 plus) 'bar (2 plus)} untag 458 eq assert

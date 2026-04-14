@@ -275,13 +275,13 @@ tuck
 -- EXPECT: loop: expected tuple
 42 loop
 
--- EXPECT: cond: expected tuple or record
+-- EXPECT: case: expected tuple or record
 1 1 1 cond
 
--- EXPECT: untag: expected tuple or record
+-- EXPECT: case: expected tuple or record
 1 'ok tag 1 untag
 
--- EXPECT: untag: need even number of clauses
+-- EXPECT: case: need even number of clauses
 1 'ok tag () {'ok} untag
 
 -- EXPECT: key
