@@ -409,16 +409,15 @@ typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, T
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 24
+#define HO_OP_COUNT 22
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
-    {"filter",0,2,1,TC_LIST,HO_BODY_1TO1},
     {"fold",0,3,1,TC_NONE,0},{"reduce",0,2,1,TC_NONE,0},{"each",0,2,1,TC_FUNCTOR,HO_BODY_1TO1},
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
     {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
-    {"where",0,2,1,TC_LIST,0},{"find",0,2,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
+    {"find",0,2,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
@@ -1804,11 +1803,6 @@ static void prim_each(Frame *env) {
         die("each: expected list or tagged, got %s", valtag_name(top.tag));
     }
 }
-static void prim_filter(Frame *env) {
-    LIST_ITER("filter"); int rb=sp,rc=0;
-    for(int i=0;i<list_len;i++){PUSH_ELEM(i);PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);if(pop_int())rc++;else sp-=szs[i];}
-    spush(val_compound(VAL_LIST,rc,sp-rb+1));
-}
 static void prim_fold(Frame *env) {
     POP_BODY(fn,"fold"); POP_VAL(init);
     Value top=speek();
@@ -2264,14 +2258,6 @@ static void eval(Token *toks, int count, Frame *env) {
     int s=val_slots(stack[sp-1]); Value *body=malloc(s*sizeof(Value));
     VCPY(body,&stack[base],s); sp=base; eval_body(body,s,env); free(body);
 }
-static void prim_where(Frame *env) {
-    LIST_ITER("where"); int rb=sp,rc=0;
-    for(int i=0;i<list_len;i++){
-        PUSH_ELEM(i);
-        eval_body(fn_buf,fn_s,env); if(pop_int()){spush(val_int(i));rc++;}
-    }
-    spush(val_compound(VAL_LIST,rc,sp-rb+1));
-}
 static void prim_find_elem(Frame *env) {
     LIST_ITER("find");
     for(int i=0;i<list_len;i++){
@@ -2346,6 +2332,8 @@ static const char *PRELUDE =
     "'max (over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'min (over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'abs (dup 0 lt (neg) (dup drop) if) def\n"
     "'bi ('g swap def 'f swap def dup f swap g) def\n'keep ('f swap def dup f swap) def\n'repeat ('f swap def (dup 0 gt) (1 sub (f) dip) while drop) def\n"
     "'select (swap 'data swap def (data swap get must) each) def\n'reduce (swap dup 0 get must swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose each) def\n"
+    "'filter ('p swap def list (dup p (push) (drop) if) fold) ['a list own in  tuple own in  'a list move out] effect def\n"
+    "'where ('p swap def 0 'idx let list ('elem swap def elem p (idx push) () if idx 1 plus 'idx let) fold) def\n"
     "'sqr (dup mul) def\n'cube (dup dup mul mul) def\n'ispos (0 swap lt) def\n'isneg (0 lt) def\n"
     "'first (0 get must) def\n'second (1 get must) def\n'third (2 get must) def\n'fourth (3 get must) def\n'fifth (4 get must) def\n"
     "'sixth (5 get must) def\n'seventh (6 get must) def\n'eighth (7 get must) def\n'ninth (8 get must) def\n'tenth (9 get must) def\n"
@@ -2694,9 +2682,9 @@ static void register_prims(void) {
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
         {"get",prim_get},R(nth,nth),R(set,replace_at),R(cat,concat),
         {"take-n",prim_take_n},{"drop-n",prim_drop_n},R(range,range),
-        R(filter,filter),R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
+        R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
-        R(rec,rec),R(into,into),R(edit,edit),R(reverse,reverse),R(dedup,dedup),R(where,where),R(find,find_elem),
+        R(rec,rec),R(into,into),R(edit,edit),R(reverse,reverse),R(dedup,dedup),R(find,find_elem),
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
         R(dict,dict),R(insert,insert),R(of,of),R(remove,remove),
         {"dict-keys",prim_keys},{"dict-values",prim_values},
