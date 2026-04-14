@@ -706,7 +706,7 @@ static int tc_extract_brace_keys(Token *toks, int bs, int tc2, uint32_t *out_sym
 static void tc_push(TypeChecker *tc, TypeConstraint type, int line) {
     if (tc->sp >= ASTACK_MAX) return;
     AbstractType *at = &tc->data[tc->sp++]; memset(at, 0, sizeof(*at));
-    at->type = type; at->flags = (type == TC_BOX || type == TC_DICT) ? AT_LINEAR : 0; at->source_line = line; at->effect_idx = -1;
+    at->type = type; at->flags = (type == TC_BOX) ? AT_LINEAR : 0; at->source_line = line; at->effect_idx = -1;
     if (tc_is_container(type) || type == TC_SEQ) {
         at->tvar_id = tvar_fresh(tc); tc->tvars[at->tvar_id].bound = type; int sub = tvar_fresh(tc);
         if (type == TC_LIST || type == TC_SEQ || type == TC_DICT) tc->tvars[at->tvar_id].elem = sub;
@@ -812,7 +812,7 @@ static int tc_check_body_against_sig(Token *toks, int start, int end, int total_
     if (eff_produced != n_out) { fprintf(stderr, "%s:%d: type error: function body produces %d value(s) but type declares %d output(s)\n", src_files[current_fid], toks[start].line, eff_produced, n_out); errors++; }
     return errors;
 }
-static int tc_is_copyable(AbstractType *t) { return !(t->flags & AT_LINEAR) && t->type != TC_BOX && t->type != TC_DICT; }
+static int tc_is_copyable(AbstractType *t) { return !(t->flags & AT_LINEAR) && t->type != TC_BOX; }
 static int tc_is_builtin(uint32_t sym, int prelude_sig_count) {
     for (int i = 0; i < prelude_sig_count; i++) if (type_sigs[i].sym == sym) return 1;
     return ho_ops_find(sym) != NULL;
@@ -857,7 +857,7 @@ static void tc_apply_scheme(TypeChecker *tc, TupleEffect *eff, int consumed, int
                 if (uid > 0) tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid;
             } else {
                 tc_push(tc, TC_NONE, line); if (r != TC_NONE) tc->data[tc->sp-1].type = r;
-                tc->data[tc->sp-1].tvar_id = ftv; if (fu && (r == TC_BOX || r == TC_DICT)) tc->data[tc->sp-1].flags |= AT_LINEAR;
+                tc->data[tc->sp-1].tvar_id = ftv; if (fu && r == TC_BOX) tc->data[tc->sp-1].flags |= AT_LINEAR;
             }
         } else tc_push(tc, TC_NONE, line);
     }
@@ -1044,7 +1044,7 @@ apply_sig:;
         tc_push(tc, s->constraint, line); AbstractType *at = &tc->data[tc->sp - 1];
         if (s->type_var) { int tv = FIND_TVAR(s->type_var); if (tv > 0) {
             if (tc_is_container(s->constraint) && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_unify(tc, ef, tv, line); }
-            else if (!tc_is_container(s->constraint)) { TypeConstraint r = tvar_resolve(tc, tv); if (r != TC_NONE) at->type = r; at->tvar_id = tv; if (r == TC_BOX || r == TC_DICT) at->flags |= AT_LINEAR; }
+            else if (!tc_is_container(s->constraint)) { TypeConstraint r = tvar_resolve(tc, tv); if (r != TC_NONE) at->type = r; at->tvar_id = tv; if (r == TC_BOX) at->flags |= AT_LINEAR; }
         }}
         if (tc_is_container(s->constraint) && s->elem_constraint != TC_NONE && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_bind(tc, ef, s->elem_constraint, line); }
         if (s->type_var) for (int j = 0; j < tmc; j++) if (tm[j].var == s->type_var) { if (tm[j].src_sym && !tc_is_container(s->constraint)) at->sym_id = tm[j].src_sym; if (tm[j].src_effect_idx >= 0 && !tc_is_container(s->constraint)) at->effect_idx = tm[j].src_effect_idx; break; }
@@ -1064,7 +1064,7 @@ apply_sig:;
 }
 static int tc_word_produces_linear(uint32_t sym) {
     const char *n = sym_name(sym);
-    return strcmp(n,"box")==0 || strcmp(n,"clone")==0 || strcmp(n,"dict")==0;
+    return strcmp(n,"box")==0 || strcmp(n,"clone")==0;
 }
 static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int start, int end, int tc2, int line) {
     TypeConstraint et = TC_NONE; int ec = 0;
@@ -1217,7 +1217,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 } else if (tc->sp >= 2) {
                     AbstractType vt = tc->data[tc->sp-1]; uint32_t ns = tc->data[tc->sp-2].sym_id; tc->sp -= 2;
                     if (ns) {
-                        if (tc->body_depth > 0 && ((vt.flags & AT_LINEAR) || vt.type == TC_BOX || vt.type == TC_DICT)) {
+                        if (tc->body_depth > 0 && ((vt.flags & AT_LINEAR) || vt.type == TC_BOX)) {
                             int seen = 0;
                             for (int k = i+1; k < end; k++) if (toks[k].tag == TOK_WORD && toks[k].as.sym == ns) { seen = 1; break; }
                             if (!seen) tc_error(tc, t->line, vt.source_line, "linear value bound as '%s' is never referenced in the enclosing quotation — it will be captured and leaked", sym_name(ns));
@@ -1229,7 +1229,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 if (tc->sp >= 2) {
                     uint32_t ns = tc->data[tc->sp-1].sym_id; AbstractType val_t = tc->data[tc->sp-2]; tc->sp -= 2;
                     if (ns) {
-                        if (tc->body_depth > 0 && ((val_t.flags & AT_LINEAR) || val_t.type == TC_BOX || val_t.type == TC_DICT)) {
+                        if (tc->body_depth > 0 && ((val_t.flags & AT_LINEAR) || val_t.type == TC_BOX)) {
                             int seen = 0;
                             for (int k = i+1; k < end; k++) if (toks[k].tag == TOK_WORD && toks[k].as.sym == ns) { seen = 1; break; }
                             if (!seen) tc_error(tc, t->line, val_t.source_line, "linear value bound as '%s' is never referenced in the enclosing quotation — it will be captured and leaked", sym_name(ns));
@@ -1285,8 +1285,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     suid = tc->tvars[tvar_find(tc, tid)].union_id;
                     int tp = tvar_content(tc, tid, TC_TAGGED);
                     if (tp > 0) { TypeConstraint pt = tvar_resolve(tc, tp);
-                        if (pt == TC_BOX || pt == TC_DICT)
-                            tc_error(tc, t->line, 0, "'untag' branches cannot safely discard linear payload; use a typed handler that consumes the box/dict"); }
+                        if (pt == TC_BOX)
+                            tc_error(tc, t->line, 0, "'untag' branches cannot safely discard linear payload; use a typed handler that consumes the box"); }
                 }
                 tc_check_word(tc, sym, t->line);
                 if (suid > 0 && i >= tc->user_start) {
@@ -1312,7 +1312,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     }
                 }
             } else if (sym == S_DEFAULT) {
-                if (tc->sp >= 1 && ((tc->data[tc->sp-1].flags & AT_LINEAR) || tc->data[tc->sp-1].type == TC_BOX || tc->data[tc->sp-1].type == TC_DICT))
+                if (tc->sp >= 1 && ((tc->data[tc->sp-1].flags & AT_LINEAR) || tc->data[tc->sp-1].type == TC_BOX))
                     tc_error(tc, t->line, 0, "'default' fallback must not be a linear value (would leak on the 'ok path)");
                 TypeConstraint pt = TC_NONE;
                 if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0) {
@@ -1351,7 +1351,7 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
         if (tc.data[i].type == TC_TAGGED && tc.data[i].tvar_id > 0) {
             int tp = tvar_content(&tc, tc.data[i].tvar_id, TC_TAGGED);
             if (tp > 0) { TypeConstraint pt = tvar_resolve(&tc, tp);
-                if (pt == TC_BOX || pt == TC_DICT)
+                if (pt == TC_BOX)
                     tc_error(&tc, tc.data[i].source_line, 0, "tagged value contains a linear payload (%s) that was never consumed", constraint_name(pt)); }
         }
     }
@@ -1378,8 +1378,10 @@ static int typecheck_tokens(Token *toks, int count, int user_start) {
     int name##_len = (int)name##_top.as.compound.len; \
     int name##_base __attribute__((unused)) = sp - name##_s; \
     Value name##_buf[name##_s]; VCPY(name##_buf,&stack[name##_base],name##_s); sp = name##_base
-static void prim_dup(Frame *e) { (void)e; if (sp<=0) die("dup: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){stack[sp++]=top;return;} int s=val_slots(top); if(sp+s>STACK_MAX) die("dup: stack overflow"); SPUSH(&stack[sp-s],s); }
-static void prim_drop(Frame *e) { (void)e; if (sp<=0) die("drop: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){sp--;return;} sp-=val_slots(top); }
+static void deep_copy_values(Value *dst, const Value *src, int slots);
+static void deep_free_values(Value *vals, int slots);
+static void prim_dup(Frame *e) { (void)e; if (sp<=0) die("dup: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){stack[sp++]=top;return;} int s=val_slots(top); if(sp+s>STACK_MAX) die("dup: stack overflow"); deep_copy_values(&stack[sp],&stack[sp-s],s); sp+=s; }
+static void prim_drop(Frame *e) { (void)e; if (sp<=0) die("drop: stack underflow"); Value top=stack[sp-1]; if(top.tag<=VAL_XT){sp--;return;} int s=val_slots(top); deep_free_values(&stack[sp-s],s); sp-=s; }
 static void prim_swap(Frame *e) {
     (void)e; if(sp<2)die("swap: stack underflow");
     Value top=stack[sp-1],below=stack[sp-2];
@@ -1634,9 +1636,10 @@ FLOAT1(ffloor,floor) FLOAT1(fceil,ceil) FLOAT1(fround,round) FLOAT1(fexp,exp) FL
 #define FLOAT2(nm,fn) static void prim_##nm(Frame *e){(void)e;double b=pop_float(),a=pop_float();spush(val_float(fn(a,b)));}
 FLOAT2(fpow,pow) FLOAT2(fatan2,atan2)
 static void prim_stack(Frame *e){(void)e;spush(val_compound(VAL_TUPLE,0,1));}
+static void dict_data_free(DictData *dd);
 static void prim_size(Frame *e) {
     (void)e; Value top=speek();
-    if(top.tag==VAL_DICT){ spush(val_int(((DictData*)top.as.box)->len)); return; }
+    if(top.tag==VAL_DICT){ int n=((DictData*)top.as.box)->len; dict_data_free((DictData*)top.as.box); sp--; spush(val_int(n)); return; }
     if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
     if(!is_compound(top.tag)) die("len: expected compound, got %s",valtag_name(top.tag));
     sp-=val_slots(top); spush(val_int((int)top.as.compound.len));
@@ -1878,6 +1881,7 @@ static void prim_mutate(Frame *env) {
     VCPY(bd->data,&stack[sp-ns],ns); sp-=ns; spush(box_val);
 }
 static DictData *dict_clone(DictData *orig);
+static void dict_data_free(DictData *dd);
 static void deep_copy_values(Value *dst, const Value *src, int slots) {
     VCPY(dst,src,slots);
     for(int i=0;i<slots;i++){
@@ -1888,6 +1892,12 @@ static void deep_copy_values(Value *dst, const Value *src, int slots) {
         } else if(dst[i].tag==VAL_DICT){
             dst[i].as.box=dict_clone((DictData*)dst[i].as.box);
         }
+    }
+}
+static void deep_free_values(Value *vals, int slots) {
+    for(int i=0;i<slots;i++){
+        if(vals[i].tag==VAL_DICT) dict_data_free((DictData*)vals[i].as.box);
+        /* boxes are linear and rejected at TC time; not freed here */
     }
 }
 static BoxData *box_clone(BoxData *orig) { BoxData *c=malloc(sizeof(BoxData));c->data=malloc(orig->slots*sizeof(Value));c->slots=orig->slots;deep_copy_values(c->data,orig->data,orig->slots);return c; }

@@ -1480,63 +1480,61 @@ none () no eq assert
 -- combined: parse key=value
 "name=alice" ok "=" parse-until must "alice" eq assert "name" eq assert
 
--- ===== Dict =====
+-- ===== Dict (stackable; dup to keep across `len`) =====
 -- empty dict
-dict len 0 eq assert free
+dict len 0 eq assert
 
 -- insert + of (hit)
-dict "name" "alice" insert "name" of "missing" default "alice" eq assert free
+dict "name" "alice" insert "name" of "missing" default "alice" eq assert drop
 -- insert + of (miss)
-dict "x" 1 insert "y" of 42 default 42 eq assert free
+dict "x" 1 insert "y" of 42 default 42 eq assert drop
 
 -- overwrite preserves len, updates value
-dict "k" 1 insert "k" 2 insert len 1 eq assert
-"k" of 0 default 2 eq assert free
+dict "k" 1 insert "k" 2 insert
+dup len 1 eq assert
+"k" of 0 default 2 eq assert drop
 
 -- remove existing decreases len; removing absent is no-op
 dict "a" 1 insert "b" 2 insert "c" 3 insert "b" remove
-len 2 eq assert
-"b" of 0 default 0 eq assert
-"nope" remove len 2 eq assert free
+dup len 2 eq assert
+dup "b" of 0 default 0 eq assert
+"nope" remove len 2 eq assert
 
 -- keys/values snapshot (hash order undefined — check length and sum)
 dict "x" 1 insert "y" 2 insert "z" 3 insert
-dict-keys len 3 eq assert
-dict-values sum 6 eq assert free
+dup dict-keys len 3 eq assert
+dict-values sum 6 eq assert
 
 -- clone independence
 dict "a" 1 insert clone "b" 2 insert
-len 2 eq assert
-swap len 1 eq assert
-free free
+dup len 2 eq assert drop
+len 1 eq assert
 
 -- grow path (>8 entries)
 dict
 "a" 1 insert "b" 2 insert "c" 3 insert "d" 4 insert
 "e" 5 insert "f" 6 insert "g" 7 insert "h" 8 insert
 "i" 9 insert "j" 10 insert "k" 11 insert "l" 12 insert
-len 12 eq assert
-"h" of 0 default 8 eq assert
-"z" of 999 default 999 eq assert
-free
+dup len 12 eq assert
+dup "h" of 0 default 8 eq assert
+"z" of 999 default 999 eq assert drop
 
 -- empty-string key is valid
-dict "" 7 insert "" of 0 default 7 eq assert free
+dict "" 7 insert "" of 0 default 7 eq assert drop
 
 -- remove then reinsert (probe chain correctness)
 dict "a" 1 insert "b" 2 insert "c" 3 insert
 "b" remove "b" 20 insert
-"a" of 0 default 1 eq assert
-"b" of 0 default 20 eq assert
-"c" of 0 default 3 eq assert free
+dup "a" of 0 default 1 eq assert
+dup "b" of 0 default 20 eq assert
+"c" of 0 default 3 eq assert drop
 
 -- each: fmap over dict, body receives (k v) tuple and returns new value
 dict "a" 1 insert "b" 2 insert "c" 3 insert
 (second 10 mul) each
-"a" of 0 default 10 eq assert
-"b" of 0 default 20 eq assert
-"c" of 0 default 30 eq assert
-free
+dup "a" of 0 default 10 eq assert
+dup "b" of 0 default 20 eq assert
+"c" of 0 default 30 eq assert drop
 
 -- fold: reduce over dict, body receives acc + (k v) tuple
 dict "a" 1 insert "b" 2 insert "c" 7 insert

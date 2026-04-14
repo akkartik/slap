@@ -304,13 +304,9 @@
 -- TYPE ERROR: sort list of lists (lists aren't Ord)
 [[1] [2]] sort
 
--- EXPECT: linear value
--- TYPE ERROR: dict never freed (linear leak)
-dict "k" 1 insert
-
--- EXPECT: requires copyable
--- TYPE ERROR: dup on linear dict
-dict dup free free
+-- EXPECT: type variable 'a' mismatch
+-- TYPE ERROR: heterogeneous dict values (no need for free now that dicts are stackable)
+dict "k" 1 insert "j" "two" insert
 
 -- EXPECT: expected dict
 -- TYPE ERROR: insert expects dict
