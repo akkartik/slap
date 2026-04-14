@@ -600,7 +600,12 @@ static const uint32_t tc_compat[] = {
     [TC_BOX]=B(TC_BOX)|B(TC_LINEAR), [TC_STACK]=B(TC_STACK),
     [TC_TAGGED]=B(TC_TAGGED)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_EQ),
     [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
-    [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED)|B(TC_NUM)|B(TC_ORD)|B(TC_SEQ)|B(TC_INTEGRAL)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD),
+    /* EQ is the most general stackable constraint. A value typed only as EQ
+       cannot be narrowed to something stricter (ORD, NUM, SEQ, ...) without
+       concrete evidence — that would silently tighten a function's declared
+       signature beyond what was written. Keep this row minimal: EQ and the
+       concrete stackable types that inherently satisfy Eq. */
+    [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED),
     [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_NUM),
     [TC_INTEGRAL]=B(TC_INTEGRAL)|B(TC_INT)|B(TC_NUM)|B(TC_EQ),
     [TC_SEMIGROUP]=B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ),
@@ -609,6 +614,10 @@ static const uint32_t tc_compat[] = {
     [TC_APPLICATIVE]=B(TC_APPLICATIVE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_MONAD),
     [TC_FOLDABLE]=B(TC_FOLDABLE)|B(TC_LIST)|B(TC_SEQ)|B(TC_DICT),
     [TC_MONAD]=B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_APPLICATIVE),
+    /* DICT still cross-matches LINEAR at the constraint level so ops declared
+       with `linear` (free, clone) accept a dict. Runtime linearity is a
+       separate flag on the AbstractType (AT_LINEAR), which is off for dicts
+       post-A2. */
     [TC_DICT]=B(TC_DICT)|B(TC_FUNCTOR)|B(TC_FOLDABLE)|B(TC_LINEAR)|B(TC_SIZED),
     [TC_LINEAR]=B(TC_LINEAR)|B(TC_BOX)|B(TC_DICT),
     [TC_SIZED]=B(TC_SIZED)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_DICT)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID),
@@ -632,7 +641,14 @@ static int tvar_bind(TypeChecker *tc, int id, TypeConstraint c, int line) {
     int root = tvar_find(tc, id); TypeConstraint cur = tc->tvars[root].bound;
     if (cur == TC_NONE) { tc->tvars[root].bound = c; return 0; }
     if (tc_constraint_matches(cur, c)) { if (tc_should_narrow(cur, c)) tc->tvars[root].bound = c; return 0; }
-    if (tc_constraint_matches(c, cur)) return 0;
+    if (tc_constraint_matches(c, cur)) {
+        /* c is stricter than cur. Narrow to the intersection (c) since we have
+           evidence at the call site that the tvar is at least as tight as c.
+           Without this, a body annotated `'a eq` using `sort` (wants ord) would
+           leave the tvar at EQ and silently lie about the sig it presents to
+           callers. Narrowing here forces the sig mismatch to surface later. */
+        tc->tvars[root].bound = c; return 0;
+    }
     (void)line; return 1;
 }
 static int tvar_unify(TypeChecker *tc, int a, int b, int line) {
