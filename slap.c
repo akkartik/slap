@@ -734,6 +734,20 @@ static void tc_error(TypeChecker *tc, int line, int origin_line, const char *fmt
     if (origin_line > 0 && origin_line != line) print_source_line(stderr, current_fid, origin_line, 0);
     fprintf(stderr, "\n");
 }
+/* tc_error_hard: bypasses suppress_errors. Use for unsafe patterns (lend-body
+   aliasing, linear captures) where silent acceptance would let bad code slip
+   through speculative re-checks of the builtin prelude. */
+static void tc_error_hard(TypeChecker *tc, int line, int origin_line, const char *fmt, ...) {
+    int saved = tc->suppress_errors; tc->suppress_errors = 0;
+    va_list ap; va_start(ap, fmt);
+    tc->errors++; const char *f = src_files[current_fid];
+    fprintf(stderr, "\n-- TYPE ERROR %s:%d ", f, line);
+    int hl=15+(int)strlen(f)+10; for(int i=hl;i<60;i++) fputc('-',stderr);
+    fprintf(stderr, "\n\n    "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n\n"); va_end(ap);
+    print_source_line(stderr, current_fid, line, 0);
+    if (origin_line > 0 && origin_line != line) print_source_line(stderr, current_fid, origin_line, 0);
+    fprintf(stderr, "\n"); tc->suppress_errors = saved;
+}
 #define EFF_CONSUME(vsp,consumed,need) do{if(vsp<(need)){consumed+=(need)-vsp;vsp=0;}else vsp-=(need);}while(0)
 static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int tc2,
                             int *out_consumed, int *out_produced, TypeChecker *ctx,
@@ -879,7 +893,7 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
         if ((ho->flags & HO_BOX_BORROW) && tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
             TypeConstraint ct = TC_BOX_CONTENTS(tc); tc->data[tc->sp-1].borrowed++;
             if (bk && bteff && bteff->has_let && (ct == TC_LIST || ct == TC_REC || ct == TC_TUPLE || ct == TC_TAGGED))
-                tc_error(tc, line, 0, "'lend' body may not 'let'/'def'-bind values when the box contains a compound value (%s) — the borrowed snapshot aliases the box's backing storage and later 'mutate' calls would silently corrupt the binding", constraint_name(ct));
+                tc_error_hard(tc, line, 0, "'lend' body may not 'let'/'def'-bind values when the box contains a compound value (%s) — the borrowed snapshot aliases the box's backing storage and later 'mutate' calls would silently corrupt the binding", constraint_name(ct));
             int r = bk ? (1 - eff_c + eff_p) : 1; if (r < 0) r = 0;
             for (int j = 0; j < r; j++) tc_push(tc, (j==r-1&&bo!=TC_NONE)?bo:(j==0&&ct!=TC_NONE)?ct:TC_NONE, line);
             int bi = tc->sp - r - 1; if (bi >= 0) tc->data[bi].borrowed--;
@@ -1234,8 +1248,10 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                             for (int k = i+1; k < end; k++) if (toks[k].tag == TOK_WORD && toks[k].as.sym == ns) { seen = 1; break; }
                             if (!seen) tc_error(tc, t->line, val_t.source_line, "linear value bound as '%s' is never referenced in the enclosing quotation — it will be captured and leaked", sym_name(ns));
                         }
-                        if (tc->lend_depth > 0 && (val_t.type == TC_LIST || val_t.type == TC_REC || val_t.type == TC_TUPLE || val_t.type == TC_TAGGED))
-                            tc_error(tc, t->line, val_t.source_line, "cannot 'let'-bind compound value '%s' (%s) inside a 'lend' body — the snapshot aliases the box's backing storage and would observe later mutations", sym_name(ns), constraint_name(val_t.type));
+                        if (tc->lend_depth > 0 && (val_t.type == TC_LIST || val_t.type == TC_REC || val_t.type == TC_TUPLE || val_t.type == TC_TAGGED)) {
+                            tc_error_hard(tc, t->line, val_t.source_line, "cannot 'let'-bind compound value '%s' (%s) inside a 'lend' body — the snapshot aliases the box's backing storage and would observe later mutations", sym_name(ns), constraint_name(val_t.type));
+                            break;  /* skip the bind; avoid corrupting downstream inference */
+                        }
                         if (i >= tc->user_start) { int ss=tc->suppress_errors; tc->suppress_errors=0;
                             if(tc_is_builtin(ns,tc->prelude_sig_count)) tc_error(tc,t->line,0,"'%s' shadows existing definition",sym_name(ns));
                             else{TCBinding *ex=tc_lookup(tc,ns);if(ex)tc_error(tc,t->line,0,"'%s' %s (line %d)",sym_name(ns),ex->is_def?"shadows existing definition":"is already bound",ex->def_line);}
