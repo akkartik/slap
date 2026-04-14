@@ -221,7 +221,7 @@ list 10 push 20 push        -- [10 20]
 [1 2 3] reverse             -- [3 2 1]
 [1 2 2 3 3] dedup           -- [1 2 3]
 [10 20 30] 20 index-of      -- 1
-[10 20 30] (15 lt not) find  -- 20
+[10 20 30] -1 (15 lt not) find  -- 20 (default -1 if no match)
 
 -- structural
 [1 2 3] [4 5 6] zip         -- [[1 4] [2 5] [3 6]]
@@ -495,7 +495,7 @@ String primitives plus prelude helpers. Strings are lists of Unicode codepoints;
 
 | Word | Effect | Example |
 |------|--------|---------|
-| `str-find` | haystack needle → index (or -1) | `"hello world" "world" str-find` → `6` |
+| `str-find` | haystack needle → `index ok` or `none` | `"hello world" "world" str-find must` → `6` |
 | `str-split` | str delim → list of substrings | `"a,b,c" "," str-split` → `["a" "b" "c"]` |
 | `str-join` | parts sep → joined | `["a" "b" "c"] "," str-join` → `"a,b,c"` |
 | `int-str` | n → decimal string | `42 int-str` → `"42"` |

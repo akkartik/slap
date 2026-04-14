@@ -417,7 +417,7 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"while",0,2,0,TC_NONE,0},{"loop",0,1,0,TC_NONE,HO_APPLY_EFFECT},
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
     {"cond",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
-    {"find",0,2,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
+    {"find",0,3,1,TC_NONE,0},{"table",0,2,1,TC_LIST,0},
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
@@ -2259,12 +2259,13 @@ static void eval(Token *toks, int count, Frame *env) {
     VCPY(body,&stack[base],s); sp=base; eval_body(body,s,env); free(body);
 }
 static void prim_find_elem(Frame *env) {
-    LIST_ITER("find");
+    POP_BODY(fn,"find"); POP_VAL(def); POP_LIST_BUF(list,"find");
+    int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
     for(int i=0;i<list_len;i++){
-        PUSH_ELEM(i); PUSH_ELEM(i);
-        eval_body(fn_buf,fn_s,env); if(pop_int()) return; sp-=szs[i];
+        int rb=sp; SPUSH(&list_buf[offs[i]],szs[i]); SPUSH(&list_buf[offs[i]],szs[i]);
+        eval_body(fn_buf,fn_s,env); if(pop_int()) return; sp=rb;
     }
-    spush(val_int(-1));
+    SPUSH(def_buf,def_s);
 }
 #ifndef SLAP_SDL
 static void prim_millis(Frame *e){(void)e;struct timespec ts;clock_gettime(CLOCK_MONOTONIC,&ts);spush(val_int((int64_t)(ts.tv_sec*1000+ts.tv_nsec/1000000)));}
