@@ -69,10 +69,10 @@ nonexistent_word_xyz
 -- EXPECT: index 5 out of bounds
 [1 2 3] 5 99 set must
 
--- EXPECT: expected box
+-- EXPECT: needs 2 input
 1 mutate
 
--- EXPECT: expected box
+-- EXPECT: needs 2 input
 1 lend
 
 -- EXPECT: expected linear
@@ -269,7 +269,7 @@ tuck
 -- EXPECT: out of bounds
 [] last
 
--- EXPECT: dip: need body and value
+-- EXPECT: needs 2 input
 1 dip
 
 -- EXPECT: loop: expected tuple
@@ -278,7 +278,7 @@ tuck
 -- EXPECT: case: expected tuple or record
 1 1 1 cond
 
--- EXPECT: case: expected tuple or record
+-- EXPECT: needs 3 input
 1 'ok tag 1 untag
 
 -- EXPECT: case: need even number of clauses

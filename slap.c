@@ -559,7 +559,7 @@ typedef struct {
 } AbstractType;
 #define ASTACK_MAX 256
 #define TC_BINDS_MAX 2048
-typedef struct { uint32_t sym; AbstractType atype; int is_def; int def_line; int body_depth; } TCBinding;
+typedef struct { uint32_t sym; AbstractType atype; int is_def; int def_line; int body_depth; int consumed_line; } TCBinding;
 typedef struct { uint32_t sym; int line; } TCUnknown;
 #define TC_UNKNOWN_MAX 256
 typedef struct {
@@ -866,12 +866,12 @@ static int tc_is_builtin(uint32_t sym, int prelude_sig_count) {
 }
 static void tc_bind(TypeChecker *tc, uint32_t sym, AbstractType *atype, int is_def, int line) {
     for (int i = 0; i < tc->bind_count; i++) {
-        if (tc->bindings[i].sym == sym) { tc->bindings[i].atype = *atype; tc->bindings[i].is_def = is_def; tc->bindings[i].def_line = line; tc->bindings[i].body_depth = tc->body_depth; return; }
+        if (tc->bindings[i].sym == sym) { tc->bindings[i].atype = *atype; tc->bindings[i].is_def = is_def; tc->bindings[i].def_line = line; tc->bindings[i].body_depth = tc->body_depth; tc->bindings[i].consumed_line = 0; return; }
     }
     if (tc->bind_count < TC_BINDS_MAX) {
         tc->bindings[tc->bind_count].sym = sym; tc->bindings[tc->bind_count].atype = *atype;
         tc->bindings[tc->bind_count].is_def = is_def; tc->bindings[tc->bind_count].def_line = line;
-        tc->bindings[tc->bind_count].body_depth = tc->body_depth; tc->bind_count++;
+        tc->bindings[tc->bind_count].body_depth = tc->body_depth; tc->bindings[tc->bind_count].consumed_line = 0; tc->bind_count++;
     }
 }
 static void tc_apply_scheme(TypeChecker *tc, TupleEffect *eff, int consumed, int produced,
@@ -915,6 +915,12 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
     TypeConstraint bouts[8] = {0}; int bc = 0;
     int barr_c[8] = {0}, barr_p[8] = {0}, barr_has[8] = {0};
     AbstractType saved = {0}; int had_saved = 0;
+    if ((tc->sp - tc->sp_floor) < ho->need) {
+        tc_error(tc, line, 0, "'%s' needs %d input(s), stack has %d", ho->name, ho->need, tc->sp - tc->sp_floor);
+        tc->sp = tc->sp_floor;
+        for (int j = 0; j < ho->out; j++) tc_push(tc, ho->out_type, line);
+        return;
+    }
     if (ho->flags & (HO_BOX_BORROW|HO_BOX_MUTATE)) {
         if (tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE) {
             if (tc->data[tc->sp-1].effect_idx >= 0) { TupleEffect *te = &tc->effects[tc->data[tc->sp-1].effect_idx]; eff_c = te->consumed; eff_p = te->produced; bo = te->out_type; bk = 1; bteff = te; }
@@ -1020,6 +1026,17 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
     { HOEffect *ho = ho_ops_find(sym); if (ho) { tc_apply_ho(tc, ho, line); return; } }
     { TCBinding *b = tc_lookup(tc, sym);
       if (b) {
+        /* A linear-capturing closure (tuple whose body referenced linear outer bindings)
+           must be applied at most once — each application would re-consume the captured
+           linear resource. Bare Box bindings are mutable references: mutate/lend thread
+           the box back onto the stack, so they can be looked up many times. Runtime
+           still catches bare-box double-free/double-consume. */
+        int is_linear_closure = (b->atype.flags & AT_LINEAR) && b->atype.type == TC_TUPLE;
+        if (is_linear_closure && b->consumed_line > 0) {
+            tc_error_hard(tc, line, b->consumed_line, "linear-capturing closure '%s' has already been consumed (previous use on line %d) — a closure that captures a linear value can only be applied once", sym_name(sym), b->consumed_line);
+            tc_push(tc, b->atype.type, line); tc->data[tc->sp-1].flags |= AT_CONSUMED; return;
+        }
+        if (is_linear_closure) b->consumed_line = line;
         if (b->is_def && b->atype.type == TC_TUPLE && b->atype.effect_idx >= 0) {
             TupleEffect *eff = &tc->effects[b->atype.effect_idx];
             if (eff->scheme_count > 0) tc_apply_scheme(tc, eff, eff->consumed, eff->produced, eff->out_type, sym_name(sym), line, 1);
