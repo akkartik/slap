@@ -351,3 +351,15 @@ dict (drop) each free
 -- EXPECT: does not handle tag
 -- TYPE ERROR: untag missing the tag that was just produced
 42 'unknown tag {'foo (drop 0)} untag
+
+-- EXPECT: requires copyable
+-- TYPE ERROR: closure capturing linear binding cannot be duplicated
+42 box 'b let (b free) dup apply apply
+
+-- EXPECT: linear values produced by 'box'
+-- TYPE ERROR: list literal cannot contain box
+[42 box]
+
+-- EXPECT: linear values produced by 'box'
+-- TYPE ERROR: record literal cannot contain box
+{'k box}

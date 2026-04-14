@@ -550,6 +550,7 @@ typedef struct {
     int in_tvars[8], out_tvars[8], in_count, out_count;
     int out_effect;
     int has_let;
+    int captures_linear;  /* body looked up a linear binding from outer scope; tuple is single-use */
 } TupleEffect;
 #define AT_LINEAR 1
 #define AT_CONSUMED 2
@@ -570,6 +571,7 @@ typedef struct {
     TVarEntry tvars[TVAR_MAX]; int tvar_count;
     TupleEffect effects[EFFECT_MAX]; int effect_count;
     int user_start, prelude_sig_count, suppress_errors, sp_floor, body_depth, lend_depth;
+    int saw_linear_capture;  /* set by binding-lookup of a linear value; consumed by enclosing tuple-body inference */
     UnionDef unions[UNION_MAX]; int union_count;
 } TypeChecker;
 static int tvar_fresh(TypeChecker *tc) {
@@ -976,7 +978,7 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             if (eff->scheme_count > 0) tc_apply_scheme(tc, eff, eff->consumed, eff->produced, eff->out_type, sym_name(sym), line, 1);
             else tc_apply_effect(tc, eff->consumed, eff->produced, eff->out_type, line);
             return;
-        } else { tc_push(tc, b->atype.type, line); if (b->atype.flags & AT_LINEAR) tc->data[tc->sp-1].flags |= AT_LINEAR; return; }
+        } else { tc_push(tc, b->atype.type, line); if (b->atype.flags & AT_LINEAR) { tc->data[tc->sp-1].flags |= AT_LINEAR; tc->saw_linear_capture = 1; } return; }
       }
     }
     if (tc->unknown_count < TC_UNKNOWN_MAX) { tc->unknowns[tc->unknown_count].sym = sym; tc->unknowns[tc->unknown_count].line = line; tc->unknown_count++; }
@@ -1060,6 +1062,10 @@ apply_sig:;
     }
     #undef MAX_TVARS
 }
+static int tc_word_produces_linear(uint32_t sym) {
+    const char *n = sym_name(sym);
+    return strcmp(n,"box")==0 || strcmp(n,"clone")==0 || strcmp(n,"dict")==0;
+}
 static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int start, int end, int tc2, int line) {
     TypeConstraint et = TC_NONE; int ec = 0;
     for (int i = start; i < end; i++) { TypeConstraint tt = TC_NONE;
@@ -1068,7 +1074,8 @@ static TypeConstraint tc_check_list_elements(TypeChecker *tc, Token *toks, int s
         case TOK_LPAREN: tt=TC_TUPLE;i=find_matching(toks,i+1,tc2,TOK_LPAREN,TOK_RPAREN);break;
         case TOK_LBRACKET: tt=TC_LIST;i=find_matching(toks,i+1,tc2,TOK_LBRACKET,TOK_RBRACKET);break;
         case TOK_LBRACE: tt=TC_REC;i=find_matching(toks,i+1,tc2,TOK_LBRACE,TOK_RBRACE);break;
-        case TOK_WORD: return TC_NONE; default: continue; }
+        case TOK_WORD: return TC_NONE;
+        default: continue; }
         if (tt == TC_NONE) continue;
         if (++ec == 1) et = tt;
         else if (tt != et) { tc_error(tc, line, 0, "list elements have inconsistent types: element 1 is %s, element %d is %s", constraint_name(et), ec, constraint_name(tt)); return TC_NONE; }
@@ -1105,8 +1112,9 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             for (int j = i+1; j < close; j++) if (toks[j].tag == TOK_LPAREN || toks[j].tag == TOK_LBRACKET || toks[j].tag == TOK_LBRACE) { is_simple = 0; break; }
             int scheme_base = tc->tvar_count, ic = 0, oc = 0, out_eff = -1;
             int itv[8] = {0}, otv[8] = {0}, sc = 0;
-            { int _s[]={tc->sp,tc->bind_count,tc->unknown_count,tc->recur_pending,tc->suppress_errors,type_sig_count,tc->effect_count,tc->sp_floor};
+            { int _s[]={tc->sp,tc->bind_count,tc->unknown_count,tc->recur_pending,tc->suppress_errors,type_sig_count,tc->effect_count,tc->sp_floor,tc->saw_linear_capture};
                 int wide = (eff_c > 8 || eff_p > 8), skip = 0;
+                tc->saw_linear_capture = 0;
                 if (!is_simple) { tc->sp_floor = tc->sp; }
                 if (wide && !skip) tc->suppress_errors = 1;
                 ic = wide ? 0 : eff_c;
@@ -1130,20 +1138,33 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     sc = tc->tvar_count - scheme_base;
                     if (ao == 1 && tc->data[tc->sp-1].type == TC_TUPLE && tc->data[tc->sp-1].effect_idx >= 0) out_eff = tc->data[tc->sp-1].effect_idx;
                 }
-                tc->sp=_s[0];tc->bind_count=_s[1];tc->unknown_count=_s[2];tc->recur_pending=_s[3];tc->suppress_errors=_s[4];type_sig_count=_s[5];tc->effect_count=_s[6];tc->sp_floor=_s[7];
+                int body_captured = tc->saw_linear_capture;
+                tc->sp=_s[0];tc->bind_count=_s[1];tc->unknown_count=_s[2];tc->recur_pending=_s[3];tc->suppress_errors=_s[4];type_sig_count=_s[5];tc->effect_count=_s[6];tc->sp_floor=_s[7];tc->saw_linear_capture=_s[8];
+                tc_push(tc, TC_TUPLE, t->line);
+                int eidx = tc_alloc_effect(tc); TupleEffect *eff = &tc->effects[eidx];
+                eff->consumed = eff_c; eff->produced = eff_p; eff->out_type = eff_out; eff->out_effect = out_eff;
+                eff->scheme_base = scheme_base; eff->scheme_count = sc; eff->in_count = ic; eff->out_count = oc;
+                eff->captures_linear = body_captured;
+                for (int j = 0; j < ic; j++) eff->in_tvars[j] = itv[j];
+                for (int j = 0; j < oc; j++) eff->out_tvars[j] = otv[j];
+                for (int k = i+1; k < close; k++) if (toks[k].tag == TOK_WORD && (toks[k].as.sym == S_LET || toks[k].as.sym == S_DEF)) { eff->has_let = 1; break; }
+                tc->data[tc->sp-1].effect_idx = eidx;
+                if (body_captured) tc->data[tc->sp-1].flags |= AT_LINEAR;
             }
-            tc_push(tc, TC_TUPLE, t->line);
-            int eidx = tc_alloc_effect(tc); TupleEffect *eff = &tc->effects[eidx];
-            eff->consumed = eff_c; eff->produced = eff_p; eff->out_type = eff_out; eff->out_effect = out_eff;
-            eff->scheme_base = scheme_base; eff->scheme_count = sc; eff->in_count = ic; eff->out_count = oc;
-            for (int j = 0; j < ic; j++) eff->in_tvars[j] = itv[j];
-            for (int j = 0; j < oc; j++) eff->out_tvars[j] = otv[j];
-            for (int k = i+1; k < close; k++) if (toks[k].tag == TOK_WORD && (toks[k].as.sym == S_LET || toks[k].as.sym == S_DEF)) { eff->has_let = 1; break; }
-            tc->data[tc->sp-1].effect_idx = eidx;
             i = close; break;
         }
         case TOK_LBRACKET: {
             int close = find_matching(toks, i+1, total_count, TOK_LBRACKET, TOK_RBRACKET);
+            int is_type_annot = (close+1 < total_count && toks[close+1].tag == TOK_WORD && toks[close+1].as.sym == S_EFFECT);
+            if (!is_type_annot) {
+                for (int j = i+1; j < close; j++) {
+                    if (toks[j].tag == TOK_LPAREN) { j = find_matching(toks, j+1, total_count, TOK_LPAREN, TOK_RPAREN); continue; }
+                    if (toks[j].tag == TOK_LBRACKET) { j = find_matching(toks, j+1, total_count, TOK_LBRACKET, TOK_RBRACKET); continue; }
+                    if (toks[j].tag == TOK_LBRACE) { j = find_matching(toks, j+1, total_count, TOK_LBRACE, TOK_RBRACE); continue; }
+                    if (toks[j].tag == TOK_WORD && tc_word_produces_linear(toks[j].as.sym))
+                        tc_error(tc, t->line, 0, "list literal cannot contain linear values produced by '%s'", sym_name(toks[j].as.sym));
+                }
+            }
             TypeConstraint elem = tc_check_list_elements(tc, toks, i+1, close, total_count, t->line);
             tc_push(tc, TC_LIST, t->line);
             if (elem != TC_NONE && tc->data[tc->sp-1].tvar_id > 0) {
@@ -1171,6 +1192,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 } else {
                     if (toks[j].tag == TOK_INT) tv = TC_INT; else if (toks[j].tag == TOK_FLOAT) tv = TC_FLOAT;
                     else if (toks[j].tag == TOK_SYM) tv = TC_SYM; else if (toks[j].tag == TOK_STRING) tv = TC_LIST;
+                    else if (toks[j].tag == TOK_WORD && tc_word_produces_linear(toks[j].as.sym))
+                        tc_error(tc, t->line, 0, "record literal cannot contain linear values produced by '%s'", sym_name(toks[j].as.sym));
                     j++;
                 }
                 if (!pairs && tv != TC_NONE) vtype = tv;

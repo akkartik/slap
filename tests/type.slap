@@ -46,6 +46,8 @@ list drop
 
 -- ===== Box lifecycle =====
 42 box free
+42 box (free) apply
+42 box 'b let (b free) apply
 
 -- ===== Integer modulo =====
 10 3 mod drop
