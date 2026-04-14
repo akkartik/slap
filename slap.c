@@ -714,9 +714,19 @@ static void tc_error(TypeChecker *tc, int line, int origin_line, const char *fmt
     fprintf(stderr, "\n");
 }
 #define EFF_CONSUME(vsp,consumed,need) do{if(vsp<(need)){consumed+=(need)-vsp;vsp=0;}else vsp-=(need);}while(0)
+static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int tc2,
+                            int *out_consumed, int *out_produced, TypeChecker *ctx,
+                            const uint32_t *outer_binds, int outer_count);
 static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int tc2,
                             int *out_consumed, int *out_produced, TypeChecker *ctx) {
+    return tc_infer_effect_ctx2(toks, start, end, tc2, out_consumed, out_produced, ctx, NULL, 0);
+}
+static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int tc2,
+                            int *out_consumed, int *out_produced, TypeChecker *ctx,
+                            const uint32_t *outer_binds, int outer_count) {
     int vsp = 0, consumed = 0; TypeConstraint tt = TC_NONE;
+    uint32_t local_binds[32]; int local_count = 0;
+    for (int i = 0; i < outer_count && local_count < 32; i++) local_binds[local_count++] = outer_binds[i];
     for (int i = start; i < end; i++) {
         switch (toks[i].tag) {
         case TOK_INT: vsp++; tt = TC_INT; break;
@@ -728,7 +738,11 @@ static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int t
         case TOK_LBRACE: i = find_matching(toks, i+1, tc2, TOK_LBRACE, TOK_RBRACE); vsp++; tt = TC_REC; break;
         case TOK_WORD: {
             uint32_t sym = toks[i].as.sym;
-            if (sym == S_DEF || sym == S_LET) { EFF_CONSUME(vsp,consumed,2); }
+            if (sym == S_DEF || sym == S_LET) {
+                if (i >= start + 1 && toks[i-1].tag == TOK_SYM && local_count < 32) local_binds[local_count++] = toks[i-1].as.sym;
+                else if (sym == S_DEF && i >= start + 3 && toks[i-3].tag == TOK_SYM && local_count < 32) local_binds[local_count++] = toks[i-3].as.sym;
+                EFF_CONSUME(vsp,consumed,2);
+            }
             else if (sym == S_RECUR) { EFF_CONSUME(vsp,consumed,1); }
             else {
                 TypeSig *sig = typesig_find(sym);
@@ -742,14 +756,18 @@ static TypeConstraint tc_infer_effect_ctx(Token *toks, int start, int end, int t
                         if (ctx && sym == S_IF && i >= start + 2 && i-1 >= start && toks[i-1].tag == TOK_RPAREN) {
                             int bp = i-1, ep = bp, d = 1;
                             for (int k = bp-1; k >= start; k--) { if (toks[k].tag == TOK_RPAREN) d++; else if (toks[k].tag == TOK_LPAREN && --d == 0) { ep = k; break; } }
-                            int bc = 0, bp2 = 0; tc_infer_effect_ctx(toks, ep+1, bp, tc2, &bc, &bp2, ctx); need = ho->need + bc; out = bp2;
+                            int bc = 0, bp2 = 0; tc_infer_effect_ctx2(toks, ep+1, bp, tc2, &bc, &bp2, ctx, local_binds, local_count); need = ho->need + bc; out = bp2;
                         }
                         EFF_CONSUME(vsp,consumed,need); vsp += out; if (out > 0) tt = ho->out_type;
                     }
                 }
-                if (ctx && !sig && !ho_ops_find(sym)) { TCBinding *ub = tc_lookup(ctx, sym);
-                    if (ub && ub->is_def && ub->atype.effect_idx >= 0) { TupleEffect *e = &ctx->effects[ub->atype.effect_idx]; EFF_CONSUME(vsp,consumed,e->consumed); vsp += e->produced; if (e->produced > 0) tt = e->out_type; }
-                    else if (ub && !ub->is_def) { vsp++; tt = ub->atype.type; }
+                if (!sig && !ho_ops_find(sym)) {
+                    int is_local = 0; for (int j = 0; j < local_count; j++) if (local_binds[j] == sym) { is_local = 1; break; }
+                    if (is_local) { vsp++; tt = TC_NONE; }
+                    else if (ctx) { TCBinding *ub = tc_lookup(ctx, sym);
+                        if (ub && ub->is_def && ub->atype.type == TC_TUPLE && ub->atype.effect_idx >= 0) { TupleEffect *e = &ctx->effects[ub->atype.effect_idx]; EFF_CONSUME(vsp,consumed,e->consumed); vsp += e->produced; if (e->produced > 0) tt = e->out_type; }
+                        else if (ub) { vsp++; tt = ub->atype.type; }
+                    }
                 }
             }
             break;
@@ -895,6 +913,9 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
         for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { out = bouts[i]; break; }
     /* Functor/Monad ops: output type matches input container type */
     if ((out == TC_FUNCTOR || out == TC_MONAD) && lpt != TC_NONE && tc_is_concrete(lpt)) out = lpt;
+    else if ((out == TC_FUNCTOR || out == TC_MONAD) && (lpt == TC_NONE || !tc_is_concrete(lpt)) && lptv > 0) {
+        TypeConstraint r = tvar_resolve(tc, lptv); if (tc_is_concrete(r)) out = r;
+    }
     for (int j = 0; j < ho->out; j++) tc_push(tc, (j == ho->out - 1) ? out : TC_NONE, line);
     if ((ho->flags & HO_BODY_1TO1) && out == TC_TAGGED && ho->out_type != TC_MONAD && tc->sp > 0 && tc->data[tc->sp-1].tvar_id > 0) {
         int otp = tvar_content(tc, tc->data[tc->sp-1].tvar_id, TC_TAGGED);
@@ -940,7 +961,7 @@ apply_sig:;
         return;
     }
     #define MAX_TVARS 16
-    struct { uint32_t var; int tvar; } tm[MAX_TVARS]; int tmc = 0;
+    struct { uint32_t var; int tvar; uint32_t src_sym; int src_effect_idx; } tm[MAX_TVARS]; int tmc = 0;
     for (int i = 0; i < sig->slot_count; i++) {
         uint32_t tv = sig->slots[i].type_var; if (!tv) continue;
         int found = 0; for (int j = 0; j < tmc; j++) if (tm[j].var == tv) { found = 1; break; }
@@ -948,7 +969,7 @@ apply_sig:;
             int id = tvar_fresh(tc); TypeConstraint c = sig->slots[i].constraint;
             if (!tc_is_container(c) && c != TC_NONE) tc->tvars[id].bound = c;
             if (tc_is_container(c) && sig->slots[i].elem_constraint != TC_NONE) tc->tvars[id].bound = sig->slots[i].elem_constraint;
-            tm[tmc].var = tv; tm[tmc].tvar = id; tmc++;
+            tm[tmc].var = tv; tm[tmc].tvar = id; tm[tmc].src_sym = 0; tm[tmc].src_effect_idx = -1; tmc++;
         }
     }
     #define FIND_TVAR(tv_name) ({ int _tv = 0; for (int _j = 0; _j < tmc; _j++) if (tm[_j].var == (tv_name)) { _tv = tm[_j].tvar; break; } _tv; })
@@ -972,6 +993,7 @@ apply_sig:;
                 int fail = at->tvar_id > 0 ? tvar_unify(tc, tv, at->tvar_id, line) : (at->type != TC_NONE ? tvar_bind(tc, tv, at->type, line) : 0);
                 if (fail) tc_error(tc, line, at->source_line, "'%s' type variable '%s' mismatch: expected %s, got %s", sym_name(sym), sym_name(s->type_var), constraint_name(tvar_resolve(tc, tv)), constraint_name(at->type != TC_NONE ? at->type : tvar_resolve(tc, at->tvar_id)));
             }
+            for (int j = 0; j < tmc; j++) if (tm[j].var == s->type_var) { if (at->sym_id) tm[j].src_sym = at->sym_id; if (at->effect_idx >= 0) tm[j].src_effect_idx = at->effect_idx; break; }
         }}
         if ((at->flags & AT_LINEAR) && s->ownership == OWN_OWN) at->flags |= AT_CONSUMED;
         sp2--;
@@ -986,6 +1008,7 @@ apply_sig:;
             else if (!tc_is_container(s->constraint)) { TypeConstraint r = tvar_resolve(tc, tv); if (r != TC_NONE) at->type = r; at->tvar_id = tv; if (r == TC_BOX || r == TC_DICT) at->flags |= AT_LINEAR; }
         }}
         if (tc_is_container(s->constraint) && s->elem_constraint != TC_NONE && at->tvar_id > 0) { int ef = tvar_content(tc, at->tvar_id, s->constraint); if (ef > 0) tvar_bind(tc, ef, s->elem_constraint, line); }
+        if (s->type_var) for (int j = 0; j < tmc; j++) if (tm[j].var == s->type_var) { if (tm[j].src_sym && !tc_is_container(s->constraint)) at->sym_id = tm[j].src_sym; if (tm[j].src_effect_idx >= 0 && !tc_is_container(s->constraint)) at->effect_idx = tm[j].src_effect_idx; break; }
         if (s->either_count > 0 && at->tvar_id > 0 && tc->union_count < UNION_MAX) {
             int uid = ++tc->union_count; UnionDef *ud = &tc->unions[uid-1]; ud->count = s->either_count;
             for (int e = 0; e < s->either_count; e++) {
@@ -1046,8 +1069,8 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             int scheme_base = tc->tvar_count, ic = 0, oc = 0, out_eff = -1;
             int itv[8] = {0}, otv[8] = {0}, sc = 0;
             { int _s[]={tc->sp,tc->bind_count,tc->unknown_count,tc->recur_pending,tc->suppress_errors,type_sig_count,tc->effect_count,tc->sp_floor};
-                int wide = (eff_c > 8 || eff_p > 8), skip = (wide && i < tc->user_start);
-                if (!is_simple) { tc->sp_floor = tc->sp; if (i < tc->user_start) tc->suppress_errors = 1; }
+                int wide = (eff_c > 8 || eff_p > 8), skip = 0;
+                if (!is_simple) { tc->sp_floor = tc->sp; }
                 if (wide && !skip) tc->suppress_errors = 1;
                 ic = wide ? 0 : eff_c;
                 for (int j = 0; j < ic; j++) {
@@ -2204,7 +2227,7 @@ static const char *PRELUDE =
     "'bits-byte (0 (swap 1 shl bor) fold) def\n'chunks ('n let list swap (dup len 0 eq not) (dup n take-n swap (push) dip n drop-n) while drop) def\n"
     "'icn-decode ((byte-bits) each flatten) def\n'icn-encode (8 chunks (bits-byte) each) def\n'chr-encode (8 chunks 'rows let rows ((1 band) each bits-byte) each rows ((1 shr 1 band) each bits-byte) each cat) def\n"
     "'chr-decode ('data let data 8 take-n (byte-bits) each 'p0 let data 8 drop-n 8 take-n (byte-bits) each 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) each) each flatten) def\n"
-    "'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) each) def\n'nmt-encode ((dup 'addr at must dup byte-mask swap 8 shr byte-mask couple swap 'color at must push) each flatten) def\n"
+    "'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) each) def\n'nmt-encode (('r let r 'addr at must 'a let list a byte-mask push a 8 shr byte-mask push r 'color at must push) each flatten) def\n"
     "'tga-decode ('data let data 12 get must data 13 get must 8 shl bor 'w let data 14 get must data 15 get must 8 shl bor 'h let data 16 get must 'd let data 18 drop-n 'pixels let rec w 'width into h 'height into d 'depth into pixels 'pixels into) def\n"
     "'tga-header ('px let 'd let 'h let 'w let list 0 push 0 push 2 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push 0 push w byte-mask push w 8 shr byte-mask push h byte-mask push h 8 shr byte-mask push d push 0 push px cat) def\n'tga-encode (dup 'width at must swap dup 'height at must swap dup 'depth at must swap 'pixels at must tga-header) def\n"
     "'gly-parse-rows recur ('input let 'cur let 'rows let 'maxw let input len 0 eq (cur len 0 eq not (cur len maxw max rows cur push) (maxw rows) if) (input first 'ch let input 1 drop-n 'rest let ch 10 eq (cur len maxw max rows cur push list rest gly-parse-rows) (ch 32 eq (cur 0 push) (cur ch 63 sub push) if 'ncur let maxw rows ncur rest gly-parse-rows) if) if) def\n"
@@ -2230,10 +2253,8 @@ static const char *PRELUDE =
     "'parse-float (0.0 (parse-float-core) pthen) def\n"
 #ifndef SLAP_WASM
     "'crlf (list 13 push 10 push) def\n'int-str-digits recur ('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) def\n"
-    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first (sep swap cat cat) fold) if) def\n"
+    "'int-str recur ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first (sep swap cat cat) fold) if) def\n"
     "'http-request ('body let 'headers let 'path let 'host let 'method let method \" \" cat path cat \" HTTP/1.1\" cat crlf cat \"Host: \" cat host cat crlf cat headers cat body len 0 gt (\"Content-Length: \" cat body len int-str cat crlf cat) () if crlf cat body cat) def\n"
-    "'http-get ('path let 'port let 'host let host port tcp-connect must \"GET\" host path list list http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
-    "'http-post ('body let 'content-type let 'path let 'port let 'host let host port tcp-connect must \"Content-Type: \" content-type cat crlf cat 'ct-hdr let \"POST\" host path ct-hdr body http-request (swap tcp-send must drop) dip swap list swap (swap 4096 tcp-recv must 'chunk let swap chunk cat chunk len 0 gt) () while swap tcp-close parse-http must) def\n"
 #endif
 ;
 #define LIST_POP(who,buf,len,ts,offs,szs) do{ \

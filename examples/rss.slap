@@ -127,7 +127,7 @@
 'rss-title       ('r let r 'title at must) def
 'rss-link        ('r let r 'link at must) def
 'rss-description ('r let r 'description at must) def
-'rss-items       ('r let r 'items at must) def
+'rss-items       ('r let r 'items at must) [rec own in  list move out] effect def
 'rss-item-title     ('i let i 'title at must) def
 'rss-item-link      ('i let i 'link at must) def
 'rss-item-summary   ('i let i 'summary at must) def

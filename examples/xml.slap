@@ -542,10 +542,10 @@
 
 -- xml-render: (node-record -- xml-string).  Dispatches text vs element.
 -- Body: consume node-record from caller, produce string.
-'xml-render recur (
-  dup 'text at
-  {'ok (swap drop _xe-escape-text)
-   'no (drop _xe-render-elem)} untag) def
+'xml-render recur ('node let
+  node 'text at
+  {'ok (_xe-escape-text)
+   'no (drop node _xe-render-elem)} untag) def
 
 -- ========== Pretty-print variant ==========
 
@@ -561,6 +561,8 @@
      'no (drop 0)} untag) if) def
 
 '_xe-kids-all-text? (_xe-kids-all-text?-loop) def
+
+'xml-render-pretty [int lent in  rec own in  list move out] effect
 
 -- _xe-render-elem-pretty: (depth node-record -- string)
 '_xe-render-elem-pretty ('node let 'depth let
@@ -584,10 +586,10 @@
   ) if) if) def
 
 -- xml-render-pretty: (depth node-record -- string-with-trailing-newline)
-'xml-render-pretty recur (
-  dup 'text at
-  {'ok ('payload let drop drop payload _xe-escape-text)
-   'no (drop _xe-render-elem-pretty)} untag
+'xml-render-pretty recur ('node let 'depth let
+  node 'text at
+  {'ok (_xe-escape-text)
+   'no (drop depth node _xe-render-elem-pretty)} untag
   list 10 push cat) def
 
 -- xml-pretty: (root-node -- string).  Top-level pretty-print; starts at depth 0.
