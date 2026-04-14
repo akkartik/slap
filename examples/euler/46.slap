@@ -2,7 +2,7 @@
 -- Smallest odd composite not writable as prime + 2*square
 -- Answer: 5777
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
@@ -15,9 +15,9 @@
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
-'goldbach-check (
+(
   'gc-n let
   -- stack: k found
   1 0
@@ -25,7 +25,7 @@
   (swap dup dup mul 2 mul gc-n swap sub is-prime (nip 1 swap) () if 1 plus swap)
   while
   nip
-) def
+) 'goldbach-check def
 
 -- stack: n
 9

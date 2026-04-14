@@ -2,7 +2,7 @@
 -- 4-digit primes forming an arithmetic triple that are digit-permutations.
 -- Answer: 296962999629 (not the 1487,4817,8147 sequence).
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
@@ -15,10 +15,10 @@
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
 -- digit-key: 4-digit n -> sorted-digit list (4 bytes in [0,9]; valid dict key)
-'digit-key (
+(
   'dk-n let
   list
     dk-n 1000 div push
@@ -26,16 +26,16 @@
     dk-n 10 div 10 mod push
     dk-n 10 mod push
   sort
-) def
+) 'digit-key def
 
 -- add-prime: dict p -> dict  (append p to the group keyed by its digit-key)
-'add-prime (
+(
   'ap-p let
   ap-p digit-key 'ap-k let
   ap-k of list default
   ap-p push
   ap-k swap insert
-) def
+) 'add-prime def
 
 -- Build dict: sorted-digits -> list of 4-digit odd primes (ascending).
 dict 1001
@@ -50,7 +50,7 @@ drop
 -- scan-group: sorted list g -> composed 12-digit answer or 0.
 -- Linear k = i*n+j scan, i<j. For each pair compute candidate = 2*p2-p1
 -- and check membership; emit answer on first hit (excluding the 1487 run).
-'scan-group (
+(
   'sg-g let
   sg-g len 'sg-n let
   0 0
@@ -71,7 +71,7 @@ drop
     sg-k 1 plus
   ) while
   drop
-) def
+) 'scan-group def
 
 -- Fold over dict entries; acc carries first answer found (0 = not yet).
 0 (

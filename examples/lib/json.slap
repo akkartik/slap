@@ -6,7 +6,7 @@
 -- Tagged shapes: n 'int | f 'float | s 'str | 0/1 'bool | () 'null
 --                list 'arr | list-of-[k,v] 'obj
 
-'_jstr-body ('jchars let
+('jchars let
   dup len 0 eq ("json: unterminated string" no must) () if
   dup 0 get must 'ch let
   ch 34 eq (1 drop-n jchars swap) (
@@ -20,29 +20,29 @@
   ) (
     1 drop-n jchars ch push _jstr-body
   ) if) if
-) def
+) '_jstr-body def
 
-'_jstr (1 drop-n list _jstr-body) def
+(1 drop-n list _jstr-body) '_jstr def
 
 -- Lookahead: does the numeric prefix contain '.' ?
-'_has-dot (
+(
   dup len 0 eq (drop 0) (
     dup 0 get must 'c let
     c 46 eq (drop 1) (
       c 48 ge c 57 le and c 45 eq or (1 drop-n _has-dot) (drop 0) if
     ) if
   ) if
-) def
+) '_has-dot def
 
-'_jarr-items ('jitems let
+('jitems let
   _jval swap 'jv let jitems jv push 'jitems2 let
   ok parse-spaces must
   dup 0 get must 44 eq (
     1 drop-n ok parse-spaces must jitems2 _jarr-items
   ) (jitems2 swap) if
-) def
+) '_jarr-items def
 
-'_jobj-items ('jentries let
+('jentries let
   _jstr swap 'jk let
   ok parse-spaces ":" parse-exact parse-spaces must
   _jval swap 'jv let
@@ -51,9 +51,9 @@
   dup 0 get must 44 eq (
     1 drop-n ok parse-spaces must jentries2 _jobj-items
   ) (jentries2 swap) if
-) def
+) '_jobj-items def
 
-'_jval (
+(
   ok parse-spaces must
   dup len 0 eq ("json: unexpected end of input" no must) () if
   dup 0 get must 'ch let
@@ -79,63 +79,63 @@
       (ok parse-float must swap 'float tag swap)
       (ok parse-int must swap 'int tag swap) if
   ) if) if) if) if) if) if
-) def
+) '_jval def
 
-'_json-parse (
+(
   _jval ok parse-spaces must
   dup len 0 gt ("json: trailing input" no must) () if drop
-) def
+) '_json-parse def
 
 -- ========== Helpers ==========
 
 -- _type-name: (jv -- jv name-str). Non-consuming over at the JSON value's tag.
-'_type-name (dup
+(dup
   () {'int   (drop "int")
    'float (drop "float")
    'str   (drop "string")
    'bool  (drop "bool")
    'null  (drop "null")
    'arr   (drop "array")
-   'obj   (drop "object")} untag) def
+   'obj   (drop "object")} untag) '_type-name def
 
 -- _mismatch: (jv path expected-str -- err-tagged)
-'_mismatch ('_mm-exp let '_mm-path let '_mm-jv let
+('_mm-exp let '_mm-path let '_mm-jv let
   _mm-path ": expected " cat _mm-exp cat ", got " cat
-  _mm-jv _type-name '_mm-tn let drop _mm-tn cat no) def
+  _mm-jv _type-name '_mm-tn let drop _mm-tn cat no) '_mismatch def
 
 -- _find-field: (key entries -- payload-ok | none).  entries = list of [k,v] couples.
-'_find-field ('_ff-ents let '_ff-key let
+('_ff-ents let '_ff-key let
   _ff-ents len 0 eq (none) (
     _ff-ents 0 get must '_ff-e let
     _ff-e 0 get must _ff-key eq
       (_ff-e 1 get must ok)
       (_ff-key _ff-ents 1 drop-n _find-field) if
   ) if
-) def
+) '_find-field def
 
 -- ========== Decoder constructors ==========
 -- Representation: [dname args...] 'dec tag
 
-'jd-int   (list 'int   push 'dec tag) def
-'jd-str   (list 'str   push 'dec tag) def
-'jd-bool  (list 'bool  push 'dec tag) def
-'jd-float (list 'float push 'dec tag) def
-'jd-null  (list 'null  push 'dec tag) def
+(list 'int   push 'dec tag) 'jd-int def
+(list 'str   push 'dec tag) 'jd-str def
+(list 'bool  push 'dec tag) 'jd-bool def
+(list 'float push 'dec tag) 'jd-float def
+(list 'null  push 'dec tag) 'jd-null def
 
-'jd-list ('_jl-d let list 'list push _jl-d push 'dec tag) def
-'jd-field ('_jf-d let '_jf-k let list 'field push _jf-k push _jf-d push 'dec tag) def
-'jd-at ('_jat-d let '_jat-ks let list 'at push _jat-ks push _jat-d push 'dec tag) def
-'jd-map ('_jm-f let '_jm-d let list 'map push _jm-d push _jm-f push 'dec tag) def
-'jd-and-then ('_jat2-f let '_jat2-d let list 'andThen push _jat2-d push _jat2-f push 'dec tag) def
-'jd-one-of ('_jo-ds let list 'oneOf push _jo-ds push 'dec tag) def
-'jd-maybe ('_jmb-d let list 'maybe push _jmb-d push 'dec tag) def
-'jd-succeed ('_js-v let list 'succeed push _js-v push 'dec tag) def
-'jd-fail ('_jf2-m let list 'fail push _jf2-m push 'dec tag) def
+('_jl-d let list 'list push _jl-d push 'dec tag) 'jd-list def
+('_jf-d let '_jf-k let list 'field push _jf-k push _jf-d push 'dec tag) 'jd-field def
+('_jat-d let '_jat-ks let list 'at push _jat-ks push _jat-d push 'dec tag) 'jd-at def
+('_jm-f let '_jm-d let list 'map push _jm-d push _jm-f push 'dec tag) 'jd-map def
+('_jat2-f let '_jat2-d let list 'andThen push _jat2-d push _jat2-f push 'dec tag) 'jd-and-then def
+('_jo-ds let list 'oneOf push _jo-ds push 'dec tag) 'jd-one-of def
+('_jmb-d let list 'maybe push _jmb-d push 'dec tag) 'jd-maybe def
+('_js-v let list 'succeed push _js-v push 'dec tag) 'jd-succeed def
+('_jf2-m let list 'fail push _jf2-m push 'dec tag) 'jd-fail def
 
 -- ========== _japply: (jv path dec -- result-tagged) ==========
 
 -- List loop: (items idx path inner acc -- resultTagged)
-'_ja-list-loop (
+(
   '_l-acc let '_l-inner let '_l-path let '_l-idx let '_l-items let
   _l-items len 0 eq (_l-acc ok) (
     _l-items 0 get must '_l-item let
@@ -145,10 +145,10 @@
        _l-items 1 drop-n _l-idx 1 plus _l-path _l-inner _l-acc _l-v push _ja-list-loop)
      'no (no)} untag
   ) if
-) def
+) '_ja-list-loop def
 
 -- jd-at walk: (jv path keys inner -- resultTagged)
-'_ja-at-walk (
+(
   '_w-inner let '_w-keys let '_w-path let '_w-jv let
   _w-keys len 0 eq (_w-jv _w-path _w-inner _japply) (
     _w-keys 0 get must '_w-k let
@@ -164,10 +164,10 @@
      'null  (drop _w-jv _w-path "object" _mismatch)
      'arr   (drop _w-jv _w-path "object" _mismatch)} untag
   ) if
-) def
+) '_ja-at-walk def
 
 -- one-of loop: (jv path decoders -- resultTagged)
-'_ja-one-of-loop (
+(
   '_o-ds let '_o-path let '_o-jv let
   _o-ds len 0 eq (_o-path ": oneOf: no decoders matched" cat no) (
     _o-jv _o-path _o-ds 0 get must _japply
@@ -177,9 +177,9 @@
          _o-jv _o-path _o-ds 1 drop-n _ja-one-of-loop
        ) if)} untag
   ) if
-) def
+) '_ja-one-of-loop def
 
-'_japply (
+(
   '_a-d let '_a-path let '_a-jv let
   _a-d () {'dec ()} untag '_a-node let
   _a-node 0 get must '_a-dname let
@@ -271,27 +271,27 @@
   ) (
     _a-path ": unknown decoder" cat no
   ) if) if) if) if) if) if) if) if) if) if) if) if) if) if
-) def
+) '_japply def
 
 -- ========== Public entry ==========
 
 -- source-string decoder jd-run -> value-ok | msg-no
 -- Decoder must be a pre-built tagged value (e.g., bare `jd-int` or a def'd composed decoder).
-'jd-run ('_r-dec let '_r-src let
+('_r-dec let '_r-src let
   _r-src _json-parse '_r-jv let
   _r-jv "$" _r-dec _japply
-) def
+) 'jd-run def
 
 -- source-string (decoder-quotation) jd-eval -> value-ok | msg-no
 -- Applies the quotation to build a decoder, then runs it. Use for inline decoders.
-'jd-eval ('_e-q let '_e-src let _e-src _e-q apply jd-run) def
+('_e-q let '_e-src let _e-src _e-q apply jd-run) 'jd-eval def
 
 -- ========== JSON encoder helpers (je-*) ==========
 -- Each je-* returns a fragment-string ready to concatenate.
 
 -- _je-escape-str-loop: (s acc -- acc s')  (acc on top)
 -- Escapes for JSON: \\ \" \n \r \t; control chars <0x20 become \uXXXX.
-'_je-escape-str-loop ('acc let
+('acc let
   dup len 0 gt (
     dup 0 get must 'c let
     1 drop-n
@@ -302,27 +302,27 @@
     c 9 eq (acc "\\t" cat _je-escape-str-loop) (
       acc c push _je-escape-str-loop
     ) if) if) if) if) if
-  ) (acc swap) if) def
+  ) (acc swap) if) '_je-escape-str-loop def
 
-'je-str ('s let
-  s list 34 push _je-escape-str-loop drop 34 push) def
+('s let
+  s list 34 push _je-escape-str-loop drop 34 push) 'je-str def
 
-'je-int (int-str) def
+(int-str) 'je-int def
 
 -- je-list: (list-of-json-string-fragments -- json-array-string)
 -- Stack layout for fold: (iter-list init body).  Since we set items-rest first
 -- then build acc on top, the order is already correct.
-'je-list ('items let
+('items let
   items len 0 eq ("[]") (
     items 0 get must 'first-item let
     items 1 drop-n                                 -- (items-rest)
     list 91 push first-item cat                     -- (items-rest acc="[first")
     ("," swap cat cat) fold
-    93 push) if) def
+    93 push) if) 'je-list def
 
 -- je-obj: (list-of-[key-str value-fragment] couples -- json-object-string)
 -- Keys are plain strings (encoded via je-str); values are already JSON fragments.
-'je-obj ('pairs let
+('pairs let
   pairs len 0 eq ("{}") (
     pairs 0 get must 'p0 let
     pairs 1 drop-n                                 -- (pairs-rest)
@@ -331,7 +331,7 @@
     ('kv let
       "," cat kv 0 get must je-str cat ":" cat kv 1 get must cat
     ) fold
-    125 push) if) def
+    125 push) if) 'je-obj def
 
 -- ========== Tests ==========
 
@@ -366,7 +366,7 @@
 --   jd-run  - takes a pre-built decoder (e.g., via def)
 --   jd-eval - takes an inline decoder-building quotation
 -- In concatenative order, key "a" must be pushed *before* the inner decoder.
-'headline-dec ("a" jd-int (1 plus) jd-map jd-list jd-field) def
+("a" jd-int (1 plus) jd-map jd-list jd-field) 'headline-dec def
 "{ \"a\": [1,2,3] }" headline-dec jd-run [2 3 4] ok eq assert
 "{ \"a\": [1,2,3] }" ("a" jd-int (1 plus) jd-map jd-list jd-field) jd-eval
   [2 3 4] ok eq assert
@@ -380,15 +380,15 @@
 "42" "nope" jd-fail jd-run () {'no ()} untag "$: nope" eq assert
 
 -- And-then: validate positive int
-'positive-int (jd-int ('n let n 0 gt (n jd-succeed) ("must be positive" jd-fail) if) jd-and-then) def
+(jd-int ('n let n 0 gt (n jd-succeed) ("must be positive" jd-fail) if) jd-and-then) 'positive-int def
 "5" positive-int jd-run 5 ok eq assert
 "-1" positive-int jd-run () {'no ()} untag "$: must be positive" eq assert
 
 -- One-of (list of decoders must be built at runtime since list literals are
 -- eagerly evaluated at build time and can't see user def'd names)
-'try-int-or-fail (list jd-int push "wrong" jd-fail push jd-one-of) def
+(list jd-int push "wrong" jd-fail push jd-one-of) 'try-int-or-fail def
 "42" try-int-or-fail jd-run 42 ok eq assert
-'int-or-str (list jd-int push jd-str push jd-one-of) def
+(list jd-int push jd-str push jd-one-of) 'int-or-str def
 "\"hi\"" int-or-str jd-run "hi" ok eq assert
 
 -- Maybe
@@ -396,8 +396,8 @@
 "{}" "a" jd-int jd-field jd-maybe jd-run () ok eq assert
 
 -- Nested complex
-'id-dec ("id" jd-int jd-field) def
-'ids-dec ("data" id-dec jd-list jd-field) def
+("id" jd-int jd-field) 'id-dec def
+("data" id-dec jd-list jd-field) 'ids-dec def
 
 "{\"data\": [{\"id\": 1, \"name\": \"alice\"}, {\"id\": 2, \"name\": \"bob\"}]}"
   ids-dec jd-run [1 2] ok eq assert
@@ -415,16 +415,16 @@
 "[1, \"x\", 3]" jd-int jd-list jd-run () {'no ()} untag
   "$[1]: expected int, got string" eq assert
 
-'c-dec ("c" jd-int jd-field) def
-'b-dec ("b" c-dec jd-list jd-field) def
-'a-dec ("a" b-dec jd-field) def
+("c" jd-int jd-field) 'c-dec def
+("b" c-dec jd-list jd-field) 'b-dec def
+("a" b-dec jd-field) 'a-dec def
 "{\"a\":{\"b\":[{\"c\":\"wrong\"}]}}" a-dec jd-run
   () {'no ()} untag "$.a.b[0].c: expected int, got string" eq assert
 
-'empty-one-of (list jd-one-of) def
+(list jd-one-of) 'empty-one-of def
 "42" empty-one-of jd-run () {'no ()} untag "$: oneOf: no decoders matched" eq assert
 
-'v-pos-dec ("v" positive-int jd-field) def
+("v" positive-int jd-field) 'v-pos-dec def
 "{\"v\": -1}" v-pos-dec jd-run
   () {'no ()} untag "$.v: must be positive" eq assert
 

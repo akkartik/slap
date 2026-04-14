@@ -3,7 +3,7 @@
 -- Answer: 1366
 
 -- double-digits: digits -> digits' (doubles the big number)
-'double-digits (
+(
   'ds let
   rec 0 'carry into list 'result into 0 'j into
   (dup 'j at must ds len lt)
@@ -22,7 +22,7 @@
   )
   while
   'result at must
-) def
+) 'double-digits def
 
 [1] box
 1000 ((double-digits) mutate) repeat

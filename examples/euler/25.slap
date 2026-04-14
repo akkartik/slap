@@ -2,19 +2,19 @@
 -- Index of first must Fibonacci number with 1000+ digits
 -- Answer: 4782
 
-'pad-1100 (
+(
   (dup len 1100 lt) (0 push) while
-) def
+) 'pad-1100 def
 
 -- add-digits: a-list a-len b-list b-len -> result-list result-len
-'add-digits (
+(
   'ad-blen let 'ad-b let 'ad-alen let 'ad-a let
   ad-alen ad-blen max 'ad-n let
-  'ad-carry-loop (
+  (
     'adcl-j let 'adcl-carry let
     adcl-carry 0 gt (adcl-carry 10 mod push adcl-carry 10 div adcl-j 1 plus ad-carry-loop) (adcl-j) if
-  ) def
-  'ad-loop (
+  ) 'ad-carry-loop def
+  (
     'ad-j let 'ad-carry let
     ad-j ad-n lt (
       'ad-a ad-j nth must 'ad-b ad-j nth must plus ad-carry plus 'ad-v let
@@ -23,16 +23,16 @@
     ) (
       ad-carry ad-j ad-carry-loop
     ) if
-  ) def
+  ) 'ad-loop def
   list 0 0 ad-loop
-) def
+) 'add-digits def
 
 -- fib-step: fa alen fb blen idx -> fa' alen' fb' blen' idx'
-'fib-step (
+(
   'fs-idx let 'fs-blen let 'fs-fb let 'fs-alen let 'fs-fa let
   fs-fa fs-alen fs-fb fs-blen add-digits 'fs-clen let pad-1100 'fs-fc let
   fs-fb fs-blen fs-fc fs-clen fs-idx 1 plus
-) def
+) 'fib-step def
 
 -- stack: fa alen fb blen idx
 [1] pad-1100 1 [1] pad-1100 1 2

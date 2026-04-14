@@ -6,25 +6,25 @@
 -- For each group, generate all exponents e*b, sort, dedup, count.
 -- Solo bases (not perfect powers) each contribute 99 distinct values.
 
-'count-group (
+(
   'cg-exps let
   -- stack: accumulating list
   -- inner: generate e*b for b=2..100, giving into list on stack
-  'cg-inner (
+  (
     'cg-b let 'cg-e let
     cg-b 100 le (cg-e cg-b mul push cg-e cg-b 1 plus cg-inner) () if
-  ) def
+  ) 'cg-inner def
   -- outer: iterate over exps
-  'cg-outer (
+  (
     'cg-ei let
     cg-ei cg-exps len lt (
       cg-exps cg-ei get must 2 cg-inner
       cg-ei 1 plus cg-outer
     ) () if
-  ) def
+  ) 'cg-outer def
   list 0 cg-outer
   sort dedup len
-) def
+) 'count-group def
 
 -- Group 2: bases 2,4,8,16,32,64 (exponents 1,2,3,4,5,6)
 -- Group 3: bases 3,9,27,81 (exponents 1,2,3,4)

@@ -2,30 +2,30 @@
 -- Run with: ./slap-sdl < examples/snake.slap
 
 -- Draw filled 20x20 cell
-'draw-cell (
+(
   'c let 'gy let 'gx let
   gx 20 mul gy 20 mul 20 20 c fill-rect
-) def
+) 'draw-cell def
 
 -- Draw 16x16 cell inset by 2px (grid lines effect)
-'draw-inset (
+(
   'c let 'gy let 'gx let
   gx 20 mul 2 plus gy 20 mul 2 plus 16 16 c fill-rect
-) def
+) 'draw-inset def
 
 -- Decode grid position
-'pos-x (32 mod) def
-'pos-y (32 div) def
+(32 mod) 'pos-x def
+(32 div) 'pos-y def
 
 -- Map SDL arrow key to direction, -1 if unknown
-'key-dir (
+(
   dup 1073741906 eq (drop 0) (
   dup 1073741905 eq (drop 2) (
   dup 1073741904 eq (drop 3) (
   dup 1073741903 eq (drop 1) (
   drop -1
   ) if) if) if) if
-) def
+) 'key-dir def
 
 -- State record on stack
 rec

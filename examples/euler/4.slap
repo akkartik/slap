@@ -2,7 +2,7 @@
 -- Largest palindrome made from the product of two 3-digit numbers.
 -- Answer: 906609
 
-'is-palindrome (
+(
   'num let
   -- stack: rev tmp
   0 num
@@ -13,7 +13,7 @@
   )
   while
   drop num eq
-) def
+) 'is-palindrome def
 
 -- stack: best i
 0 999

@@ -2,10 +2,10 @@
 -- Sum of all amicable numbers under 10000
 -- Answer: 31626
 
-'sum-divs (
+(
   'sd-n let
   sd-n 1 le (0) (
-    'sd-loop (
+    (
       'sd-i let 'sd-total let
       sd-i sd-i mul sd-n le (
         sd-n sd-i mod 0 eq (
@@ -14,18 +14,18 @@
         ) (sd-total) if
         sd-i 1 plus sd-loop
       ) (sd-total) if
-    ) def
+    ) 'sd-loop def
     1 2 sd-loop
   ) if
-) def
+) 'sum-divs def
 
-'check-amicable (
+(
   'ca-n let
   ca-n sum-divs 'ca-m let
   ca-m ca-n neq ca-m 0 gt and (
     ca-m sum-divs ca-n eq (ca-n) (0) if
   ) (0) if
-) def
+) 'check-amicable def
 
 -- stack: ans n
 0 2

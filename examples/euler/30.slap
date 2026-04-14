@@ -4,7 +4,7 @@
 
 [0 1 32 243 1024 3125 7776 16807 32768 59049] 'p5 let
 
-'digit-fifth-sum (
+(
   'dfs-n let
   'p5 dfs-n 10 mod nth must
   'p5 dfs-n 10 div 10 mod nth must plus
@@ -12,7 +12,7 @@
   'p5 dfs-n 1000 div 10 mod nth must plus
   'p5 dfs-n 10000 div 10 mod nth must plus
   'p5 dfs-n 100000 div 10 mod nth must plus
-) def
+) 'digit-fifth-sum def
 
 -- stack: total n
 0 2

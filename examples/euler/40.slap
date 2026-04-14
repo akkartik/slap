@@ -4,7 +4,7 @@
 
 -- champer-digit: pos -> digit at must that position in Champernowne sequence
 -- Find which "band" the position falls in, then extract digit
-'cd-find-band (
+(
   'cdb-count let 'cdb-start let 'cdb-digits let 'cdb-pos let
   cdb-pos cdb-count cdb-digits mul gt (
     cdb-pos cdb-count cdb-digits mul sub
@@ -13,20 +13,20 @@
     dup 10 mul over sub
     cd-find-band
   ) (cdb-pos cdb-digits cdb-start) if
-) def
+) 'cd-find-band def
 
-'cd-divn (
+(
   'cdd-k let 'cdd-n let
   cdd-k 0 gt (cdd-n 10 div cdd-k 1 sub cd-divn) (cdd-n 10 mod) if
-) def
+) 'cd-divn def
 
-'champer-digit (
+(
   'cd-pos let
   cd-pos 1 1 9 cd-find-band
   'cd-start let 'cd-digits let 'cd-pos2 let
   cd-pos2 1 sub cd-digits div cd-start plus 'cd-n let
   cd-digits cd-pos2 1 sub cd-digits mod sub 1 sub 'cd-off let
   cd-n cd-off cd-divn
-) def
+) 'champer-digit def
 
 [1 10 100 1000 10000 100000 1000000] 1 (champer-digit mul) fold print

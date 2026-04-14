@@ -2,7 +2,7 @@
 -- What is the 10001st prime number?
 -- Answer: 104743
 
-'is-prime (
+(
   'n let
   n 2 lt (0) (
     -- stack: result i
@@ -16,7 +16,7 @@
     while
     drop
   ) if
-) def
+) 'is-prime def
 
 -- stack: cnt candidate
 0 1

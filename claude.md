@@ -136,8 +136,10 @@ List ops: `push`, `pop`, `set`, `len`, `cat`. `compose` is a separate tuple-conc
 
 ### def vs let
 
-- `'name val def` — name then value. Auto-executes tuples on lookup. For function definitions.
-- `val 'name let` — value then name. Pushes value on lookup. For binding stack arguments in function bodies.
+Both take value-then-name: `val 'name def` / `val 'name let`.
+
+- `def` — auto-executes tuples on lookup. For function definitions.
+- `let` — pushes the bound value on lookup. For binding stack arguments in function bodies.
 
 ### SDL graphics (optional)
 

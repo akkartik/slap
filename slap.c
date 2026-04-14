@@ -395,8 +395,6 @@ static int val_less(Value *a, int aslots, Value *b, int bslots) {
     default: die("lt: unsupported type %s (only int/float/symbol are ordered)", valtag_name(atop.tag)); return 0;
     }
 }
-static uint32_t recur_sym = 0;
-static int recur_pending = 0;
 static int eval_depth = 0;
 #define EVAL_DEPTH_MAX 10000
 static uint32_t S_DEF, S_LET, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_UNTAG, S_DEFAULT, S_MUST;
@@ -972,13 +970,13 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
        Apply/dip execute the body directly and are fine. */
     if (bteff && bteff->output_is_linear && !(ho->flags & HO_APPLY_EFFECT))
         tc_error(tc, line, 0, "'%s' body may not produce a linear-capturing closure (would alias it across iterations or package it into a container)", ho->name);
-    if ((ho->flags & HO_BRANCHES_AGREE) && bc >= 2 && !tc->sp_floor) {
+    if ((ho->flags & HO_BRANCHES_AGREE) && bc >= 2 && !tc->sp_floor && !tc->body_depth) {
         TypeConstraint ref = TC_NONE;
         for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { ref = bouts[i]; break; }
         for (int i = 0; i < bc; i++)
             if (bouts[i] != TC_NONE && ref != TC_NONE && bouts[i] != ref && !tc_constraint_matches(ref, bouts[i]) && !tc_constraint_matches(bouts[i], ref))
                 tc_error(tc, line, 0, "'%s' branches produce different types: %s vs %s", ho->name, constraint_name(ref), constraint_name(bouts[i]));
-        if (!tc->in_recur_body) {
+        if (!tc->in_recur_body && !tc->body_depth) {
             int rnet = 0, rset = 0, rci = 0;
             for (int i = 0; i < bc; i++) if (barr_has[i]) { rnet = barr_p[i] - barr_c[i]; rci = i; rset = 1; break; }
             if (rset) for (int i = 0; i < bc; i++)
@@ -1209,18 +1207,16 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
             TypeConstraint eff_out = tc_infer_effect_ctx(toks, i+1, close, total_count, &eff_c, &eff_p, tc);
             int is_simple = 1;
             for (int j = i+1; j < close; j++) if (toks[j].tag == TOK_LPAREN || toks[j].tag == TOK_LBRACKET || toks[j].tag == TOK_LBRACE) { is_simple = 0; break; }
-            /* Default `def` to self-visible: if this tuple is about to be bound
-               as a def AND the body textually references the name, synthesize
-               recur state so the self-reference typechecks. Narrower than
-               unconditional recur (which would skip branch-effect checks for
-               non-recursive defs). Explicit `recur` keyword still works. */
-            if (!tc->recur_pending && close+1 < total_count
-                && toks[close+1].tag == TOK_WORD && toks[close+1].as.sym == S_DEF
-                && tc->sp >= 1 && tc->data[tc->sp-1].type == TC_SYM && tc->data[tc->sp-1].sym_id) {
-                uint32_t name_sym = tc->data[tc->sp-1].sym_id;
+            /* Auto-visible: if this tuple is followed by `'name def`, make
+               name visible inside the body so recursive references
+               typecheck. Binding order: `(body) 'name def`. */
+            if (!tc->recur_pending && close+2 < total_count
+                && toks[close+1].tag == TOK_SYM
+                && toks[close+2].tag == TOK_WORD && toks[close+2].as.sym == S_DEF) {
+                uint32_t name_sym = toks[close+1].as.sym;
                 for (int j = i+1; j < close; j++) {
                     if (toks[j].tag == TOK_WORD && toks[j].as.sym == name_sym) {
-                        tc->recur_pending = 1; tc->recur_sym = name_sym; tc->sp--; break;
+                        tc->recur_pending = 1; tc->recur_sym = name_sym; break;
                     }
                 }
             }
@@ -1355,18 +1351,18 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
         case TOK_WORD: {
             uint32_t sym = t->as.sym;
             if (sym == S_DEF) {
-                if (tc->recur_pending) {
-                    if (tc->sp >= 1) { AbstractType vt = tc->data[--tc->sp]; if (i >= tc->user_start) tc_check_redef(tc, tc->recur_sym, t->line); tc_bind(tc, tc->recur_sym, &vt, 1, t->line); }
-                    tc->recur_pending = 0;
-                } else if (tc->sp >= 2) {
-                    AbstractType vt = tc->data[tc->sp-1]; uint32_t ns = tc->data[tc->sp-2].sym_id; tc->sp -= 2;
+                if (tc->sp >= 2) {
+                    uint32_t ns = tc->data[tc->sp-1].sym_id; AbstractType vt = tc->data[tc->sp-2]; tc->sp -= 2;
+                    int is_recur = tc->recur_pending && tc->recur_sym == ns;
+                    if (tc->recur_pending) tc->recur_pending = 0;
                     if (ns) {
                         if (tc->body_depth > 0 && ((vt.flags & AT_LINEAR) || vt.type == TC_BOX)) {
                             int seen = 0;
                             for (int k = i+1; k < end; k++) if (toks[k].tag == TOK_WORD && toks[k].as.sym == ns) { seen = 1; break; }
                             if (!seen) tc_error(tc, t->line, vt.source_line, "linear value bound as '%s' is never referenced in the enclosing quotation — it will be captured and leaked", sym_name(ns));
                         }
-                        if (i >= tc->user_start) tc_check_redef(tc, ns, t->line); tc_bind(tc, ns, &vt, 1, t->line);
+                        if (!is_recur && i >= tc->user_start) tc_check_redef(tc, ns, t->line);
+                        tc_bind(tc, ns, &vt, 1, t->line);
                     }
                 } else if (tc->sp_floor == 0) tc->sp = 0;
             } else if (sym == S_LET) {
@@ -1397,12 +1393,16 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     for (int bi = be-1; bi >= start; bi--) { if (toks[bi].tag == TOK_RBRACKET) d++; else if (toks[bi].tag == TOK_LBRACKET && --d == 0) { bs = bi; break; } }
                     TypeSig sig = parse_type_annotation(toks, bs+1, be);
                     if (tc->sp >= 1 && tc->data[tc->sp-1].type == TC_TUPLE) {
-                        if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_SYM) typesig_register(tc->data[tc->sp-2].sym_id, &sig);
+                        /* New-order: `(body) [sig] effect 'name def` — register sig against upcoming sym. */
+                        if (i+2 < total_count && toks[i+1].tag == TOK_SYM
+                            && toks[i+2].tag == TOK_WORD && toks[i+2].as.sym == S_DEF)
+                            typesig_register(toks[i+1].as.sym, &sig);
                         for (int b2 = i-2; b2 >= 0; b2--) if (toks[b2].tag == TOK_RPAREN) {
                             int d2=1; for(int k=b2-1;k>=0;k--){if(toks[k].tag==TOK_RPAREN)d2++;else if(toks[k].tag==TOK_LPAREN&&--d2==0){tc->errors+=tc_check_body_against_sig(toks,k+1,b2,total_count,&sig);break;}} break; }
                     } else if (tc->sp >= 1 && tc->data[tc->sp-1].type == TC_SYM) {
+                        /* BUILTIN_TYPES prim registration: `'name [sig] effect` (no def). */
                         typesig_register(tc->data[tc->sp-1].sym_id, &sig);
-                        if (!(i+1 < end && toks[i+1].tag == TOK_WORD && toks[i+1].as.sym == S_DEF)) tc->sp--;
+                        tc->sp--;
                     }
                 }
             } else if (sym == S_CHECK) {
@@ -2282,9 +2282,7 @@ static void eval_body(Value *body, int slots, Frame *env) {
         } else if(elem.tag==VAL_XT) elem.as.xt.fn(ee);
         else if(elem.tag==VAL_WORD){
             uint32_t sym=elem.as.sym;
-            if(sym==S_DEF){ int ds=val_slots(stack[sp-1]);
-                if(recur_pending){recur_pending=0;frame_bind(ee,recur_sym,&stack[sp-ds],ds,BIND_DEF,1);sp-=ds;}
-                else{Value db[ds];VCPY(db,&stack[sp-ds],ds);sp-=ds;frame_bind(ee,pop_sym(),db,ds,BIND_DEF,0);}
+            if(sym==S_DEF){ uint32_t n=pop_sym(); int ds=val_slots(stack[sp-1]); Value db[ds]; VCPY(db,&stack[sp-ds],ds); sp-=ds; frame_bind(ee,n,db,ds,BIND_DEF,0);
             } else if(sym==S_LET){ uint32_t n=pop_sym(); int ls=val_slots(stack[sp-1]); frame_bind(ee,n,&stack[sp-ls],ls,BIND_LET,0); sp-=ls;}
             else dispatch_word(sym,ee);
         } else if(elem.tag==VAL_BOX||elem.tag==VAL_DICT) spush(elem);
@@ -2436,38 +2434,90 @@ static const char *BUILTIN_TYPES =
 #undef LDE
 #undef MO
 static const char *PRELUDE =
-    "'over (swap dup (swap) dip) def\n'nip (swap drop) def\n'rot ((swap) dip swap) def\n'tuck (swap over) def\n"
-    "'not (0 eq) [int lent in  int move out] effect def\n'neq (eq not) [lent in  lent in  int move out] effect def\n"
-    "'gt (swap lt) [lent in  lent in  int move out] effect def\n'ge (lt not) [lent in  lent in  int move out] effect def\n'le (swap lt not) [lent in  lent in  int move out] effect def\n"
-    "'inc (1 plus) [num lent in  num move out] effect def\n'dec (1 sub) [num lent in  num move out] effect def\n'neg (0 swap sub) [num lent in  num move out] effect def\n"
-    "'max (over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'min (over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect def\n'abs (dup 0 lt (neg) (dup drop) if) def\n"
-    "'keep (over (apply) dip) def\n'bi ((keep) dip apply) def\n'repeat ('f swap def (dup 0 gt) (1 sub (f) dip) while drop) def\n"
-    "'select (swap 'data swap def (data swap get must) each) def\n'reduce (swap dup 0 get must swap 1 drop-n swap rot fold) def\n'table ((dup) swap compose (couple) compose each) def\n"
-    "'filter ('p swap def list (dup p (push) (drop) if) fold) ['a list own in  tuple own in  'a list move out] effect def\n"
-    "'where ('p swap def 0 'idx let list ('elem swap def elem p (idx push) () if idx 1 plus 'idx let) fold) def\n"
-    "'sqr (dup mul) def\n'cube (dup dup mul mul) def\n'ispos (0 swap lt) def\n"
-    "'first (0 get must) def\n'second (1 get must) def\n'third (2 get must) def\n'fourth (3 get must) def\n'fifth (4 get must) def\n"
-    "'sixth (5 get must) def\n'seventh (6 get must) def\n'eighth (7 get must) def\n'ninth (8 get must) def\n'tenth (9 get must) def\n"
-    "'last (dup len 1 sub get must) def\n'sum (0 (plus) fold) def\n'product (1 (mul) fold) def\n"
-    "'max-of (dup first (max) fold) def\n'min-of (dup first (min) fold) def\n'member (index-of (drop 1 ok) then 0 default) def\n'couple (list rot push swap push) def\n"
-    "'flatten (list (cat) fold) def\n'fneg (0.0 swap sub) def\n"
-    "'fabs (dup 0.0 lt (fneg) () if) def\n'frecip (1.0 swap div) def\n'fsign (dup 0.0 lt (drop -1.0) (dup 0.0 eq (drop 0.0) (drop 1.0) if) if) def\n'sign (dup 0 lt (drop -1) (dup 0 eq (drop 0) (drop 1) if) if) def\n"
-    "'clamp (rot swap min max) def\n'fclamp (swap min max) def\n'lerp ((over sub) dip swap mul plus) def\n'isbetween (rot dup (rot swap le) dip rot rot ge and) def\n"
-    "'iszero (0 eq) [int lent in  int move out] effect def\n'iseven (2 mod 0 eq) [int lent in  int move out] effect def\n'isodd (2 mod 0 neq) [int lent in  int move out] effect def\n'divides (mod 0 eq) [int lent in  int lent in  int move out] effect def\n"
-    "'ok ('ok tag) ['a own in  'a tagged move out] effect def\n'no ('no tag) ['a own in  'a tagged move out] effect def\n'none (() no) [tagged move out] effect def\n'times-i ('f swap def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) def\n"
-    "3.14159265358979323846 'pi let\n6.28318530717958647692 'tau let\n2.71828182845904523536 'e let\n'rotate ('n let dup len 'ln let ln 0 eq not (n ln wrap 'nn let nn 0 eq not (dup ln nn sub take-n swap ln nn sub drop-n swap cat) () if) () if) def\n"
-    "'zip ('b swap def 'a swap def a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) each) def\n"
-    "'windows ('n let 'l swap def l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) each) if) def\n"
-    "'reshape ('dims swap def 'data swap def dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) each) each) def\n"
-    "'transpose ('m swap def m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) each) each) def\n"
-    "'keep-mask ('mask swap def 0 mask len range (mask swap get must 0 neq) where select) def\n'group ('idx swap def 'data swap def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) each) def\n"
-    "'classify (dup 'l swap def (l swap index-of must) each dup dedup 'u swap def (u swap index-of must) each) def\n'byte-mask (255 band) def\n'byte-bits ('b let 0 8 range (7 swap sub b swap shr 1 band) each) def\n"
-    "'bits-byte (0 (swap 1 shl bor) fold) def\n'chunks ('n let list swap (dup len 0 eq not) (dup n take-n swap (push) dip n drop-n) while drop) def\n"
+    "(swap dup (swap) dip) 'over def\n"
+    "(swap drop) 'nip def\n"
+    "((swap) dip swap) 'rot def\n"
+    "(swap over) 'tuck def\n"
+    "(0 eq) [int lent in  int move out] effect 'not def\n"
+    "(eq not) [lent in  lent in  int move out] effect 'neq def\n"
+    "(swap lt) [lent in  lent in  int move out] effect 'gt def\n"
+    "(lt not) [lent in  lent in  int move out] effect 'ge def\n"
+    "(swap lt not) [lent in  lent in  int move out] effect 'le def\n"
+    "(1 plus) [num lent in  num move out] effect 'inc def\n"
+    "(1 sub) [num lent in  num move out] effect 'dec def\n"
+    "(0 swap sub) [num lent in  num move out] effect 'neg def\n"
+    "(over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect 'max def\n"
+    "(over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect 'min def\n"
+    "(dup 0 lt (neg) (dup drop) if) 'abs def\n"
+    "(over (apply) dip) 'keep def\n"
+    "((keep) dip apply) 'bi def\n"
+    "('f def (dup 0 gt) (1 sub (f) dip) while drop) 'repeat def\n"
+    "(swap 'data def (data swap get must) each) 'select def\n"
+    "(swap dup 0 get must swap 1 drop-n swap rot fold) 'reduce def\n"
+    "((dup) swap compose (couple) compose each) 'table def\n"
+    "('p def list (dup p (push) (drop) if) fold) ['a list own in  tuple own in  'a list move out] effect 'filter def\n"
+    "('p def 0 'idx let list ('elem def elem p (idx push) () if idx 1 plus 'idx let) fold) 'where def\n"
+    "(dup mul) 'sqr def\n"
+    "(dup dup mul mul) 'cube def\n"
+    "(0 swap lt) 'ispos def\n"
+    "(0 get must) 'first def\n"
+    "(1 get must) 'second def\n"
+    "(2 get must) 'third def\n"
+    "(3 get must) 'fourth def\n"
+    "(4 get must) 'fifth def\n"
+    "(5 get must) 'sixth def\n"
+    "(6 get must) 'seventh def\n"
+    "(7 get must) 'eighth def\n"
+    "(8 get must) 'ninth def\n"
+    "(9 get must) 'tenth def\n"
+    "(dup len 1 sub get must) 'last def\n"
+    "(0 (plus) fold) 'sum def\n"
+    "(1 (mul) fold) 'product def\n"
+    "(dup first (max) fold) 'max-of def\n"
+    "(dup first (min) fold) 'min-of def\n"
+    "(index-of (drop 1 ok) then 0 default) 'member def\n"
+    "(list rot push swap push) 'couple def\n"
+    "(list (cat) fold) 'flatten def\n"
+    "(0.0 swap sub) 'fneg def\n"
+    "(dup 0.0 lt (fneg) () if) 'fabs def\n"
+    "(1.0 swap div) 'frecip def\n"
+    "(dup 0.0 lt (drop -1.0) (dup 0.0 eq (drop 0.0) (drop 1.0) if) if) 'fsign def\n"
+    "(dup 0 lt (drop -1) (dup 0 eq (drop 0) (drop 1) if) if) 'sign def\n"
+    "(rot swap min max) 'clamp def\n"
+    "(swap min max) 'fclamp def\n"
+    "((over sub) dip swap mul plus) 'lerp def\n"
+    "(rot dup (rot swap le) dip rot rot ge and) 'isbetween def\n"
+    "(0 eq) [int lent in  int move out] effect 'iszero def\n"
+    "(2 mod 0 eq) [int lent in  int move out] effect 'iseven def\n"
+    "(2 mod 0 neq) [int lent in  int move out] effect 'isodd def\n"
+    "(mod 0 eq) [int lent in  int lent in  int move out] effect 'divides def\n"
+    "('ok tag) ['a own in  'a tagged move out] effect 'ok def\n"
+    "('no tag) ['a own in  'a tagged move out] effect 'no def\n"
+    "(() no) [tagged move out] effect 'none def\n"
+    "('f def 'n let 0 (dup n lt) (dup (f) dip 1 plus) while drop) 'times-i def\n"
+    "3.14159265358979323846 'pi let\n"
+    "6.28318530717958647692 'tau let\n"
+    "2.71828182845904523536 'e let\n"
+    "('n let dup len 'ln let ln 0 eq not (n ln wrap 'nn let nn 0 eq not (dup ln nn sub take-n swap ln nn sub drop-n swap cat) () if) () if) 'rotate def\n"
+    "('b def 'a def a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) each) 'zip def\n"
+    "('n let 'l def l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) each) if) 'windows def\n"
+    "('dims def 'data def dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) each) each) 'reshape def\n"
+    "('m def m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) each) each) 'transpose def\n"
+    "('mask def 0 mask len range (mask swap get must 0 neq) where select) 'keep-mask def\n"
+    "('idx def 'data def 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) each) 'group def\n"
+    "(dup 'l def (l swap index-of must) each dup dedup 'u def (u swap index-of must) each) 'classify def\n"
+    "(255 band) 'byte-mask def\n"
+    "('b let 0 8 range (7 swap sub b swap shr 1 band) each) 'byte-bits def\n"
+    "(0 (swap 1 shl bor) fold) 'bits-byte def\n"
+    "('n let list swap (dup len 0 eq not) (dup n take-n swap (push) dip n drop-n) while drop) 'chunks def\n"
 #ifndef SLAP_WASM
-    "'crlf (list 13 push 10 push) def\n'int-str-digits ('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) def\n"
-    "'int-str ('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) def\n'str-join ('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first (sep swap cat cat) fold) if) def\n"
-    "'http-request ('body let 'headers let 'path let 'host let 'method let method \" \" cat path cat \" HTTP/1.1\" cat crlf cat \"Host: \" cat host cat crlf cat headers cat body len 0 gt (\"Content-Length: \" cat body len int-str cat crlf cat) () if crlf cat body cat) def\n"
+    "(list 13 push 10 push) 'crlf def\n"
+    "('n let n 0 gt (n 10 mod 48 plus push n 10 div int-str-digits) () if) 'int-str-digits def\n"
+    "('n let n 0 lt (n neg int-str list 45 push swap cat) (n 0 eq (list 48 push) (list n int-str-digits reverse) if) if) 'int-str def\n"
+    "('sep let 'parts let parts len 0 eq (list) (parts 1 drop-n parts first (sep swap cat cat) fold) if) 'str-join def\n"
+    "('body let 'headers let 'path let 'host let 'method let method \" \" cat path cat \" HTTP/1.1\" cat crlf cat \"Host: \" cat host cat crlf cat headers cat body len 0 gt (\"Content-Length: \" cat body len int-str cat crlf cat) () if crlf cat body cat) 'http-request def\n"
 #endif
+
 ;
 #define LIST_POP(who,buf,len,ts,offs,szs) do{ \
     Value _t=speek();if(_t.tag!=VAL_LIST)die(who ": expected list, got %s",valtag_name(_t.tag)); \

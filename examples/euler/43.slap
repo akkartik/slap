@@ -2,7 +2,7 @@
 -- Sum of 0-9 pandigital numbers with sub-string divisibility property
 -- Answer: 16695334890
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
@@ -15,11 +15,11 @@
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
 -- For each level, take total on stack, return updated total
 -- d2 loop: total u8 u9 ua d7 d6 d5 d4 d3 -> total
-'try-d2 (
+(
   'td-d3 let 'td-d4 let 'td-d5 let 'td-d6 let 'td-d7 let 'td-ua let 'td-u9 let 'td-u8 let
   -- stack: total
   0
@@ -38,10 +38,10 @@
     td-d2 1 plus
   ) while
   drop
-) def
+) 'try-d2 def
 
 -- d3 loop
-'try-d3 (
+(
   'td3-d4 let 'td3-d5 let 'td3-d6 let 'td3-d7 let 'td3-ua let 'td3-u9 let 'td3-u8 let
   0
   (dup 9 le)
@@ -55,10 +55,10 @@
     td3-d3 1 plus
   ) while
   drop
-) def
+) 'try-d3 def
 
 -- d4 loop
-'try-d4 (
+(
   'td4-d5 let 'td4-d6 let 'td4-d7 let 'td4-ua let 'td4-u9 let 'td4-u8 let
   0
   (dup 9 le)
@@ -72,10 +72,10 @@
     td4-d4 1 plus
   ) while
   drop
-) def
+) 'try-d4 def
 
 -- d5 loop
-'try-d5 (
+(
   'td5-d6 let 'td5-d7 let 'td5-ua let 'td5-u9 let 'td5-u8 let
   0
   (dup 9 le)
@@ -89,10 +89,10 @@
     td5-d5 1 plus
   ) while
   drop
-) def
+) 'try-d5 def
 
 -- d6 loop
-'try-d6 (
+(
   'td6-d7 let 'td6-ua let 'td6-u9 let 'td6-u8 let
   0
   (dup 9 le)
@@ -106,10 +106,10 @@
     td6-d6 1 plus
   ) while
   drop
-) def
+) 'try-d6 def
 
 -- d7 loop
-'try-d7 (
+(
   'td7-ua let 'td7-u9 let 'td7-u8 let
   0
   (dup 9 le)
@@ -123,7 +123,7 @@
     td7-d7 1 plus
   ) while
   drop
-) def
+) 'try-d7 def
 
 -- mi loop: stack total mi -> total
 -- Each iteration: compute u8 u9 ua from mi*17, then try-d7

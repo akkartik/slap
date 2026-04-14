@@ -108,11 +108,11 @@ Atomic identifiers. Prefixed with `'`.
 
 ### definitions
 
-`def` binds a name and auto-executes tuples on lookup (for functions). `let` binds a value and pushes it on lookup.
+Both `def` and `let` take value-then-name. `def` auto-executes tuples on lookup (for functions); `let` pushes the bound value on lookup.
 
 ```slap
--- def: name then value, auto-executes tuples
-'double (2 mul) def
+-- def: value then name, auto-executes tuples
+(2 mul) 'double def
 5 double              -- 10
 
 -- let: value then name, pushes on lookup

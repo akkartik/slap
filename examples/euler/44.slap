@@ -2,17 +2,17 @@
 -- Find pair of pentagonal numbers whose sum and difference are pentagonal
 -- Answer: 5482660
 
-'is-pentagonal (
+(
   'ipn-x let
   1 24 ipn-x mul plus itof fsqrt 'ipn-s let
   ipn-s ftoi 'ipn-si let
   ipn-si ipn-si mul itof ipn-s ipn-s mul sub fabs 0.5 lt (
     ipn-si 1 plus 6 mod 0 eq
   ) (0) if
-) def
+) 'is-pentagonal def
 
 -- inner-search: k -> 0 or diff (the pentagonal difference found)
-'inner-search (
+(
   'is-k let
   is-k 3 is-k mul 1 sub mul 2 div 'is-pk let
   -- stack: result j
@@ -28,7 +28,7 @@
     1 plus
   ) while
   drop
-) def
+) 'inner-search def
 
 -- stack: k
 2

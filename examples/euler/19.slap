@@ -2,31 +2,31 @@
 -- How many Sundays fell on the first must of the month from 1 Jan 1901 to 31 Dec 2000?
 -- Answer: 171
 
-'is-leap (
+(
   'y let
   y 400 mod 0 eq (1) (
     y 100 mod 0 eq (0) (
       y 4 mod 0 eq
     ) if
   ) if
-) def
+) 'is-leap def
 
 [31 28 31 30 31 30 31 31 30 31 30 31] 'mdays let
 
-'days-in-month (
+(
   'mo let 'yr let
   mdays mo get must
   mo 1 eq yr is-leap and (1 plus) () if
-) def
+) 'days-in-month def
 
-'step-month (
+(
   dup 'y at must 1901 ge over 'dow at must 0 eq and ('cnt (inc) edit must) () if
   dup 'y at must over 'm at must days-in-month over 'dow at must plus 7 mod 'dow into
   dup 'm at must 11 eq
     ('y (inc) edit must 'm (drop 0) edit must)
     ('m (inc) edit must)
   if
-) def
+) 'step-month def
 
 rec 0 'cnt into 1 'dow into 1900 'y into 0 'm into
 1212 (step-month) repeat

@@ -2,54 +2,54 @@
 -- Sum of products c=a*b where digits of a,b,c form 1-9 pandigital
 -- Answer: 45228
 
-'gd-helper (
+(
   'gdh-n let 'gdh-lst let
   gdh-n 0 gt (gdh-lst gdh-n 10 mod push gdh-n 10 div gd-helper) (gdh-lst) if
-) def
-'get-digits (list swap gd-helper) def
+) 'gd-helper def
+(list swap gd-helper) 'get-digits def
 
-'is-pan9 (
+(
   'ipt-c let 'ipt-b let 'ipt-a let
   ipt-a get-digits ipt-b get-digits cat ipt-c get-digits cat
   dup len 9 eq (sort [1 2 3 4 5 6 7 8 9] eq) (drop 0) if
-) def
+) 'is-pan9 def
 
 -- scan1-inner: products a b -> products'
-'scan1-inner (
+(
   'si-b let 'si-a let 'si-prods let
   si-b 9876 le si-a si-b mul 9999 le and (
     si-a si-b mul 'si-c let
     si-a si-b si-c is-pan9 (si-prods si-c push) (si-prods) if
     si-a si-b 1 plus scan1-inner
   ) (si-prods) if
-) def
+) 'scan1-inner def
 
 -- scan1: products a -> products'
-'scan1 (
+(
   's1-a let 'prods1 let
   s1-a 9 le (
     prods1 s1-a 1234 scan1-inner
     s1-a 1 plus scan1
   ) (prods1) if
-) def
+) 'scan1 def
 
 -- scan2-inner: products a b -> products'
-'scan2-inner (
+(
   'si2-b let 'si2-a let 'si2-prods let
   si2-b 987 le si2-a si2-b mul 9999 le and (
     si2-a si2-b mul 'si2-c let
     si2-a si2-b si2-c is-pan9 (si2-prods si2-c push) (si2-prods) if
     si2-a si2-b 1 plus scan2-inner
   ) (si2-prods) if
-) def
+) 'scan2-inner def
 
 -- scan2: products a -> products'
-'scan2 (
+(
   's2-a let 'prods2 let
   s2-a 98 le (
     prods2 s2-a 123 scan2-inner
     s2-a 1 plus scan2
   ) (prods2) if
-) def
+) 'scan2 def
 
 list 2 scan1 12 scan2 sort dedup sum print

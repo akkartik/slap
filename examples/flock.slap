@@ -29,7 +29,7 @@ rec
 ) on
 
 -- Separation inner loop
-'sep-loop (
+(
   'ay let 'ax let 'yi let 'xi let 'xsv let 'ysv let 'i let 'j let
   j N lt (
     j i neq (
@@ -45,10 +45,10 @@ rec
       j 1 plus i ysv xsv xi yi ax ay sep-loop
     ) if
   ) (ax ay) if
-) def
+) 'sep-loop def
 
 -- Update one boid
-'update-one-boid (
+(
   'frame let 'i let 'st let
   st 'xs at must 'xsv let  st 'ys at must 'ysv let
   st 'vxs at must 'vxsv let  st 'vys at must 'vysv let
@@ -107,17 +107,17 @@ rec
   st2
   'xs (i xi2 set must) edit must 'ys (i yi2 set must) edit must
   'vxs (i vxi3 set must) edit must 'vys (i vyi3 set must) edit must
-) def
+) 'update-one-boid def
 
-'update-boids-loop (
+(
   'frame let 'i let 'st let
   i N lt (
     st i frame update-one-boid
     i 1 plus frame update-boids-loop
   ) (st) if
-) def
+) 'update-boids-loop def
 
-'update-predator (
+(
   'frame let 'st let
   st 'ptimer at must 0 gt (
     st 'px at must 'cpx let  st 'py at must 'cpy let
@@ -146,7 +146,7 @@ rec
       'ppx (drop spx) edit must 'ppy (drop spy) edit must
     ) (st) if
   ) if
-) def
+) 'update-predator def
 
 'tick (
   drop
@@ -158,7 +158,7 @@ rec
 ) on
 
 -- Draw diamond outline
-'draw-diamond-cd (
+(
   'dc let 'dy let 'dx let 'dr let 'dd let
   dd dr 1 plus lt (
     dr dd abs sub 'ddy let
@@ -166,23 +166,23 @@ rec
     ddy 0 neq (dx dd plus dy ddy sub dc pixel) () if
     dd 1 plus dr dx dy dc draw-diamond-cd
   ) () if
-) def
+) 'draw-diamond-cd def
 
-'draw-diamond (
+(
   'dc let 'dr let 'dy let 'dx let
   dr neg dr dx dy dc draw-diamond-cd
-) def
+) 'draw-diamond def
 
 -- Draw trail layers
-'draw-trail3 (
+(
   'st let 'i let
   i N lt (
     st 'p3xs at must i get must st 'p3ys at must i get must 1 pixel
     i 1 plus st draw-trail3
   ) () if
-) def
+) 'draw-trail3 def
 
-'draw-trail2 (
+(
   'st let 'i let
   i N lt (
     st 'p2xs at must i get must 'tx let  st 'p2ys at must i get must 'ty let
@@ -190,9 +190,9 @@ rec
     szs i get must 2 gt (tx 1 plus ty 1 pixel) () if
     i 1 plus st draw-trail2
   ) () if
-) def
+) 'draw-trail2 def
 
-'draw-trail1 (
+(
   'st let 'i let
   i N lt (
     st 'p1xs at must i get must 'tx let  st 'p1ys at must i get must 'ty let
@@ -200,18 +200,18 @@ rec
     szs i get must 1 gt (tx 1 plus ty 2 pixel) () if
     i 1 plus st draw-trail1
   ) () if
-) def
+) 'draw-trail1 def
 
 -- Draw boids
-'draw-boid-body (
+(
   'bc let 'sdy let 'sdx let 'by let 'bx let 'sz let 'k let
   k sz 2 plus lt (
     bx sdx k mul sub by sdy k mul sub bc pixel
     k 1 plus sz bx by sdx sdy bc draw-boid-body
   ) () if
-) def
+) 'draw-boid-body def
 
-'draw-boids (
+(
   'st let 'i let
   i N lt (
     st 'vxs at must i get must abs st 'vys at must i get must abs plus 'spd let
@@ -234,7 +234,7 @@ rec
 
     i 1 plus st draw-boids
   ) () if
-) def
+) 'draw-boids def
 
 (
   drop
@@ -257,7 +257,7 @@ rec
     frame 2 div 2 mod 1 plus 'pc let
     st 'px at must 'ppx let  st 'py at must 'ppy let
     -- Thick cross
-    'draw-cross (
+    (
       'pd let
       pd 4 lt (
         ppx pd plus ppy pc pixel
@@ -266,7 +266,7 @@ rec
         ppx 1 plus ppy pd plus pc pixel
         pd 1 plus draw-cross
       ) () if
-    ) def
+    ) 'draw-cross def
     -3 draw-cross
     -- Pulsing danger ring
     frame 4 div 10 mod 6 plus 'dring let

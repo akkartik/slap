@@ -2,7 +2,7 @@
 -- Prime below 1M that is sum of most consecutive primes
 -- Answer: 997651
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
@@ -15,7 +15,7 @@
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
 -- Generate primes up to 4600
 list
@@ -37,7 +37,7 @@ pflen 1 sub
 'maxw let
 
 -- inner-scan: w -> 0 (not found) or val (found, >0)
-'inner-scan (
+(
   'isw let
   -- stack: result i
   0 0
@@ -51,21 +51,21 @@ pflen 1 sub
     isi 1 plus
   ) while
   drop
-) def
+) 'inner-scan def
 
 -- outer loop
-'outer-step (
+(
   'os-w let 'os-bv let 'os-bl let
   os-w inner-scan 'os-sv let
   os-sv 0 gt (os-w os-sv) (os-bl os-bv) if
   os-w 1 sub
-) def
+) 'outer-step def
 
-'outer-pred (
+(
   'op-w let 'op-bv let 'op-bl let
   op-bl op-bv op-w
   op-w op-bl gt
-) def
+) 'outer-pred def
 
 0 0 maxw
 (outer-pred)

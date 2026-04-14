@@ -12,14 +12,14 @@ N 1 plus 'I-MX let
 N 2 plus 'I-MY let
 
 -- Look up cell at must wrapped (x, y) via nth must (no grid copy)
-'cell (
+(
   H plus H mod W mul
   swap W plus W mod
   plus nth must
-) def
+) 'cell def
 
 -- Count live neighbors of (x, y); gs is a symbol for nth must
-'neighbors (
+(
   'cy let 'cx let 'gs let
   gs cx 1 sub cy 1 sub cell
   gs cx       cy 1 sub cell plus
@@ -29,10 +29,10 @@ N 2 plus 'I-MY let
   gs cx 1 sub cy 1 plus cell plus
   gs cx       cy 1 plus cell plus
   gs cx 1 plus cy 1 plus cell plus
-) def
+) 'neighbors def
 
 -- Compute next generation
-'step (
+(
   'g let
   'g I-DRAW nth must 'dv let
   'g I-MX nth must 'mxv let
@@ -52,22 +52,22 @@ N 2 plus 'I-MY let
   while
   drop
   dv push mxv push myv push
-) def
+) 'step def
 
 -- Draw SxS block for one alive cell
-'draw-cell (
+(
   S mul 'py let
   S mul 'px let
   px py S S 3 fill-rect
-) def
+) 'draw-cell def
 
 -- Draw SxS block in a given color
-'draw-cell-color (
+(
   'cc let
   S mul 'py let
   S mul 'px let
   px py S S cc fill-rect
-) def
+) 'draw-cell-color def
 
 -- Random initial grid + state slots
 list N (2 random push) repeat

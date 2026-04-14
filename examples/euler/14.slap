@@ -5,7 +5,7 @@
 -- Max must start at n > N/2: any n <= N/2 has 2n also in range with
 -- chain(2n) = chain(n)+1, so n can't be maximal. Halves the search.
 
-'collatz-len (
+(
   1
   (over 1 neq)
   (over 1 band 0 eq
@@ -14,7 +14,7 @@
   if)
   while
   nip
-) def
+) 'collatz-len def
 
 -- stack: best-len best-start i
 0 1 500001

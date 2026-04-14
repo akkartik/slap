@@ -21,7 +21,7 @@ rec
   'mx (drop mmx) edit must 'my (drop mmy) edit must
 ) on
 
-'update-dot (
+(
   'frame let 'i let 'st let
   st 'xs at must i get must 'x let  st 'ys at must i get must 'y let
   st 'vxs at must i get must 'vx let  st 'vys at must i get must 'vy let
@@ -64,15 +64,15 @@ rec
   st
   'xs (i xf set must) edit must 'ys (i yf set must) edit must
   'vxs (i vx3 set must) edit must 'vys (i vy3 set must) edit must
-) def
+) 'update-dot def
 
-'tick-loop (
+(
   'frame let 'i let 'st let
   i N lt (
     st i frame update-dot
     i 1 plus frame tick-loop
   ) (st) if
-) def
+) 'tick-loop def
 
 'tick (
   drop
@@ -81,13 +81,13 @@ rec
   0 fr tick-loop
 ) on
 
-'draw-sq (
+(
   'c let 'sz let 'cy let 'cx let
   sz 2 div 'r let
   cx r sub cy r sub r 2 mul 1 plus dup c fill-rect
-) def
+) 'draw-sq def
 
-'draw-dots (
+(
   'frame let 'st let 'i let
   i N lt (
     st 'xs at must i get must 'x let  st 'ys at must i get must 'y let
@@ -106,7 +106,7 @@ rec
     ) if) if
     i 1 plus st frame draw-dots
   ) () if
-) def
+) 'draw-dots def
 
 (
   drop

@@ -2,28 +2,28 @@
 -- How many circular primes are there below one million?
 -- Answer: 55
 
-'ip-loop (
+(
   'ipl-i let 'ipl-n let
   ipl-i ipl-i mul ipl-n le (
     ipl-n ipl-i mod 0 eq (0) (ipl-n ipl-i 2 plus ip-loop) if
   ) (1) if
-) def
-'is-prime (
+) 'ip-loop def
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (ip-n 3 ip-loop) if
     ) if
   ) if
-) def
+) 'is-prime def
 
-'nd-helper (
+(
   'ndh-n let 'ndh-c let
   ndh-n 0 gt (ndh-c 1 plus ndh-n 10 div nd-helper) (ndh-c) if
-) def
-'num-digits (0 swap nd-helper) def
+) 'nd-helper def
+(0 swap nd-helper) 'num-digits def
 
-'cc-loop (
+(
   'ccl-i let 'ccl-r let 'ccl-pow let 'ccl-d let
   ccl-i ccl-d lt (
     ccl-r is-prime not (0) (
@@ -32,35 +32,35 @@
       ccl-i 1 plus cc-loop
     ) if
   ) (1) if
-) def
-'check-circular (
+) 'cc-loop def
+(
   'cc-n let
   cc-n num-digits 'cc-d let
   1 cc-d 1 sub (10 mul) repeat 'cc-pow let
   cc-d cc-pow cc-n 0 cc-loop
-) def
+) 'check-circular def
 
 [1 3 7 9] 'cds let
 
 -- pow4: n -> 4^n
-'pow4 (1 swap (4 mul) repeat) def
+(1 swap (4 mul) repeat) 'pow4 def
 
 -- digit-at: idx k -> the k-th base-4 digit of idx (0=rightmost)
-'digit-at ('da-k let da-k pow4 div 4 mod) def
+('da-k let da-k pow4 div 4 mod) 'digit-at def
 
 -- build-num: idx ndigits -> number using cds digits
 -- Reads base-4 digits from most-significant to least-significant
-'build-num-helper (
+(
   'bnh-k let 'bnh-idx let 'bnh-acc let
   bnh-k 0 ge (
     bnh-acc 10 mul cds bnh-idx bnh-k digit-at get must plus
     bnh-idx bnh-k 1 sub build-num-helper
   ) (bnh-acc) if
-) def
-'build-num ('bn-nd let 'bn-idx let 0 bn-idx bn-nd 1 sub build-num-helper) def
+) 'build-num-helper def
+('bn-nd let 'bn-idx let 0 bn-idx bn-nd 1 sub build-num-helper) 'build-num def
 
 -- count-circ: cnt idx limit ndigits -> cnt'
-'count-circ (
+(
   'cnc-nd let 'cnc-lim let
   -- stack: cnt idx
   (dup cnc-lim lt)
@@ -69,7 +69,7 @@
     1 plus
   ) while
   drop
-) def
+) 'count-circ def
 
 -- 2, 3, 5, 7 are circular primes
 4 0 16 2 count-circ

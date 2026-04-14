@@ -2,7 +2,7 @@
 -- Run with: ./slap-sdl < examples/fonts.slap
 
 -- Draw one byte as 8 horizontal pixels (MSB = leftmost)
-'draw-byte (
+(
   'dc let 'py let 'px let 'b let
   b 128 band 0 neq (px     py dc pixel) () if
   b  64 band 0 neq (px 1 plus py dc pixel) () if
@@ -12,10 +12,10 @@
   b   4 band 0 neq (px 5 plus py dc pixel) () if
   b   2 band 0 neq (px 6 plus py dc pixel) () if
   b   1 band 0 neq (px 7 plus py dc pixel) () if
-) def
+) 'draw-byte def
 
 -- Draw one character from raw font bytes
-'draw-char (
+(
   'dc let 'gy let 'gx let 'ch let 'n let 'raw let
   ch n n mul 8 mul mul 256 plus 'base let
   0
@@ -34,10 +34,10 @@
     1 plus
   ) while
   drop
-) def
+) 'draw-char def
 
 -- Draw a string, no wrapping
-'draw-text (
+(
   'dc let 'sy let 'sx let 'str let 'n let 'raw let
   sx 0
   (dup str len lt) (
@@ -53,10 +53,10 @@
     1 plus
   ) while
   drop drop
-) def
+) 'draw-text def
 
 -- Draw text with wrapping; returns cur-x cur-y on stack
-'draw-text-wrap (
+(
   'dc let 'maxw let 'sy let 'sx let 'str let 'n let 'raw let
   n 8 mul 'rh let
   sx sy 0
@@ -78,10 +78,10 @@
     1 plus
   ) while
   drop
-) def
+) 'draw-text-wrap def
 
 -- N from filename last char
-'font-n (last 49 sub 1 plus) def
+(last 49 sub 1 plus) 'font-n def
 
 -- Font catalog
 [

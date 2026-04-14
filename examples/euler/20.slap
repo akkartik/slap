@@ -3,7 +3,7 @@
 -- Answer: 648
 
 -- mul-digits: digits n -> digits' (multiplies big number by n)
-'mul-digits (
+(
   'n let 'ds let
   rec 0 'carry into list 'result into 0 'j into
   (dup 'j at must ds len lt)
@@ -22,9 +22,9 @@
   )
   while
   'result at must
-) def
+) 'mul-digits def
 
-'mul-box ('nn let (nn mul-digits) mutate) def
+('nn let (nn mul-digits) mutate) 'mul-box def
 
 [1] box 2
 (dup 100 le)

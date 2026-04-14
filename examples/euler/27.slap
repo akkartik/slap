@@ -2,35 +2,35 @@
 -- n^2 + an + b producing most consecutive primes, find a*b
 -- Answer: -59231
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
       ip-n 2 mod 0 eq (0) (
-        'ip-loop (
+        (
           'ip-i let 'ip-ok let
           ip-i ip-i mul ip-n le ip-ok and (
             ip-n ip-i mod 0 neq
             ip-i 2 plus ip-loop
           ) (ip-ok) if
-        ) def
+        ) 'ip-loop def
         1 3 ip-loop
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
-'count-primes (
+(
   'cp-b let 'cp-a let
-  'cp-loop (
+  (
     'cp-n let
     cp-n cp-n mul cp-a cp-n mul plus cp-b plus is-prime
     (cp-n 1 plus cp-loop) (cp-n) if
-  ) def
+  ) 'cp-loop def
   0 cp-loop
-) def
+) 'count-primes def
 
-'inner-loop (
+(
   'il-a let 'il-bestab let 'il-bestcnt let 'il-b let
   il-a 1000 lt (
     il-a il-b count-primes 'il-c let
@@ -38,9 +38,9 @@
     (il-b il-c il-a il-b mul il-a 1 plus inner-loop)
     (il-b il-bestcnt il-bestab il-a 1 plus inner-loop) if
   ) (il-bestcnt il-bestab) if
-) def
+) 'inner-loop def
 
-'outer-loop (
+(
   'ol-b let 'ol-bestab let 'ol-bestcnt let
   ol-b 1000 le (
     ol-b is-prime (
@@ -48,6 +48,6 @@
     ) (ol-bestcnt ol-bestab) if
     ol-b 1 plus outer-loop
   ) (ol-bestab) if
-) def
+) 'outer-loop def
 
 0 0 2 outer-loop print

@@ -25,11 +25,11 @@
 'grid let
 
 -- ga: row col -> value
-'ga ('col let 'row let grid row 20 mul col plus get must) def
+('col let 'row let grid row 20 mul col plus get must) 'ga def
 
 -- check-all: best r c -> best'
 -- checks all 4 directions and returns max product seen
-'check-all (
+(
   'c let 'r let
 
   c 16 lt (
@@ -47,7 +47,7 @@
   r 16 lt c 3 ge and (
     r c ga r 1 plus c 1 sub ga mul r 2 plus c 2 sub ga mul r 3 plus c 3 sub ga mul max
   ) () if
-) def
+) 'check-all def
 
 -- stack: best r
 0 0

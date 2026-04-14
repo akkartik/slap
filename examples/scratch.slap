@@ -2,7 +2,7 @@
 -- ./slap-sdl [file.txt] < examples/scratch.slap
 
 -- Draw one byte as 8 horizontal pixels (MSB = leftmost)
-'draw-byte (
+(
   'dc let 'py let 'px let 'b let
   b 128 band 0 neq (px     py dc pixel) () if
   b  64 band 0 neq (px 1 plus py dc pixel) () if
@@ -12,10 +12,10 @@
   b   4 band 0 neq (px 5 plus py dc pixel) () if
   b   2 band 0 neq (px 6 plus py dc pixel) () if
   b   1 band 0 neq (px 7 plus py dc pixel) () if
-) def
+) 'draw-byte def
 
 -- Draw one character from raw ufx font bytes
-'draw-char (
+(
   'dc let 'gy let 'gx let 'ch let 'n let 'raw let
   ch n n mul 8 mul mul 256 plus 'base let
   0
@@ -34,10 +34,10 @@
     1 plus
   ) while
   drop
-) def
+) 'draw-char def
 
 -- Draw a string (no wrapping)
-'draw-text (
+(
   'dc let 'sy let 'sx let 'str let 'n let 'raw let
   sx 0
   (dup str len lt) (
@@ -53,7 +53,7 @@
     1 plus
   ) while
   drop drop
-) def
+) 'draw-text def
 
 -- Fonts
 "fonts/geneva12.uf2" read must 'body-font let
@@ -87,7 +87,7 @@ argv len 0 gt (
   ) edit must
 ) () if
 
-'do-save (
+(
   argv len 0 gt (
     dup 'before at must 'sav-bef let
     dup 'after at must 'sav-aft let
@@ -107,10 +107,10 @@ argv len 0 gt (
     drop
     fpath swap write
   ) () if
-) def
+) 'do-save def
 
 -- Chrome
-'draw-titlebar (
+(
   0 0 640 BAR-H 1 fill-rect
   2
   (dup BAR-H 2 sub lt) (
@@ -130,9 +130,9 @@ argv len 0 gt (
   chic FN "Note Pad" 268 3 0 draw-text
   -- Bottom border
   0 BAR-H 1 sub 640 1 0 fill-rect
-) def
+) 'draw-titlebar def
 
-'draw-torn (
+(
   0
   (dup 640 lt) (
     dup 'tx let
@@ -143,9 +143,9 @@ argv len 0 gt (
   ) while
   drop
   0 BAR-H 2 plus 640 1 1 fill-rect
-) def
+) 'draw-torn def
 
-'draw-rules (
+(
   PAD-Y LH plus
   (dup 480 lt) (
     dup 'ry let
@@ -153,10 +153,10 @@ argv len 0 gt (
     LH plus
   ) while
   drop
-) def
+) 'draw-rules def
 
 -- Render gap buffer text
-'render-text (
+(
   'aft let 'bef let
 
   -- Before cursor: stack carries rcx, rcy, ri
@@ -206,7 +206,7 @@ argv len 0 gt (
   ) while
   drop
   drop drop
-) def
+) 'render-text def
 
 -- Click to move cursor
 'mousedown (

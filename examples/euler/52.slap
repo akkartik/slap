@@ -3,14 +3,14 @@
 -- Answer: 142857
 
 -- digit-sig: n -> signature (sorted digit list)
-'digit-sig (
+(
   list swap
   (dup 0 gt) (dup 10 mod (swap) dip push swap 10 div) while
   drop sort
-) def
+) 'digit-sig def
 
 -- check-permuted: x -> bool (do x..6x have same digit signature?)
-'check-permuted (
+(
   'cp-x let
   cp-x digit-sig 'cp-sig let
   cp-x 2 mul digit-sig cp-sig eq
@@ -18,7 +18,7 @@
   cp-x 4 mul digit-sig cp-sig eq and
   cp-x 5 mul digit-sig cp-sig eq and
   cp-x 6 mul digit-sig cp-sig eq and
-) def
+) 'check-permuted def
 
 1
 (dup check-permuted not)

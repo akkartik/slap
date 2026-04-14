@@ -76,11 +76,11 @@
 
 -- EXPECT: function body consumes
 -- TYPE ERROR: body consumes wrong number of inputs
-'bad (drop drop) [int lent in  int move out] effect def
+(drop drop) [int lent in  int move out] effect 'bad def
 
 -- EXPECT: function body produces
 -- TYPE ERROR: body produces wrong number of outputs
-'bad2 (dup) [int lent in  int move out] effect def
+(dup) [int lent in  int move out] effect 'bad2 def
 
 -- EXPECT: type error
 -- TYPE ERROR: plus on int result (eq returns int, plus expects num)
@@ -104,21 +104,21 @@
 
 -- EXPECT: function body consumes
 -- TYPE ERROR: body declares 2 inputs but only consumes 1
-'foo (drop) [int lent in  int lent in  int move out] effect def
+(drop) [int lent in  int lent in  int move out] effect 'foo def
 
 -- EXPECT: already defined
 -- TYPE ERROR: duplicate def
-'aaa (1) def
-'aaa (2) def
+(1) 'aaa def
+(2) 'aaa def
 
 -- EXPECT: already defined
 -- TYPE ERROR: def shadows outer def
-'bbb 1 def
-'ccc ('bbb 2 def) def
+1 'bbb def
+(2 'bbb def) 'ccc def
 
 -- EXPECT: shadows existing definition
 -- TYPE ERROR: let shadows def
-'ddd (1) def
+(1) 'ddd def
 1 'ddd let
 
 -- EXPECT: already bound
@@ -128,34 +128,34 @@
 
 -- EXPECT: shadows existing definition
 -- TYPE ERROR: let inside closure shadows outer def (issue #7)
-'fff (1) def
-'ggg (2 'fff let fff) def
+(1) 'fff def
+(2 'fff let fff) 'ggg def
 
 -- EXPECT: already bound
 -- TYPE ERROR: let inside closure shadows outer let
 3 'hhh let
-'iii (4 'hhh let hhh) def
+(4 'hhh let hhh) 'iii def
 
 -- EXPECT: shadows existing definition
 -- TYPE ERROR: let shadows def in wide-effect closure (>8 args)
-'jjj (1) def
-'kkk ('a1 let 'a2 let 'a3 let 'a4 let 'a5 let 'a6 let 'a7 let 'a8 let 'a9 let 'jjj let jjj) def
+(1) 'jjj def
+('a1 let 'a2 let 'a3 let 'a4 let 'a5 let 'a6 let 'a7 let 'a8 let 'a9 let 'jjj let jjj) 'kkk def
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on list inside non-simple tuple (soundness: nested structure)
-'bad3 (1 [2 3] plus) def
+(1 [2 3] plus) 'bad3 def
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on tuple inside non-simple tuple
-'bad4 (1 (2 3) plus) def
+(1 (2 3) plus) 'bad4 def
 
 -- EXPECT: expected int
 -- TYPE ERROR: and on float inside non-simple tuple with nested list
-'bad5 (1.0 [1 2] drop and) def
+(1.0 [1 2] drop and) 'bad5 def
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on list inside recursive non-simple tuple
-'bad6 (dup 0 eq (drop 1) (1 sub [2 3] plus) if) def
+(dup 0 eq (drop 1) (1 sub [2 3] plus) if) 'bad6 def
 
 -- EXPECT: type error
 -- TYPE ERROR: read expects list, not int
@@ -330,7 +330,7 @@ dict (drop) each free
 
 -- EXPECT: never referenced
 -- TYPE ERROR: linear value let-bound inside quotation, never used → captured and leaked
-'leak (42 box 'b let) def leak
+(42 box 'b let) 'leak def leak
 
 -- EXPECT: aliases the box
 -- TYPE ERROR: let-bind compound inside lend body (aliases box backing)
@@ -362,15 +362,15 @@ dict (drop) each free
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: linear-capturing closure returned from def, applied twice
-'make-freer (42 box 'b let (b free)) def
+(42 box 'b let (b free)) 'make-freer def
 make-freer 'f let
 f apply
 f apply
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: linear-capturing closure via def chain, applied twice
-'inner-maker (42 box 'b let (b free)) def
-'outer-maker (inner-maker) def
+(42 box 'b let (b free)) 'inner-maker def
+(inner-maker) 'outer-maker def
 outer-maker 'f let
 f apply
 f apply
@@ -383,11 +383,11 @@ f apply
 
 -- EXPECT: clause body may not produce a linear value
 -- TYPE ERROR: cond clause producing a linear closure
-'bad-cond (1 0 {(1 eq) (42 box 'b let (b free))} cond) def
+(1 0 {(1 eq) (42 box 'b let (b free))} cond) 'bad-cond def
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: if-branch returning linear closure, applied twice
-'maker (1 (42 box 'b let (b free)) (99 box 'c let (c free)) if) def
+(1 (42 box 'b let (b free)) (99 box 'c let (c free)) if) 'maker def
 maker 'f let
 f apply
 f apply

@@ -7,7 +7,7 @@
 -- Valid when b is positive integer and b >= a.
 
 -- count-triples: p -> count
-'count-triples (
+(
   'ctp let
   -- stack: cnt a
   0 1
@@ -24,14 +24,14 @@
     1 plus
   ) while
   drop
-) def
+) 'count-triples def
 
-'step39 (
+(
   'stp let 'stbp let 'stbc let
   stp count-triples 'stcnt let
   stcnt stbc gt (stcnt stp) (stbc stbp) if
   stp 2 plus
-) def
+) 'step39 def
 
 0 0 12
 (dup 1000 le)

@@ -12,7 +12,7 @@
 
 'tick (drop 1 plus) on
 
-'iterate (
+(
   'cy let 'cx let 'zy let 'zx let 'i let
   i MAX lt  zx dup mul zy dup mul plus 4.0 lt  and (
     zx dup mul zy dup mul sub cx plus
@@ -20,9 +20,9 @@
     'zy2 let 'zx2 let
     i 1 plus zx2 zy2 cx cy iterate
   ) (i) if
-) def
+) 'iterate def
 
-'render-col (
+(
   'cy2 let 'cy let 'xoff let 'xscl let 'py let 'px let
   px W lt (
     px itof xscl mul xoff plus 'cx let
@@ -42,9 +42,9 @@
 
     px 1 plus py xscl xoff cy cy2 render-col
   ) () if
-) def
+) 'render-col def
 
-'render-row (
+(
   'yoff let 'yscl let 'xoff let 'xscl let 'py let
   py H lt (
     py itof yscl mul yoff plus 'cy let
@@ -54,7 +54,7 @@
 
     py 1 plus xscl xoff yscl yoff render-row
   ) () if
-) def
+) 'render-row def
 
 (
   'frame let

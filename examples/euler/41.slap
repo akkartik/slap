@@ -3,7 +3,7 @@
 -- Answer: 7652413
 -- Note: 8 and 9 digit pandigitals have digit sums divisible by 3, so check 7 first must.
 
-'is-prime (
+(
   'ip-n let
   ip-n 2 lt (0) (
     ip-n 2 eq (1) (
@@ -16,22 +16,22 @@
       ) if
     ) if
   ) if
-) def
+) 'is-prime def
 
-'digits-to-num (
+(
   0 (swap 10 mul plus) fold
-) def
+) 'digits-to-num def
 
 -- list-swap: list i j -> list  (swap elements at must i and j)
-'list-swap (
+(
   'lsw-j let 'lsw-i let 'lsw-l let
   lsw-l lsw-i get must 'lsw-tmp let
   lsw-l lsw-i lsw-l lsw-j get must set must lsw-j lsw-tmp set must
-) def
+) 'list-swap def
 
 -- prev-perm-apply: perm i -> new-perm
 -- Given descent index i, compute previous permutation
-'prev-perm-apply (
+(
   'pa-i let 'pa-perm let
   -- Find rightmost j > i where perm[j] < perm[i]
   pa-perm len 1 sub
@@ -40,14 +40,14 @@
   -- Swap i and j, then reverse suffix after i
   pa-perm pa-i pa-j list-swap 'pa-s let
   pa-s pa-i 1 plus take-n pa-s pa-i 1 plus drop-n reverse cat
-) def
+) 'prev-perm-apply def
 
-'descent-check (
+(
   'dc-perm let 'dc-i let
   dc-i 0 ge (dc-perm dc-i get must dc-perm dc-i 1 plus get must le) (0) if
-) def
+) 'descent-check def
 
-'prev-perm (
+(
   'pp-perm let
   -- Find rightmost i where perm[i] > perm[i+1]
   pp-perm len 2 sub
@@ -57,7 +57,7 @@
   ) (
     pp-perm swap prev-perm-apply 1
   ) if
-) def
+) 'prev-perm def
 
 -- stack: perm answer
 [7 6 5 4 3 2 1] 0

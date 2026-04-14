@@ -42,7 +42,7 @@ false 0 eq assert
 'hello 'world eq not assert
 
 -- ===== Definitions (def auto-executes tuples) =====
-'double (2 mul) def
+(2 mul) 'double def
 5 double 10 eq assert
 
 -- ===== Let (pushes value, no auto-exec) =====
@@ -50,9 +50,9 @@ false 0 eq assert
 answer 42 eq assert
 
 -- ===== Recursion =====
-'factorial (
+(
   dup 1 le (drop 1) (dup 1 sub factorial mul) if
-) def
+) 'factorial def
 5 factorial 120 eq assert
 1 factorial 1 eq assert
 0 factorial 1 eq assert
@@ -270,10 +270,10 @@ rec rec eq assert
 10 (dup 5 lt) (2 mul) while 10 eq assert
 
 -- nested def
-'outer (
-  'inner (10 plus) def
+(
+  (10 plus) 'inner def
   5 inner
-) def
+) 'outer def
 outer 15 eq assert
 
 -- tuple access via destructuring
@@ -369,9 +369,9 @@ outer 15 eq assert
 [[] [1] []] flatten [1] eq assert
 
 -- ===== Complex: fibonacci =====
-'fib (
+(
   dup 1 le () (dup 1 sub fib swap 2 sub fib plus) if
-) def
+) 'fib def
 0 fib 0 eq assert
 1 fib 1 eq assert
 10 fib 55 eq assert
@@ -408,33 +408,33 @@ outer 15 eq assert
 [5 3 8 1 7] dup (4 lt) where select [3 1] eq assert
 
 -- ===== Typed user function with body check =====
-'square (dup mul) [int lent in  int move out] effect def
+(dup mul) [int lent in  int move out] effect 'square def
 7 square 49 eq assert
 
 -- ===== Closures =====
-'make-adder (
+(
   'n let
   (n plus)
-) def
+) 'make-adder def
 5 make-adder 3 swap apply 8 eq assert
 10 make-adder 7 swap apply 17 eq assert
 
-'make-multiplier (
+(
   'factor let
   (factor mul)
-) def
+) 'make-multiplier def
 3 make-multiplier 7 swap apply 21 eq assert
 
 -- ===== Adversarial: recursive list building =====
-'iota (
+(
   dup 0 le (drop list) (dup 1 sub iota swap push) if
-) def
+) 'iota def
 5 iota [1 2 3 4 5] eq assert
 0 iota [] eq assert
 
 -- ===== Adversarial: mutual-style via def =====
-'even? (dup 0 eq (drop 1) (1 sub odd?) if) def
-'odd? (dup 0 eq (drop 0) (1 sub even?) if) def
+(dup 0 eq (drop 1) (1 sub odd?) if) 'even? def
+(dup 0 eq (drop 0) (1 sub even?) if) 'odd? def
 4 even? assert
 3 odd? assert
 0 even? assert
@@ -471,39 +471,39 @@ free
 [] sort [] eq assert
 
 -- ===== Complex: curried closure =====
-'make-adder2 (
+(
   'a let
   ('b let a b plus)
-) def
+) 'make-adder2 def
 3 make-adder2 'add3 let
 4 add3 apply 7 eq assert
 10 add3 apply 13 eq assert
 
 -- ===== Complex: closure over captured variable in map =====
-'scale (
+(
   'factor let
   (factor mul)
-) def
+) 'scale def
 3 scale 'triple let
 [1 2 3 4] (triple apply) each [3 6 9 12] eq assert
 
 -- ===== Complex: GCD via recursion =====
-'gcd (
+(
   dup 0 eq (drop) (swap over mod gcd) if
-) def
+) 'gcd def
 12 8 gcd 4 eq assert
 100 75 gcd 25 eq assert
 17 13 gcd 1 eq assert
 0 5 gcd 5 eq assert
 
 -- ===== Complex: iterative power =====
-'pow (
+(
   1 rot rot
   (dup 0 eq not) (
     1 sub (tuck mul swap) dip
   ) while
   drop drop
-) def
+) 'pow def
 2 10 pow 1024 eq assert
 3 4 pow 81 eq assert
 5 0 pow 1 eq assert
@@ -566,14 +566,14 @@ free free
 1 10 (2 mul) repeat 1024 eq assert
 
 -- ===== Complex: collatz sequence length (iterative) =====
-'collatz-len (
+(
   0 swap
   (dup 1 eq not) (
     dup 2 mod 0 eq (2 div) (3 mul 1 plus) if
     swap 1 plus swap
   ) while
   drop
-) def
+) 'collatz-len def
 27 collatz-len 111 eq assert
 6 collatz-len 8 eq assert
 1 collatz-len 0 eq assert
@@ -589,9 +589,9 @@ drop
 dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 
 -- ===== Complex: cond in function (replaces match) =====
-'color-val (
+(
   -1 {('red eq) (drop 0) ('green eq) (drop 1) ('blue eq) (drop 2)} cond
-) def
+) 'color-val def
 'red color-val 0 eq assert
 'blue color-val 2 eq assert
 'green color-val 1 eq assert
@@ -629,10 +629,10 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 [1 2 3 4] dup 1 drop-n zip [[1 2] [2 3] [3 4]] eq assert
 
 -- ===== Complex: nested closures =====
-'make-between (
+(
   'lo let 'hi let
   (dup lo le not swap hi lt and)
-) def
+) 'make-between def
 10 1 make-between 'in-range let
 5 in-range apply assert
 0 in-range apply not assert
@@ -659,11 +659,11 @@ free
 [[5 1 2] [1 2 3] [2 3 4]] eq assert
 
 -- ===== Non-simple tuple type checking =====
-'add-lists ([1 2 3] [4 5 6] cat) def
+([1 2 3] [4 5 6] cat) 'add-lists def
 add-lists [1 2 3 4 5 6] eq assert
-'dip-test (3 (2 plus) dip) def
+(3 (2 plus) dip) 'dip-test def
 1 dip-test 3 eq assert 3 eq assert
-'nested-if (dup 0 eq (drop 42) (1 sub) if) def
+(dup 0 eq (drop 42) (1 sub) if) 'nested-if def
 0 nested-if 42 eq assert
 5 nested-if 4 eq assert
 
@@ -799,7 +799,7 @@ list "," str-join "" eq assert
 list "hi" push "--" str-join "hi" eq assert
 
 -- ===== TCP Loopback =====
-'tcp-roundtrip (
+(
   19201 tcp-listen must 's1 let
   "127.0.0.1" 19201 tcp-connect must 'c1 let
   s1 tcp-accept must 'p1 let 's1a let
@@ -815,9 +815,9 @@ list "hi" push "--" str-join "hi" eq assert
   c1b tcp-close
   p1b tcp-close
   s1a tcp-close
-) def tcp-roundtrip
+) 'tcp-roundtrip def tcp-roundtrip
 
-'tcp-multi-send (
+(
   19202 tcp-listen must 's2 let
   "127.0.0.1" 19202 tcp-connect must 'c2 let
   s2 tcp-accept must 'p2 let 's2a let
@@ -832,9 +832,9 @@ list "hi" push "--" str-join "hi" eq assert
   c2c tcp-close
   p2a tcp-close
   s2a tcp-close
-) def tcp-multi-send
+) 'tcp-multi-send def tcp-multi-send
 
-'tcp-empty-send (
+(
   19203 tcp-listen must 's3 let
   "127.0.0.1" 19203 tcp-connect must 'c3 let
   s3 tcp-accept must 'p3 let 's3a let
@@ -844,9 +844,9 @@ list "hi" push "--" str-join "hi" eq assert
   c3a tcp-close
   p3 tcp-close
   s3a tcp-close
-) def tcp-empty-send
+) 'tcp-empty-send def tcp-empty-send
 
-'tcp-large-data (
+(
   19204 tcp-listen must 's4 let
   "127.0.0.1" 19204 tcp-connect must 'c4 let
   s4 tcp-accept must 'p4 let 's4a let
@@ -861,10 +861,10 @@ list "hi" push "--" str-join "hi" eq assert
 
   tcp-close
   s4a tcp-close
-) def tcp-large-data
+) 'tcp-large-data def tcp-large-data
 
 -- ===== HTTP Prelude =====
-'test-parse-http (
+(
   "HTTP/1.1 200 OK" crlf cat "Content-Type: text/html" cat crlf cat crlf cat "hello body" cat
   parse-http must 'body let 'headers let 'status let
   status 200 eq assert
@@ -872,15 +872,15 @@ list "hi" push "--" str-join "hi" eq assert
   headers 0 get must 'key at must "Content-Type" eq assert
   headers 0 get must 'value at must "text/html" eq assert
   body "hello body" eq assert
-) def test-parse-http
+) 'test-parse-http def test-parse-http
 
-'test-http-request (
+(
   "GET" "example.com" "/path" list list http-request 'req let
   req 4 take-n "GET " eq assert
-) def test-http-request
+) 'test-http-request def test-http-request
 
 -- ===== HTTP Integration (Loopback) =====
-'test-http-loopback (
+(
   19205 tcp-listen must 'srv let
   "127.0.0.1" 19205 tcp-connect must 'cli let
   srv tcp-accept must 'peer let 'srv2 let
@@ -903,7 +903,7 @@ list "hi" push "--" str-join "hi" eq assert
   rstat 200 eq assert
   rbody "hello" eq assert
   rhdrs len 2 eq assert
-) def test-http-loopback
+) 'test-http-loopback def test-http-loopback
 
 -- ===== Tagged Unions (Sum Types) =====
 
@@ -961,18 +961,18 @@ list "hi" push "--" str-join "hi" eq assert
 2.0 ok (1.0 plus ok) then 0.0 default 3.0 eq assert
 
 -- result type pattern: safe division
-'safe-div ('d let 'n let
+('d let 'n let
   d 0 eq ("division by zero" no) (n d div ok) if
-) def
+) 'safe-div def
 10 2 safe-div -1 default 5 eq assert
 10 0 safe-div -1 default -1 eq assert
 10 2 safe-div (3 mul ok) then -1 default 15 eq assert
 10 0 safe-div (3 mul ok) then -1 default -1 eq assert
 
 -- chained safe operations
-'safe-sqrt ('n let
+('n let
   n 0 lt ("negative" no) (n itof fsqrt ftoi ok) if
-) def
+) 'safe-sqrt def
 16 safe-sqrt -1 default 4 eq assert
 -1 safe-sqrt -1 default -1 eq assert
 16 safe-sqrt (2 mul ok) then -1 default 8 eq assert
@@ -1008,7 +1008,7 @@ list "hi" push "--" str-join "hi" eq assert
 [10 20 30] 0 (ok -1 default plus) fold 60 eq assert
 
 -- tagged via custom tag function
-'tag-as ('s let s tag) def
+('s let s tag) 'tag-as def
 42 'custom tag-as () {'custom (1 plus)} untag 43 eq assert
 
 -- tagged stored in let bindings
@@ -1017,8 +1017,8 @@ x -1 default 42 eq assert
 x (2 mul ok) then -1 default 84 eq assert
 
 -- tagged returned from def
-'wrap-ok (ok) def
-'unwrap (-1 default) def
+(ok) 'wrap-ok def
+(-1 default) 'unwrap def
 42 wrap-ok unwrap 42 eq assert
 
 -- nested tags: unwrap outermost
@@ -1071,9 +1071,9 @@ x (2 mul ok) then -1 default 84 eq assert
 42 'c tag () {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 45 eq assert
 
 -- recursive tagged: build a linked list with tags
-'cons ('tl let 'hd let hd tl couple 'cons tag) def
+('tl let 'hd let hd tl couple 'cons tag) 'cons def
 
-'nil (0 'nil tag) def
+(0 'nil tag) 'nil def
 nil () {'nil (drop 0) 'cons (first)} untag 0 eq assert
 1 2 nil cons cons () {'nil (drop 0) 'cons (first)} untag 1 eq assert
 

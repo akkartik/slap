@@ -1,8 +1,8 @@
 -- icn.slap: 1-bit 8x8 tile codec. 8 bytes <-> 64 pixels (MSB-first).
 -- Uses prelude words: byte-bits, bits-byte, chunks.
 
-'icn-decode ((byte-bits) each flatten) def
-'icn-encode (8 chunks (bits-byte) each) def
+((byte-bits) each flatten) 'icn-decode def
+(8 chunks (bits-byte) each) 'icn-encode def
 
 -- ===== tests =====
 [60 66 129 129 129 129 66 60] icn-decode

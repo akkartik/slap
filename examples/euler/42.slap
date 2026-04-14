@@ -6,7 +6,7 @@
 -- This demo uses a 15-word inline list (answer: 8).
 -- The original problem uses words.txt (1786 words); the full-list answer is 162.
 
-'word-value (0 (64 sub plus) fold) def
+(0 (64 sub plus) fold) 'word-value def
 
 -- precompute triangle numbers up to 60 (covers any 2-3 letter word value)
 1 11 range (dup 1 plus mul 2 div) each 'tris let

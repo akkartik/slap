@@ -2,24 +2,24 @@
 -- Find d < 1000 with longest recurring cycle in 1/d
 -- Answer: 983
 
-'strip-factor (
+(
   'sf-f let 'sf-d let
   sf-d sf-f mod 0 eq (sf-d sf-f div sf-f strip-factor) (sf-d) if
-) def
+) 'strip-factor def
 
-'cycle-len (
+(
   'cl-d let
   cl-d 2 strip-factor 5 strip-factor 'cl-d2 let
   cl-d2 1 le (0) (
-    'cl-loop (
+    (
       'cl-k let 'cl-r let
       cl-r 1 neq (cl-r 10 mul cl-d2 mod cl-k 1 plus cl-loop) (cl-k) if
-    ) def
+    ) 'cl-loop def
     10 cl-d2 mod 1 cl-loop
   ) if
-) def
+) 'cycle-len def
 
-'find-best (
+(
   'fb-d let 'fb-bestd let 'fb-best let
   fb-d 1000 lt (
     fb-d cycle-len 'fb-c let
@@ -27,5 +27,5 @@
     (fb-c fb-d fb-d 1 plus find-best)
     (fb-best fb-bestd fb-d 1 plus find-best) if
   ) (fb-bestd) if
-) def
+) 'find-best def
 0 0 2 find-best print
