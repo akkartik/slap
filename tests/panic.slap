@@ -130,7 +130,7 @@ stack pop
 [195 65] utf8-decode must
 
 -- EXPECT: expected tagged value
-123 {'foo ()} untag
+123 () {'foo ()} untag
 
 -- EXPECT: expected list or tagged
 123 (1 plus) then
@@ -282,7 +282,7 @@ tuck
 1 'ok tag 1 untag
 
 -- EXPECT: untag: need even number of clauses
-1 'ok tag {'ok} untag
+1 'ok tag () {'ok} untag
 
 -- EXPECT: key
 {'a 1} 'b at must

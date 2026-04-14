@@ -90,7 +90,7 @@
 
 -- _type-name: (jv -- jv name-str). Non-consuming over at the JSON value's tag.
 '_type-name (dup
-  {'int   (drop "int")
+  () {'int   (drop "int")
    'float (drop "float")
    'str   (drop "string")
    'bool  (drop "bool")
@@ -141,7 +141,7 @@
     _l-items 0 get must '_l-item let
     _l-path "[" cat _l-idx int-str cat "]" cat '_l-ipath let
     _l-item _l-ipath _l-inner _japply
-    {'ok ('_l-v let
+    () {'ok ('_l-v let
        _l-items 1 drop-n _l-idx 1 plus _l-path _l-inner _l-acc _l-v push _ja-list-loop)
      'no (no)} untag
   ) if
@@ -152,9 +152,9 @@
   '_w-inner let '_w-keys let '_w-path let '_w-jv let
   _w-keys len 0 eq (_w-jv _w-path _w-inner _japply) (
     _w-keys 0 get must '_w-k let
-    _w-jv {'obj ('_w-ents let
+    _w-jv () {'obj ('_w-ents let
        _w-k _w-ents _find-field
-       {'ok ('_w-v let
+       () {'ok ('_w-v let
           _w-v _w-path "." cat _w-k cat _w-keys 1 drop-n _w-inner _ja-at-walk)
         'no (drop _w-path ": missing field \"" cat _w-k cat "\"" cat no)} untag)
      'int   (drop _w-jv _w-path "object" _mismatch)
@@ -171,7 +171,7 @@
   '_o-ds let '_o-path let '_o-jv let
   _o-ds len 0 eq (_o-path ": oneOf: no decoders matched" cat no) (
     _o-jv _o-path _o-ds 0 get must _japply
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop
        _o-ds len 1 eq (_o-path ": oneOf: no decoders matched" cat no) (
          _o-jv _o-path _o-ds 1 drop-n _ja-one-of-loop
@@ -181,11 +181,11 @@
 
 '_japply recur (
   '_a-d let '_a-path let '_a-jv let
-  _a-d {'dec ()} untag '_a-node let
+  _a-d () {'dec ()} untag '_a-node let
   _a-node 0 get must '_a-dname let
 
   _a-dname 'int eq (
-    _a-jv {'int (ok)
+    _a-jv () {'int (ok)
            'float (drop _a-jv _a-path "int" _mismatch)
            'str   (drop _a-jv _a-path "int" _mismatch)
            'bool  (drop _a-jv _a-path "int" _mismatch)
@@ -193,7 +193,7 @@
            'arr   (drop _a-jv _a-path "int" _mismatch)
            'obj   (drop _a-jv _a-path "int" _mismatch)} untag
   ) (_a-dname 'float eq (
-    _a-jv {'float (ok)
+    _a-jv () {'float (ok)
            'int   (drop _a-jv _a-path "float" _mismatch)
            'str   (drop _a-jv _a-path "float" _mismatch)
            'bool  (drop _a-jv _a-path "float" _mismatch)
@@ -201,7 +201,7 @@
            'arr   (drop _a-jv _a-path "float" _mismatch)
            'obj   (drop _a-jv _a-path "float" _mismatch)} untag
   ) (_a-dname 'str eq (
-    _a-jv {'str (ok)
+    _a-jv () {'str (ok)
            'int   (drop _a-jv _a-path "string" _mismatch)
            'float (drop _a-jv _a-path "string" _mismatch)
            'bool  (drop _a-jv _a-path "string" _mismatch)
@@ -209,7 +209,7 @@
            'arr   (drop _a-jv _a-path "string" _mismatch)
            'obj   (drop _a-jv _a-path "string" _mismatch)} untag
   ) (_a-dname 'bool eq (
-    _a-jv {'bool (ok)
+    _a-jv () {'bool (ok)
            'int   (drop _a-jv _a-path "bool" _mismatch)
            'float (drop _a-jv _a-path "bool" _mismatch)
            'str   (drop _a-jv _a-path "bool" _mismatch)
@@ -217,7 +217,7 @@
            'arr   (drop _a-jv _a-path "bool" _mismatch)
            'obj   (drop _a-jv _a-path "bool" _mismatch)} untag
   ) (_a-dname 'null eq (
-    _a-jv {'null (ok)
+    _a-jv () {'null (ok)
            'int   (drop _a-jv _a-path "null" _mismatch)
            'float (drop _a-jv _a-path "null" _mismatch)
            'str   (drop _a-jv _a-path "null" _mismatch)
@@ -229,7 +229,7 @@
   ) (_a-dname 'fail eq (
     _a-path ": " cat _a-node 1 get must cat no
   ) (_a-dname 'list eq (
-    _a-jv {'arr (
+    _a-jv () {'arr (
        0 _a-path _a-node 1 get must list _ja-list-loop)
      'int   (drop _a-jv _a-path "array" _mismatch)
      'float (drop _a-jv _a-path "array" _mismatch)
@@ -238,10 +238,10 @@
      'null  (drop _a-jv _a-path "array" _mismatch)
      'obj   (drop _a-jv _a-path "array" _mismatch)} untag
   ) (_a-dname 'field eq (
-    _a-jv {'obj ('_a-ents let
+    _a-jv () {'obj ('_a-ents let
        _a-node 1 get must '_a-fk let
        _a-fk _a-ents _find-field
-       {'ok ('_a-fv let
+       () {'ok ('_a-fv let
           _a-fv _a-path "." cat _a-fk cat _a-node 2 get must _japply)
         'no (drop _a-path ": missing field \"" cat _a-fk cat "\"" cat no)} untag)
      'int   (drop _a-jv _a-path "object" _mismatch)
@@ -255,18 +255,18 @@
   ) (_a-dname 'map eq (
     _a-node 2 get must
     _a-jv _a-path _a-node 1 get must _japply
-    {'ok (swap apply ok)
+    () {'ok (swap apply ok)
      'no (swap drop no)} untag
   ) (_a-dname 'andThen eq (
     _a-jv _a-path _a-node 2 get must
     _a-jv _a-path _a-node 1 get must _japply
-    {'ok (swap apply _japply)
+    () {'ok (swap apply _japply)
      'no ((drop drop drop) dip no)} untag
   ) (_a-dname 'oneOf eq (
     _a-jv _a-path _a-node 1 get must _ja-one-of-loop
   ) (_a-dname 'maybe eq (
     _a-jv _a-path _a-node 1 get must _japply
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop () ok)} untag
   ) (
     _a-path ": unknown decoder" cat no
@@ -377,12 +377,12 @@
 
 -- Succeed / fail
 "42" 7 jd-succeed jd-run 7 ok eq assert
-"42" "nope" jd-fail jd-run {'no ()} untag "$: nope" eq assert
+"42" "nope" jd-fail jd-run () {'no ()} untag "$: nope" eq assert
 
 -- And-then: validate positive int
 'positive-int (jd-int ('n let n 0 gt (n jd-succeed) ("must be positive" jd-fail) if) jd-and-then) def
 "5" positive-int jd-run 5 ok eq assert
-"-1" positive-int jd-run {'no ()} untag "$: must be positive" eq assert
+"-1" positive-int jd-run () {'no ()} untag "$: must be positive" eq assert
 
 -- One-of (list of decoders must be built at runtime since list literals are
 -- eagerly evaluated at build time and can't see user def'd names)
@@ -404,32 +404,32 @@
 
 -- ========== Adversarial tests ==========
 
-"\"x\"" jd-int jd-run {'no ()} untag "$: expected int, got string" eq assert
-"42" jd-str jd-run {'no ()} untag "$: expected string, got int" eq assert
-"true" jd-int jd-run {'no ()} untag "$: expected int, got bool" eq assert
-"[1]" jd-int jd-run {'no ()} untag "$: expected int, got array" eq assert
-"{}" jd-int jd-run {'no ()} untag "$: expected int, got object" eq assert
+"\"x\"" jd-int jd-run () {'no ()} untag "$: expected int, got string" eq assert
+"42" jd-str jd-run () {'no ()} untag "$: expected string, got int" eq assert
+"true" jd-int jd-run () {'no ()} untag "$: expected int, got bool" eq assert
+"[1]" jd-int jd-run () {'no ()} untag "$: expected int, got array" eq assert
+"{}" jd-int jd-run () {'no ()} untag "$: expected int, got object" eq assert
 
-"{}" "a" jd-int jd-field jd-run {'no ()} untag "$: missing field \"a\"" eq assert
+"{}" "a" jd-int jd-field jd-run () {'no ()} untag "$: missing field \"a\"" eq assert
 
-"[1, \"x\", 3]" jd-int jd-list jd-run {'no ()} untag
+"[1, \"x\", 3]" jd-int jd-list jd-run () {'no ()} untag
   "$[1]: expected int, got string" eq assert
 
 'c-dec ("c" jd-int jd-field) def
 'b-dec ("b" c-dec jd-list jd-field) def
 'a-dec ("a" b-dec jd-field) def
 "{\"a\":{\"b\":[{\"c\":\"wrong\"}]}}" a-dec jd-run
-  {'no ()} untag "$.a.b[0].c: expected int, got string" eq assert
+  () {'no ()} untag "$.a.b[0].c: expected int, got string" eq assert
 
 'empty-one-of (list jd-one-of) def
-"42" empty-one-of jd-run {'no ()} untag "$: oneOf: no decoders matched" eq assert
+"42" empty-one-of jd-run () {'no ()} untag "$: oneOf: no decoders matched" eq assert
 
 'v-pos-dec ("v" positive-int jd-field) def
 "{\"v\": -1}" v-pos-dec jd-run
-  {'no ()} untag "$.v: must be positive" eq assert
+  () {'no ()} untag "$.v: must be positive" eq assert
 
-"3.14" jd-int jd-run {'no ()} untag "$: expected int, got float" eq assert
-"42" jd-float jd-run {'no ()} untag "$: expected float, got int" eq assert
+"3.14" jd-int jd-run () {'no ()} untag "$: expected int, got float" eq assert
+"42" jd-float jd-run () {'no ()} untag "$: expected float, got int" eq assert
 
 -- ========== Encoder tests ==========
 

@@ -909,17 +909,20 @@ list "hi" push "--" str-join "hi" eq assert
 -- ===== Tagged Unions (Sum Types) =====
 
 -- basic tag and untag
-123 'foo tag {'foo ()} untag 123 eq assert
+123 'foo tag () {'foo ()} untag 123 eq assert
+
+-- untag default fires on unhandled tag (A5)
+123 'bar tag 999 {'foo (1 plus)} untag 999 eq assert
 
 -- record clauses
-123 'foo tag {'foo (1 plus) 'bar (2 plus)} untag 124 eq assert
-456 'bar tag {'foo (1 plus) 'bar (2 plus)} untag 458 eq assert
+123 'foo tag () {'foo (1 plus) 'bar (2 plus)} untag 124 eq assert
+456 'bar tag () {'foo (1 plus) 'bar (2 plus)} untag 458 eq assert
 
 -- multi-slot payload (tuple)
-(1 2 3) 'triple tag {'triple ()} untag (1 2 3) eq assert
+(1 2 3) 'triple tag () {'triple ()} untag (1 2 3) eq assert
 
 -- nested tags
-42 'inner tag 'outer tag {'outer ()} untag 42 'inner tag eq assert
+42 'inner tag 'outer tag () {'outer ()} untag 42 'inner tag eq assert
 
 -- dup/drop/swap on tagged values
 123 ok dup eq assert
@@ -940,7 +943,7 @@ list "hi" push "--" str-join "hi" eq assert
 "x" no (1 plus ok) then (2 mul ok) then 0 default 0 eq assert
 
 -- then preserves non-ok tag and payload
-"fail" no (999 plus ok) then {'no ()} untag "fail" eq assert
+"fail" no (999 plus ok) then () {'no ()} untag "fail" eq assert
 
 -- default
 42 ok -1 default 42 eq assert
@@ -973,16 +976,16 @@ list "hi" push "--" str-join "hi" eq assert
 123 ok {'ok 'int 'no 'str} union print
 
 -- exhaustive untag with union passes type checker
-42 ok {'ok 'int 'no 'str} union {'ok (1 plus) 'no (drop 0)} untag 43 eq assert
+42 ok {'ok 'int 'no 'str} union () {'ok (1 plus) 'no (drop 0)} untag 43 eq assert
 
 -- union propagates through then
-10 ok {'ok 'int 'no 'str} union (5 plus ok) then {'ok () 'no (drop 0)} untag 15 eq assert
+10 ok {'ok 'int 'no 'str} union (5 plus ok) then () {'ok () 'no (drop 0)} untag 15 eq assert
 
 -- three-variant union, all handled
-42 'a tag {'a 'int 'b 'int 'c 'int} union {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 43 eq assert
+42 'a tag {'a 'int 'b 'int 'c 'int} union () {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 43 eq assert
 
 -- untag without union: no exhaustiveness check (open tagged)
-42 'foo tag {'foo (1 plus)} untag 43 eq assert
+42 'foo tag () {'foo (1 plus)} untag 43 eq assert
 
 -- default preserves payload type through then chain
 42 ok (1 plus ok) then (2 mul ok) then -1 default 86 eq assert
@@ -1001,7 +1004,7 @@ list "hi" push "--" str-join "hi" eq assert
 
 -- tagged via custom tag function
 'tag-as ('s let s tag) def
-42 'custom tag-as {'custom (1 plus)} untag 43 eq assert
+42 'custom tag-as () {'custom (1 plus)} untag 43 eq assert
 
 -- tagged stored in let bindings
 42 ok 'x let
@@ -1015,23 +1018,23 @@ x (2 mul ok) then -1 default 84 eq assert
 
 -- nested tags: unwrap outermost
 1 'a tag 'b tag 'c tag
-  {'c ()} untag
+  () {'c ()} untag
   1 'a tag 'b tag eq assert
 
 -- nested tags: full 3-level unwrap
 1 'a tag 'b tag 'c tag
-  {'c ()} untag
-  {'b ()} untag
-  {'a ()} untag
+  () {'c ()} untag
+  () {'b ()} untag
+  () {'a ()} untag
   1 eq assert
 
 -- nested tags: two levels of wrapping/unwrapping
 42 'inner tag 'outer tag
-  {'outer ({'inner (10 plus)} untag)} untag
+  () {'outer (() {'inner (10 plus)} untag)} untag
   52 eq assert
 
 -- untag with body that returns tagged (re-wrapping)
-42 ok {'ok (2 mul ok)} untag -1 default 84 eq assert
+42 ok () {'ok (2 mul ok)} untag -1 default 84 eq assert
 
 -- then chain: 10 deep
 1 ok
@@ -1042,7 +1045,7 @@ x (2 mul ok) then -1 default 84 eq assert
 -- no passes through arbitrary then chains
 "err" no
   (1 plus ok) then (2 mul ok) then (3 sub ok) then (4 div ok) then
-  {'no ()} untag "err" eq assert
+  () {'no ()} untag "err" eq assert
 
 -- default with body (tuple) as fallback
 42 no 99 default 99 eq assert
@@ -1055,19 +1058,19 @@ x (2 mul ok) then -1 default 84 eq assert
 [1 2 3] ok must [1 2 3] eq assert
 
 -- tag with empty tuple payload
-() 'unit tag {'unit (drop 1)} untag 1 eq assert
+() 'unit tag () {'unit (drop 1)} untag 1 eq assert
 
 -- mixed custom tags in untag
-42 'a tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 43 eq assert
-42 'b tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 44 eq assert
-42 'c tag {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 45 eq assert
+42 'a tag () {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 43 eq assert
+42 'b tag () {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 44 eq assert
+42 'c tag () {'a (1 plus) 'b (2 plus) 'c (3 plus)} untag 45 eq assert
 
 -- recursive tagged: build a linked list with tags
 'cons ('tl let 'hd let hd tl couple 'cons tag) def
 
 'nil (0 'nil tag) def
-nil {'nil (drop 0) 'cons (first)} untag 0 eq assert
-1 2 nil cons cons {'nil (drop 0) 'cons (first)} untag 1 eq assert
+nil () {'nil (drop 0) 'cons (first)} untag 0 eq assert
+1 2 nil cons cons () {'nil (drop 0) 'cons (first)} untag 1 eq assert
 
 -- ===== Stack Combinators =====
 
@@ -1136,35 +1139,35 @@ rec ok must rec eq assert
 -999 ok -1 default -999 eq assert
 
 -- tag/untag roundtrip preserves equality
-42 'x tag dup {'x ()} untag 42 eq assert
+42 'x tag dup () {'x ()} untag 42 eq assert
 42 'x tag eq assert
 
 -- untag with record-style clauses
-42 'a tag {'a (1 plus) 'b (2 plus)} untag 43 eq assert
-42 'b tag {'a (1 plus) 'b (2 plus)} untag 44 eq assert
+42 'a tag () {'a (1 plus) 'b (2 plus)} untag 43 eq assert
+42 'b tag () {'a (1 plus) 'b (2 plus)} untag 44 eq assert
 
 -- then on ok with body that changes payload len (int -> tuple)
 42 ok (dup 1 plus couple ok) then must first 42 eq assert
 
 -- default on 3-level nested tags
 1 'a tag 'b tag 'c tag
-  {'c ()} untag
-  {'b ()} untag
-  {'a ()} untag
+  () {'c ()} untag
+  () {'b ()} untag
+  () {'a ()} untag
   1 eq assert
 
 -- then chain where no passes through untouched
 "err" no (1 plus ok) then (2 mul ok) then (3 sub ok) then (4 div ok) then (5 plus ok) then
-  {'no ()} untag "err" eq assert
+  () {'no ()} untag "err" eq assert
 
 -- tag with large tuple payload
 (1 2 3 4 5 6 7 8 9 10) ok must len 10 eq assert
 
 -- tag, untag, re-tag
-42 ok {'ok (1 plus no)} untag -1 default -1 eq assert
+42 ok () {'ok (1 plus no)} untag -1 default -1 eq assert
 
 -- then on ok preserves tag after body
-42 ok (1 plus ok) then dup {'ok ()} untag 43 eq assert drop
+42 ok (1 plus ok) then dup () {'ok ()} untag 43 eq assert drop
 
 -- ===== Adversarial: Record Edit =====
 
@@ -1415,7 +1418,7 @@ none () no eq assert
 -- ===== Functor: each on tagged (fmap) =====
 5 ok (1 plus) each must 6 eq assert
 5 ok (1 plus) each (2 mul) each must 12 eq assert
-() no (1 plus) each {'no ()} untag () eq assert
+() no (1 plus) each () {'no ()} untag () eq assert
 "hello" no (1 plus) each "hello" no eq assert
 
 -- ===== Monad: then on list (flatMap) =====

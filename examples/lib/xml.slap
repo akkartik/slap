@@ -46,7 +46,7 @@
 -- _x-skip-until: (s lit -- s').  Drop through literal (consume lit).
 '_x-skip-until ('lit let
   dup lit str-find
-  {'ok ('p let p lit len plus drop-n)
+  () {'ok ('p let p lit len plus drop-n)
    'no (drop "xml: expected " lit cat " not found" no must)} untag) def
 
 -- _x-skip-trivia: skip whitespace and comments
@@ -110,7 +110,7 @@
 -- _x-read-entity: (s -- codepoint-list s').  After '&'.
 '_x-read-entity (
   dup ";" str-find
-  {'ok ('p let
+  () {'ok ('p let
     dup p take-n 'body let
     p 1 plus drop-n
     body _x-decode-entity-body swap)
@@ -174,7 +174,7 @@
 -- _x-read-cdata: (s -- text s').  After "<![CDATA[".
 '_x-read-cdata (
   dup "]]>" str-find
-  {'ok ('p let
+  () {'ok ('p let
     dup p take-n swap p 3 plus drop-n)
    'no (drop "xml: unterminated CDATA" no must)} untag) def
 
@@ -258,7 +258,7 @@
 -- ========== Helpers for decoders ==========
 
 -- _x-is-text: (node -- node bool).  Non-consuming.
-'_x-is-text (dup 'text at {'ok (drop 1) 'no (drop 0)} untag) def
+'_x-is-text (dup 'text at () {'ok (drop 1) 'no (drop 0)} untag) def
 
 -- _x-trim-left: (s -- s')
 '_x-trim-left recur (
@@ -282,7 +282,7 @@
   ks len 0 eq (none) (
     ks 0 get must 'k let
     k 'text at
-    {'ok (drop ks 1 drop-n n _x-find-child-loop)
+    () {'ok (drop ks 1 drop-n n _x-find-child-loop)
      'no (drop k 'name at must n eq
             (k ok)
             (ks 1 drop-n n _x-find-child-loop) if)} untag
@@ -295,7 +295,7 @@
   ks len 0 eq (acc) (
     ks 0 get must 'k let
     k 'text at
-    {'ok (drop ks 1 drop-n n acc _x-filter-children-loop)
+    () {'ok (drop ks 1 drop-n n acc _x-filter-children-loop)
      'no (drop k 'name at must n eq
             (ks 1 drop-n n acc k push _x-filter-children-loop)
             (ks 1 drop-n n acc _x-filter-children-loop) if)} untag
@@ -308,7 +308,7 @@
   ks len 0 eq (acc) (
     ks 0 get must 'k let
     k 'text at
-    {'ok (drop ks 1 drop-n acc _x-all-elem-children-loop)
+    () {'ok (drop ks 1 drop-n acc _x-all-elem-children-loop)
      'no (drop ks 1 drop-n acc k push _x-all-elem-children-loop)} untag
   ) if) def
 
@@ -319,7 +319,7 @@
 '_x-collect-text-loop recur ('acc let 'ks let
   ks len 0 eq (acc ok) (
     ks 0 get must 'text at
-    {'ok ('txt let ks 1 drop-n acc txt cat _x-collect-text-loop)
+    () {'ok ('txt let ks 1 drop-n acc txt cat _x-collect-text-loop)
      'no (drop none)} untag
   ) if) def
 
@@ -368,7 +368,7 @@
     items 0 get must 'item let
     path "[" cat idx int-str cat "]" cat 'ipath let
     item ipath inner _xapply
-    {'ok ('v let
+    () {'ok ('v let
        items 1 drop-n idx 1 plus path inner acc v push _xa-children-loop)
      'no (no)} untag
   ) if) def
@@ -379,7 +379,7 @@
     keys 0 get must 'k let
     elem 'children at must 'kids let
     kids k _x-find-child
-    {'ok ('c let
+    () {'ok ('c let
         c path "/" cat k cat keys 1 drop-n inner _xa-at-walk)
      'no (drop path "/" cat k cat ": no such child" cat no)} untag
   ) if) def
@@ -389,7 +389,7 @@
 '_xa-all-of-loop recur ('acc let 'path let 'elem let 'idx let 'decs let
   idx decs len ge (acc ok) (
     elem path decs idx get must _xapply
-    {'ok ('v let
+    () {'ok ('v let
        decs idx 1 plus elem path acc v push _xa-all-of-loop)
      'no (no)} untag
   ) if) def
@@ -398,7 +398,7 @@
 '_xa-one-of-loop recur ('ds let 'path let 'elem let
   ds len 0 eq (path ": oneOf: no decoders matched" cat no) (
     elem path ds 0 get must _xapply
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop
        ds len 1 eq (path ": oneOf: no decoders matched" cat no) (
          elem path ds 1 drop-n _xa-one-of-loop
@@ -406,16 +406,16 @@
   ) if) def
 
 '_xapply recur ('d let 'path let 'elem let
-  d {'xdec ()} untag 'node let
+  d () {'xdec ()} untag 'node let
   node 0 get must 'dname let
 
   dname 'text eq (
     elem 'children at must _x-collect-text
-    {'ok (_x-trim ok)
+    () {'ok (_x-trim ok)
      'no (drop path "/text(): element has non-text children" cat no)} untag
   ) (dname 'raw-text eq (
     elem 'children at must _x-collect-text
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop path "/text(): element has non-text children" cat no)} untag
   ) (dname 'tag eq (
     elem 'name at must ok
@@ -424,12 +424,12 @@
   ) (dname 'attr eq (
     node 1 get must 'an let
     elem 'attrs at must an _x-find-attr
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop path "/@" cat an cat ": missing attribute" cat no)} untag
   ) (dname 'child eq (
     node 1 get must 'cn let
     elem 'children at must cn _x-find-child
-    {'ok ('cv let
+    () {'ok ('cv let
        cv path "/" cat cn cat node 2 get must _xapply)
      'no (drop path "/" cat cn cat ": no such child" cat no)} untag
   ) (dname 'children eq (
@@ -444,12 +444,12 @@
   ) (dname 'map eq (
     node 2 get must
     elem path node 1 get must _xapply
-    {'ok (swap apply ok)
+    () {'ok (swap apply ok)
      'no (swap drop no)} untag
   ) (dname 'andThen eq (
     elem path node 2 get must
     elem path node 1 get must _xapply
-    {'ok (swap apply _xapply)
+    () {'ok (swap apply _xapply)
      'no ((drop drop drop) dip no)} untag
   ) (dname 'allOf eq (
     node 1 get must 0 elem path list _xa-all-of-loop
@@ -457,7 +457,7 @@
     elem path node 1 get must _xa-one-of-loop
   ) (dname 'maybe eq (
     elem path node 1 get must _xapply
-    {'ok (ok)
+    () {'ok (ok)
      'no (drop () ok)} untag
   ) (dname 'succeed eq (
     node 1 get must ok
@@ -544,7 +544,7 @@
 -- Body: consume node-record from caller, produce string.
 'xml-render recur ('node let
   node 'text at
-  {'ok (_xe-escape-text)
+  () {'ok (_xe-escape-text)
    'no (drop node _xe-render-elem)} untag) def
 
 -- ========== Pretty-print variant ==========
@@ -557,7 +557,7 @@
 '_xe-kids-all-text?-loop recur ('ks let
   ks len 0 eq (1) (
     ks 0 get must 'text at
-    {'ok (drop ks 1 drop-n _xe-kids-all-text?-loop)
+    () {'ok (drop ks 1 drop-n _xe-kids-all-text?-loop)
      'no (drop 0)} untag) if) def
 
 '_xe-kids-all-text? (_xe-kids-all-text?-loop) def
@@ -588,7 +588,7 @@
 -- xml-render-pretty: (depth node-record -- string-with-trailing-newline)
 'xml-render-pretty recur ('node let 'depth let
   node 'text at
-  {'ok (_xe-escape-text)
+  () {'ok (_xe-escape-text)
    'no (drop depth node _xe-render-elem-pretty)} untag
   list 10 push cat) def
 
@@ -658,13 +658,13 @@ nks 1 get must 'name at must "c" eq assert
 "<a>hi</a>" first-int-fail-then-text xd-run "hi" ok eq assert
 
 -- Adversarial
-"<a/>" "id" xd-attr xd-run {'no ()} untag "/a/@id: missing attribute" eq assert
-"<a/>" "b" xd-text xd-child xd-run {'no ()} untag "/a/b: no such child" eq assert
-"<a><b><c/></b></a>" "b" xd-text xd-child xd-run {'no ()} untag
+"<a/>" "id" xd-attr xd-run () {'no ()} untag "/a/@id: missing attribute" eq assert
+"<a/>" "b" xd-text xd-child xd-run () {'no ()} untag "/a/b: no such child" eq assert
+"<a><b><c/></b></a>" "b" xd-text xd-child xd-run () {'no ()} untag
   "/a/b/text(): element has non-text children" eq assert
 
 'empty-one (list xd-one-of) def
-"<a/>" empty-one xd-run {'no ()} untag "/a: oneOf: no decoders matched" eq assert
+"<a/>" empty-one xd-run () {'no ()} untag "/a: oneOf: no decoders matched" eq assert
 
 -- xd-attrs: returns list of [name val] couples
 "<a x=\"1\" y=\"2\"/>" xd-attrs xd-run must 'atsv let

@@ -422,7 +422,7 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"scan",0,3,1,TC_LIST,0},
     {"repeat",0,2,0,TC_NONE,0},{"bi",0,3,2,TC_NONE,0},{"keep",0,1,1,TC_NONE,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
-    {"untag",0,2,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
+    {"untag",0,3,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
     {"then",0,2,1,TC_MONAD,HO_BODY_1TO1},
     {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
@@ -1301,38 +1301,20 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     }
                 }
             } else if (sym == S_UNTAG) {
-                int suid = 0;
-                if (tc->sp >= 2 && tc->data[tc->sp-2].type == TC_TAGGED && tc->data[tc->sp-2].tvar_id > 0) {
-                    int tid = tc->data[tc->sp-2].tvar_id;
-                    suid = tc->tvars[tvar_find(tc, tid)].union_id;
+                /* Stack shape: [tagged, default, clauses]. Tagged is at sp-3.
+                   A default is required; missing tags fall through to it, so
+                   static exhaustiveness is no longer a hard error (runtime is
+                   already sound). */
+                if (tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED && tc->data[tc->sp-3].tvar_id > 0) {
+                    int tid = tc->data[tc->sp-3].tvar_id;
                     int tp = tvar_content(tc, tid, TC_TAGGED);
                     if (tp > 0) { TypeConstraint pt = tvar_resolve(tc, tp);
                         if (pt == TC_BOX)
                             tc_error(tc, t->line, 0, "'untag' branches cannot safely discard linear payload; use a typed handler that consumes the box"); }
                 }
+                if (tc->sp >= 2 && ((tc->data[tc->sp-2].flags & AT_LINEAR) || tc->data[tc->sp-2].type == TC_BOX))
+                    tc_error(tc, t->line, 0, "'untag' default must not be a linear value (would leak on any matched branch)");
                 tc_check_word(tc, sym, t->line);
-                if (suid > 0 && i >= tc->user_start) {
-                    UnionDef *ud = &tc->unions[suid-1]; int brace = tc_find_brace_before(toks, i);
-                    if (brace >= 0) { uint32_t handled[UNION_VARIANTS_MAX]; int hc = tc_extract_brace_keys(toks, brace, total_count, handled, NULL, UNION_VARIANTS_MAX);
-                        for (int v = 0; v < ud->count; v++) { int found = 0; for (int h = 0; h < hc; h++) if (handled[h] == ud->syms[v]) { found = 1; break; }
-                            if (!found) tc_error(tc, t->line, 0, "'untag' missing variant '%s' declared by union", sym_name(ud->syms[v])); } }
-                } else if (suid == 0 && i >= tc->user_start) {
-                    int brace = tc_find_brace_before(toks, i);
-                    if (brace >= 1) {
-                        uint32_t known_tag = 0; int bef = brace - 1;
-                        if (toks[bef].tag == TOK_WORD) {
-                            uint32_t ws = toks[bef].as.sym;
-                            if (ws == S_OK) known_tag = S_OK;
-                            else if (ws == S_NO) known_tag = S_NO;
-                            else if (strcmp(sym_name(ws), "tag") == 0 && bef >= 1 && toks[bef-1].tag == TOK_SYM) known_tag = toks[bef-1].as.sym;
-                        }
-                        if (known_tag) {
-                            uint32_t handled[UNION_VARIANTS_MAX]; int hc = tc_extract_brace_keys(toks, brace, total_count, handled, NULL, UNION_VARIANTS_MAX);
-                            int found = 0; for (int h = 0; h < hc; h++) if (handled[h] == known_tag) { found = 1; break; }
-                            if (!found) tc_error(tc, t->line, 0, "'untag' does not handle tag '%s' (produced just before this match) — add a '%s (...)' branch", sym_name(known_tag), sym_name(known_tag));
-                        }
-                    }
-                }
             } else if (sym == S_DEFAULT) {
                 if (tc->sp >= 1 && ((tc->data[tc->sp-1].flags & AT_LINEAR) || tc->data[tc->sp-1].type == TC_BOX))
                     tc_error(tc, t->line, 0, "'default' fallback must not be a linear value (would leak on the 'ok path)");
@@ -1493,6 +1475,7 @@ static void prim_tag(Frame *e) {
 }
 static void prim_untag(Frame *env) {
     POP_CLAUSES("untag");
+    POP_VAL(def);
     Value tagged_top=stack[sp-1];
     if(tagged_top.tag!=VAL_TAGGED) die("untag: expected tagged value, got %s", valtag_name(tagged_top.tag));
     int tagged_s=val_slots(tagged_top), payload_s=tagged_s-1;
@@ -1501,7 +1484,7 @@ static void prim_untag(Frame *env) {
     uint32_t tag_sym=tagged_top.as.compound.len;
     sp-=tagged_s;
     if(!dispatch_clauses("untag",clauses_buf,clauses_s,clauses_len,clauses_top.tag,tag_sym,payload_buf,payload_s,env))
-        die("untag: unhandled tag '%s'", sym_name(tag_sym));
+        SPUSH(def_buf,def_s);
 }
 #define LIST_ITER(label) POP_BODY(fn,label); POP_LIST_BUF(list,label); \
     int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs)

@@ -176,7 +176,7 @@
 
 -- EXPECT: type error
 -- TYPE ERROR: untag scrutinee must be tagged
-123 {'foo ()} untag
+123 () {'foo ()} untag
 
 -- EXPECT: expected tagged
 -- TYPE ERROR: default on plain int
@@ -208,23 +208,15 @@
 
 -- EXPECT: produce different types
 -- TYPE ERROR: untag clause bodies disagree (int vs list)
-42 ok {'ok (1 plus) 'no (list)} untag
+42 ok () {'ok (1 plus) 'no (list)} untag
 
 -- EXPECT: expected tagged value
 -- TYPE ERROR: untag on float
-3.14 {'ok ()} untag
+3.14 () {'ok ()} untag
 
 -- EXPECT: expected tagged value
 -- TYPE ERROR: untag on record
-{'x 1} {'ok ()} untag
-
--- EXPECT: missing variant 'no'
--- TYPE ERROR: untag missing variant declared by union
-42 ok {'ok 'int 'no 'str} union {'ok (1 plus)} untag
-
--- EXPECT: missing variant 'err'
--- TYPE ERROR: three variants, only two handled
-42 'a tag {'a 'int 'b 'int 'err 'str} union {'a () 'b ()} untag
+{'x 1} () {'ok ()} untag
 
 -- EXPECT: expected num, got list
 -- TYPE ERROR: default preserves payload type (string/list + int)
@@ -326,7 +318,7 @@ dict (drop) each free
 
 -- EXPECT: discard linear payload
 -- TYPE ERROR: untag on tagged box (branches can leak)
-42 box ok {'ok (drop)} untag
+42 box ok () {'ok (drop)} untag
 
 -- EXPECT: linear payload
 -- TYPE ERROR: tagging a box without consuming the tagged
@@ -343,10 +335,6 @@ dict (drop) each free
 -- EXPECT: aliases the box
 -- TYPE ERROR: let-bind compound inside lend body (aliases box backing)
 [1 2 3] box ('snap let snap) lend swap free drop
-
--- EXPECT: does not handle tag
--- TYPE ERROR: untag missing the tag that was just produced
-42 'unknown tag {'foo (drop 0)} untag
 
 -- EXPECT: requires copyable
 -- TYPE ERROR: closure capturing linear binding cannot be duplicated
