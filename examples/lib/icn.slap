@@ -1,0 +1,14 @@
+-- icn.slap: 1-bit 8x8 tile codec. 8 bytes <-> 64 pixels (MSB-first).
+-- Uses prelude words: byte-bits, bits-byte, chunks.
+
+'icn-decode ((byte-bits) each flatten) def
+'icn-encode (8 chunks (bits-byte) each) def
+
+-- ===== tests =====
+[60 66 129 129 129 129 66 60] icn-decode
+  dup len 64 eq assert
+  dup 0 get must 0 eq assert
+  dup 2 get must 1 eq assert
+  icn-encode [60 66 129 129 129 129 66 60] eq assert
+[0 0 0 0 0 0 0 0] icn-decode icn-encode [0 0 0 0 0 0 0 0] eq assert
+[255 255 255 255 255 255 255 255] icn-decode icn-encode [255 255 255 255 255 255 255 255] eq assert

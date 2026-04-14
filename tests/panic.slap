@@ -48,7 +48,7 @@ false assert
 -- EXPECT: index -1 out of bounds
 [1 2 3] -1 get must
 
--- EXPECT: expected compound
+-- EXPECT: expected sized
 1 len
 
 -- EXPECT: expected seq
@@ -138,7 +138,7 @@ stack pop
 -- EXPECT: expected tagged
 123 -1 default
 
--- EXPECT: tagged values have no length
+-- EXPECT: expected sized
 1 'ok tag len
 
 -- EXPECT: concat: result too large

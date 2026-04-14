@@ -1482,7 +1482,7 @@ none () no eq assert
 
 -- ===== Dict =====
 -- empty dict
-dict dict-len 0 eq assert free
+dict len 0 eq assert free
 
 -- insert + of (hit)
 dict "name" "alice" insert "name" of "missing" default "alice" eq assert free
@@ -1490,14 +1490,14 @@ dict "name" "alice" insert "name" of "missing" default "alice" eq assert free
 dict "x" 1 insert "y" of 42 default 42 eq assert free
 
 -- overwrite preserves len, updates value
-dict "k" 1 insert "k" 2 insert dict-len 1 eq assert
+dict "k" 1 insert "k" 2 insert len 1 eq assert
 "k" of 0 default 2 eq assert free
 
 -- remove existing decreases len; removing absent is no-op
 dict "a" 1 insert "b" 2 insert "c" 3 insert "b" remove
-dict-len 2 eq assert
+len 2 eq assert
 "b" of 0 default 0 eq assert
-"nope" remove dict-len 2 eq assert free
+"nope" remove len 2 eq assert free
 
 -- keys/values snapshot (hash order undefined — check length and sum)
 dict "x" 1 insert "y" 2 insert "z" 3 insert
@@ -1506,8 +1506,8 @@ dict-values sum 6 eq assert free
 
 -- clone independence
 dict "a" 1 insert clone "b" 2 insert
-dict-len 2 eq assert
-swap dict-len 1 eq assert
+len 2 eq assert
+swap len 1 eq assert
 free free
 
 -- grow path (>8 entries)
@@ -1515,7 +1515,7 @@ dict
 "a" 1 insert "b" 2 insert "c" 3 insert "d" 4 insert
 "e" 5 insert "f" 6 insert "g" 7 insert "h" 8 insert
 "i" 9 insert "j" 10 insert "k" 11 insert "l" 12 insert
-dict-len 12 eq assert
+len 12 eq assert
 "h" of 0 default 8 eq assert
 "z" of 999 default 999 eq assert
 free

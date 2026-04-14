@@ -404,8 +404,8 @@ static uint32_t S_PLUS, S_SUB, S_EQ, S_SWAP, S_DROP, S_MUL, S_DIV, S_MOD;
 static void syms_init(void);
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
-typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT } OwnMode;
-typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_MONOID, TC_FUNCTOR, TC_APPLICATIVE, TC_FOLDABLE, TC_MONAD, TC_DICT, TC_LINEAR } TypeConstraint;
+typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT, OWN_AUTO } OwnMode;
+typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_MONOID, TC_FUNCTOR, TC_APPLICATIVE, TC_FOLDABLE, TC_MONAD, TC_DICT, TC_LINEAR, TC_SIZED } TypeConstraint;
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
@@ -461,7 +461,7 @@ static const struct { const char *name; TypeConstraint tc; } tc_names[] = {
     {"list",TC_LIST},{"tuple",TC_TUPLE},{"rec",TC_REC},{"box",TC_BOX},{"stack",TC_STACK},{"tagged",TC_TAGGED},
     {"seq",TC_SEQ},{"eq",TC_EQ},{"eql",TC_EQ},{"ord",TC_ORD},
     {"integral",TC_INTEGRAL},{"semigroup",TC_SEMIGROUP},{"monoid",TC_MONOID},
-    {"functor",TC_FUNCTOR},{"applicative",TC_APPLICATIVE},{"foldable",TC_FOLDABLE},{"monad",TC_MONAD},{"dict",TC_DICT},{"linear",TC_LINEAR},{NULL,TC_NONE}
+    {"functor",TC_FUNCTOR},{"applicative",TC_APPLICATIVE},{"foldable",TC_FOLDABLE},{"monad",TC_MONAD},{"dict",TC_DICT},{"linear",TC_LINEAR},{"sized",TC_SIZED},{NULL,TC_NONE}
 };
 static TypeConstraint parse_constraint(const char *tw) {
     for (int i=0; tc_names[i].name; i++) if (strcmp(tw,tc_names[i].name)==0) return tc_names[i].tc;
@@ -520,6 +520,7 @@ static TypeSig parse_type_annotation(Token *toks, int start, int end) {
             const char *tw = sym_name(toks[j].as.sym);
             if(strcmp(tw,"own")==0){slot->ownership=OWN_OWN;continue;} if(strcmp(tw,"copy")==0){slot->ownership=OWN_COPY;continue;}
             if(strcmp(tw,"move")==0){slot->ownership=OWN_MOVE;continue;} if(strcmp(tw,"lent")==0){slot->ownership=OWN_LENT;continue;}
+            if(strcmp(tw,"auto")==0){slot->ownership=OWN_AUTO;continue;}
             TypeConstraint c = parse_constraint(tw);
             if (c != TC_NONE) {
                 if (tc_is_container(c) && slot->constraint != TC_NONE) slot->elem_constraint = slot->constraint;
@@ -590,12 +591,12 @@ static const uint32_t tc_compat[] = {
     [TC_FLOAT]=B(TC_FLOAT)|B(TC_NUM)|B(TC_ORD)|B(TC_EQ),
     [TC_SYM]=B(TC_SYM)|B(TC_EQ),
     [TC_NUM]=B(TC_NUM)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_ORD),
-    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ),
-    [TC_TUPLE]=B(TC_TUPLE)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ),
-    [TC_REC]=B(TC_REC)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ),
+    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
+    [TC_TUPLE]=B(TC_TUPLE)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ)|B(TC_SIZED),
+    [TC_REC]=B(TC_REC)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ)|B(TC_SIZED),
     [TC_BOX]=B(TC_BOX)|B(TC_LINEAR), [TC_STACK]=B(TC_STACK),
     [TC_TAGGED]=B(TC_TAGGED)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_EQ),
-    [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ),
+    [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
     [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED)|B(TC_NUM)|B(TC_ORD)|B(TC_SEQ)|B(TC_INTEGRAL)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD),
     [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_NUM),
     [TC_INTEGRAL]=B(TC_INTEGRAL)|B(TC_INT)|B(TC_NUM)|B(TC_EQ),
@@ -605,13 +606,14 @@ static const uint32_t tc_compat[] = {
     [TC_APPLICATIVE]=B(TC_APPLICATIVE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_MONAD),
     [TC_FOLDABLE]=B(TC_FOLDABLE)|B(TC_LIST)|B(TC_SEQ)|B(TC_DICT),
     [TC_MONAD]=B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_APPLICATIVE),
-    [TC_DICT]=B(TC_DICT)|B(TC_FUNCTOR)|B(TC_FOLDABLE)|B(TC_LINEAR),
+    [TC_DICT]=B(TC_DICT)|B(TC_FUNCTOR)|B(TC_FOLDABLE)|B(TC_LINEAR)|B(TC_SIZED),
     [TC_LINEAR]=B(TC_LINEAR)|B(TC_BOX)|B(TC_DICT),
+    [TC_SIZED]=B(TC_SIZED)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_DICT)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID),
 };
 #undef B
 static int tc_constraint_matches(TypeConstraint a, TypeConstraint b) {
     if (a == TC_NONE || a == b) return 1;
-    return (a <= TC_LINEAR && b <= TC_LINEAR) ? (tc_compat[a] >> b) & 1 : 0;
+    return (a <= TC_SIZED && b <= TC_SIZED) ? (tc_compat[a] >> b) & 1 : 0;
 }
 static int tc_should_narrow(TypeConstraint cur, TypeConstraint c) {
     if (tc_is_concrete(c) && !tc_is_concrete(cur)) return 1;
@@ -1000,10 +1002,12 @@ apply_sig:;
         }
     }
     #define FIND_TVAR(tv_name) ({ int _tv = 0; for (int _j = 0; _j < tmc; _j++) if (tm[_j].var == (tv_name)) { _tv = tm[_j].tvar; break; } _tv; })
+    AbstractType passthrough[8] = {0}; int pt_count = 0;
     int sp2 = tc->sp - 1;
     for (int i = sig->slot_count - 1; i >= 0; i--) {
         TypeSlot *s = &sig->slots[i]; if (s->direction != DIR_IN || sp2 < 0) { if (s->direction == DIR_IN) sp2--; continue; }
         AbstractType *at = &tc->data[sp2];
+        if (s->ownership == OWN_AUTO && (at->flags & AT_LINEAR) && pt_count < 8) { passthrough[pt_count++] = *at; at->flags |= AT_CONSUMED; }
         if (s->ownership == OWN_COPY && !tc_is_copyable(at))
             tc_error(tc, line, at->source_line, "'%s' requires copyable value, got linear type (value from line %d)", sym_name(sym), at->source_line);
         if (s->ownership == OWN_OWN && at->borrowed > 0)
@@ -1026,6 +1030,12 @@ apply_sig:;
         sp2--;
     }
     tc->sp -= ni; if (tc->sp < tc->sp_floor) tc->sp = tc->sp_floor;
+    for (int i = pt_count - 1; i >= 0; i--) {
+        if (tc->sp >= ASTACK_MAX) break;
+        tc_push(tc, passthrough[i].type, line);
+        AbstractType *o = &tc->data[tc->sp-1];
+        o->tvar_id = passthrough[i].tvar_id; o->flags |= AT_LINEAR;
+    }
     for (int i = 0; i < sig->slot_count; i++) {
         TypeSlot *s = &sig->slots[i]; if (s->direction != DIR_OUT) continue;
         if (tc->sp >= ASTACK_MAX) { tc->errors++; return; }
@@ -1602,7 +1612,9 @@ FLOAT1(ffloor,floor) FLOAT1(fceil,ceil) FLOAT1(fround,round) FLOAT1(fexp,exp) FL
 FLOAT2(fpow,pow) FLOAT2(fatan2,atan2)
 static void prim_stack(Frame *e){(void)e;spush(val_compound(VAL_TUPLE,0,1));}
 static void prim_size(Frame *e) {
-    (void)e; Value top=speek(); if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
+    (void)e; Value top=speek();
+    if(top.tag==VAL_DICT){ spush(val_int(((DictData*)top.as.box)->len)); return; }
+    if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
     if(!is_compound(top.tag)) die("len: expected compound, got %s",valtag_name(top.tag));
     sp-=val_slots(top); spush(val_int((int)top.as.compound.len));
 }
@@ -2002,10 +2014,6 @@ static void prim_values(Frame *e) {
         SPUSH(copy,ent->nvals); count++;}
     spush(val_compound(VAL_LIST,count,sp-rb+1));
 }
-static void prim_dict_len(Frame *e) {
-    (void)e; Value v=stack[sp-1]; if(v.tag!=VAL_DICT) die("dict-len: expected dict, got %s", valtag_name(v.tag));
-    spush(val_int(((DictData*)v.as.box)->len));
-}
 static void dict_data_free(DictData *dd) {
     for(int i=0;i<dd->cap;i++) dict_free_entry_contents(&dd->entries[i]);
     free(dd->entries); free(dd);
@@ -2226,7 +2234,7 @@ static const char *BUILTIN_TYPES =
     "'itof [int lent in  float" MO "'ftoi [float lent in  int" MO
     "'fsqrt" F1E "'fsin" F1E "'fcos" F1E "'ftan" F1E "'ffloor" F1E "'fceil" F1E "'fround" F1E "'fexp" F1E "'flog" F1E
     "'fpow" F2E "'fatan2" F2E
-    "'list [list" MO "'len [lent in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect\n"
+    "'list [list" MO "'len [sized auto in  int" MO "'push ['a seq own in  'a own in  'a seq" MO "'pop ['a seq own in  'a seq move out  {'ok 'a 'no ()} either move out] effect\n"
     "'get ['a seq own in  int lent in  {'ok 'a 'no ()} either move out] effect\n'nth [sym lent in  int lent in  {'ok 'a 'no ()} either move out] effect\n'set ['a seq own in  int lent in  'a own in  {'ok 'a 'no ()} either move out] effect\n'cat ['a semigroup own in  'a semigroup own in  'a semigroup" MO
     "'take-n" LNE "'drop-n" LNE "'range [int lent in  int lent in  int list" MO "'sort ['a ord list own in  'a ord list" MO
     "'reverse" L1E "'dedup" L1E "'index-of ['a list own in  'a lent in  {'ok int 'no ()} either move out] effect\n'select" LIE "'pick" LIE "'keep-mask" LIE
@@ -2247,7 +2255,6 @@ static const char *BUILTIN_TYPES =
     "'of ['a dict own in  list lent in  'a dict move out  {'ok 'a 'no list} either move out] effect\n"
     "'remove ['a dict own in  list lent in  'a dict" MO "'dict-keys ['a dict own in  'a dict move out  list" MO
     "'dict-values ['a dict own in  'a dict move out  'a list" MO
-    "'dict-len ['a dict own in  'a dict move out  int" MO
     "'pthen [tagged own in  own in  tuple own in  move out  tagged" MO
 ;
 #undef A2E
@@ -2622,7 +2629,6 @@ static void register_prims(void) {
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
         R(dict,dict),R(insert,insert),R(of,of),R(remove,remove),
         {"dict-keys",prim_keys},{"dict-values",prim_values},
-        {"dict-len",prim_dict_len},
         R(tag,tag),R(untag,untag),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
         R(read,read),R(write,write),R(ls,ls),
         {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},

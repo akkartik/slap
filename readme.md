@@ -366,7 +366,7 @@ Built-in protocols group types by capability. Use in effect annotations:
 
 | Protocol | Keyword | Types | Operations |
 |----------|---------|-------|------------|
-| Sized | `sized` | list, tuple, record | `len` |
+| Sized | `sized` | list, tuple, record, dict | `len` (polymorphic; returns dict through stack since dicts are linear) |
 | Seq | `seq` | list | `get`, `set`, `push`, `pop`, `cat` |
 | Eq | `eql` | all stackable | `eq` |
 | Ord | `ord` | int, float, sym | `lt`, `sort` |

@@ -1,0 +1,16 @@
+-- ufx.slap: proportional bitmap font codec. 256 width bytes + ICN-encoded glyphs.
+-- Requires icn.slap (icn-decode, icn-encode). Cat icn.slap before ufx.slap.
+
+'ufx-decode (dup 256 take-n 'widths let 256 drop-n 8 chunks (icn-decode) each 'glyphs let rec widths 'widths into glyphs 'glyphs into) def
+'ufx-encode (dup 'widths at must swap 'glyphs at must (icn-encode) each flatten cat) def
+
+-- ===== tests =====
+list
+0 256 range (drop 4) each
+60 push 66 push 129 push 129 push 129 push 129 push 66 push 60 push
+'ufx-data let
+ufx-data ufx-decode
+  dup 'widths at must len 256 eq assert
+  dup 'widths at must 0 get must 4 eq assert
+  'glyphs at must len 1 eq assert
+ufx-data ufx-decode ufx-encode ufx-data eq assert

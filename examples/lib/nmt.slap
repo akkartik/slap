@@ -1,0 +1,12 @@
+-- nmt.slap: nametable cell codec. 3 bytes <-> {addr, color} record.
+
+'nmt-decode (3 chunks ('c let c 0 get must c 1 get must 8 shl bor 'addr let c 2 get must 'color let rec addr 'addr into color 'color into) each) def
+'nmt-encode (('r let r 'addr at must 'a let list a byte-mask push a 8 shr byte-mask push r 'color at must push) each flatten) def
+
+-- ===== tests =====
+[0 1 2  3 4 5] nmt-decode
+  dup len 2 eq assert
+  dup 0 get must dup 'addr at must 256 eq assert 'color at must 2 eq assert
+  1 get must dup 'addr at must 1027 eq assert 'color at must 5 eq assert
+[0 1 2  3 4 5] nmt-decode nmt-encode [0 1 2  3 4 5] eq assert
+[0 0 0] nmt-decode nmt-encode [0 0 0] eq assert
