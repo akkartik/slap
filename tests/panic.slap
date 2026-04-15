@@ -129,9 +129,6 @@ stack pop
 -- EXPECT: MUST FAILED
 [195 65] utf8-decode must
 
--- EXPECT: expected tagged value
-123 () {'foo ()} untag
-
 -- EXPECT: expected list or tagged
 123 (1 plus) then
 
@@ -276,13 +273,13 @@ tuck
 42 loop
 
 -- EXPECT: case: expected tuple or record
-1 1 1 cond
+1 1 1 case
 
 -- EXPECT: needs 3 input
-1 'ok tag 1 untag
+1 'ok tag 1 case
 
 -- EXPECT: case: need even number of clauses
-1 'ok tag () {'ok} untag
+1 'ok tag () {'ok} case
 
 -- EXPECT: key
 {'a 1} 'b at must

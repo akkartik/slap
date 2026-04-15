@@ -174,10 +174,6 @@
 -- TYPE ERROR: tag needs value and symbol, not just symbol
 'foo tag
 
--- EXPECT: type error
--- TYPE ERROR: untag scrutinee must be tagged
-123 () {'foo ()} untag
-
 -- EXPECT: expected tagged
 -- TYPE ERROR: default on plain int
 42 -1 default
@@ -207,16 +203,8 @@
 42 ok (dup) then
 
 -- EXPECT: produce different types
--- TYPE ERROR: untag clause bodies disagree (int vs list)
-42 ok () {'ok (1 plus) 'no (list)} untag
-
--- EXPECT: expected tagged value
--- TYPE ERROR: untag on float
-3.14 () {'ok ()} untag
-
--- EXPECT: expected tagged value
--- TYPE ERROR: untag on record
-{'x 1} () {'ok ()} untag
+-- TYPE ERROR: case clause bodies disagree (int vs list)
+42 ok () {'ok (1 plus) 'no (list)} case
 
 -- EXPECT: expected num, got list
 -- TYPE ERROR: default preserves payload type (string/list + int)
@@ -317,8 +305,8 @@ dict (drop) each free
 42 box ok 99 box default free
 
 -- EXPECT: discard linear payload
--- TYPE ERROR: untag on tagged box (branches can leak)
-42 box ok () {'ok (drop)} untag
+-- TYPE ERROR: case on tagged box (branches can leak)
+42 box ok () {'ok (drop)} case
 
 -- EXPECT: linear payload
 -- TYPE ERROR: tagging a box without consuming the tagged
@@ -357,8 +345,8 @@ dict (drop) each free
 42 box 'b let (b free) 'f let f apply f apply
 
 -- EXPECT: needs 3 input
--- TYPE ERROR: untag without default arg (would stack-underflow at runtime)
-123 'foo tag {'foo (1 plus)} untag
+-- TYPE ERROR: case without default arg (would stack-underflow at runtime)
+123 'foo tag {'foo (1 plus)} case
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: linear-capturing closure returned from def, applied twice
@@ -382,8 +370,8 @@ f apply
 f apply
 
 -- EXPECT: clause body may not produce a linear value
--- TYPE ERROR: cond clause producing a linear closure
-(1 0 {(1 eq) (42 box 'b let (b free))} cond) 'bad-cond def
+-- TYPE ERROR: case clause producing a linear closure
+(1 0 {(1 eq) (42 box 'b let (b free))} case) 'bad-case def
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: if-branch returning linear closure, applied twice

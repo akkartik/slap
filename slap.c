@@ -397,7 +397,7 @@ static int val_less(Value *a, int aslots, Value *b, int bslots) {
 }
 static int eval_depth = 0;
 #define EVAL_DEPTH_MAX 10000
-static uint32_t S_DEF, S_LET, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_UNTAG, S_DEFAULT, S_MUST;
+static uint32_t S_DEF, S_LET, S_IF, S_EFFECT, S_CHECK, S_UNION, S_OK, S_NO, S_CASE, S_DEFAULT, S_MUST;
 static uint32_t S_GET, S_POP, S_AT, S_NTH, S_SET, S_EDIT, S_INDEXOF, S_STRFIND;
 static uint32_t S_PLUS, S_SUB, S_EQ, S_SWAP, S_DROP, S_MUL, S_DIV, S_MOD;
 static void syms_init(void);
@@ -408,7 +408,7 @@ typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, T
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 18
+#define HO_OP_COUNT 17
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
@@ -419,13 +419,10 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"find",0,3,1,TC_NONE,0},
     {"scan",0,3,1,TC_LIST,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
-    {"untag",0,3,1,TC_NONE,HO_BRANCHES_AGREE|HO_SCRUTINEE_TAGGED},
     {"then",0,2,1,TC_MONAD,HO_BODY_1TO1},
     {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
-static uint32_t S_COND;
 static HOEffect *ho_ops_find(uint32_t sym) {
-    if (sym == S_COND) sym = sym_intern("case"); /* cond is a runtime/TC alias for case */
     for (int i = 0; i < HO_OP_COUNT; i++) if (ho_ops[i].sym == sym) return &ho_ops[i];
     return NULL;
 }
@@ -433,12 +430,11 @@ static void syms_init(void) {
     S_DEF=sym_intern("def"); S_LET=sym_intern("let");
     S_IF=sym_intern("if"); S_EFFECT=sym_intern("effect"); S_CHECK=sym_intern("check");
     S_UNION=sym_intern("union"); S_OK=sym_intern("ok"); S_NO=sym_intern("no");
-    S_UNTAG=sym_intern("untag"); S_DEFAULT=sym_intern("default"); S_MUST=sym_intern("must");
+    S_CASE=sym_intern("case"); S_DEFAULT=sym_intern("default"); S_MUST=sym_intern("must");
     S_GET=sym_intern("get"); S_POP=sym_intern("pop"); S_AT=sym_intern("at"); S_NTH=sym_intern("nth");
     S_SET=sym_intern("set"); S_EDIT=sym_intern("edit"); S_INDEXOF=sym_intern("index-of"); S_STRFIND=sym_intern("str-find");
     S_PLUS=sym_intern("plus"); S_SUB=sym_intern("sub"); S_EQ=sym_intern("eq"); S_SWAP=sym_intern("swap"); S_DROP=sym_intern("drop");
     S_MUL=sym_intern("mul"); S_DIV=sym_intern("div"); S_MOD=sym_intern("mod");
-    S_COND=sym_intern("cond");
     for (int i = 0; i < HO_OP_COUNT; i++) ho_ops[i].sym = sym_intern(ho_ops[i].name);
 }
 typedef struct {
@@ -798,8 +794,14 @@ static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int 
                             int *out_consumed, int *out_produced, TypeChecker *ctx,
                             const uint32_t *outer_binds, int outer_count) {
     int vsp = 0, consumed = 0; TypeConstraint tt = TC_NONE;
-    uint32_t local_binds[32]; int local_count = 0;
-    for (int i = 0; i < outer_count && local_count < 32; i++) local_binds[local_count++] = outer_binds[i];
+    /* local bind table: sym + inferred (consume, produce). For `let` and for
+       defs whose body we can't peek into, counts are (0, 1) — treat the name
+       as producing one stack slot when referenced. For def'd tuples whose
+       body we infer via `(body) 'name def`, we record real counts. */
+    uint32_t local_binds[32]; int local_bc[32]; int local_bp[32]; int local_count = 0;
+    for (int i = 0; i < outer_count && local_count < 32; i++) {
+        local_binds[local_count] = outer_binds[i]; local_bc[local_count] = 0; local_bp[local_count] = 1; local_count++;
+    }
     for (int i = start; i < end; i++) {
         switch (toks[i].tag) {
         case TOK_INT: vsp++; tt = TC_INT; break;
@@ -812,8 +814,19 @@ static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int 
         case TOK_WORD: {
             uint32_t sym = toks[i].as.sym;
             if (sym == S_DEF || sym == S_LET) {
-                if (i >= start + 1 && toks[i-1].tag == TOK_SYM && local_count < 32) local_binds[local_count++] = toks[i-1].as.sym;
-                else if (sym == S_DEF && i >= start + 3 && toks[i-3].tag == TOK_SYM && local_count < 32) local_binds[local_count++] = toks[i-3].as.sym;
+                /* New-order: sym is at i-1; body is the tuple ending at i-2 (RPAREN). */
+                int dc = 0, dp = 1;
+                if (sym == S_DEF && i-2 >= start && toks[i-2].tag == TOK_RPAREN) {
+                    int d = 1, bs = i-2;
+                    for (int k = i-3; k >= start; k--) { if (toks[k].tag == TOK_RPAREN) d++; else if (toks[k].tag == TOK_LPAREN && --d == 0) { bs = k; break; } }
+                    int bc = 0, bp = 0;
+                    tc_infer_effect_ctx2(toks, bs+1, i-2, tc2, &bc, &bp, ctx, local_binds, local_count);
+                    dc = bc; dp = bp;
+                }
+                if (i >= start + 1 && toks[i-1].tag == TOK_SYM && local_count < 32) {
+                    local_binds[local_count] = toks[i-1].as.sym;
+                    local_bc[local_count] = dc; local_bp[local_count] = dp; local_count++;
+                }
                 EFF_CONSUME(vsp,consumed,2);
             }
             else {
@@ -834,9 +847,10 @@ static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int 
                     }
                 }
                 if (!sig && !ho_ops_find(sym)) {
-                    int is_local = 0; for (int j = 0; j < local_count; j++) if (local_binds[j] == sym) { is_local = 1; break; }
-                    if (is_local) { vsp++; tt = TC_NONE; }
-                    else if (ctx) { TCBinding *ub = tc_lookup(ctx, sym);
+                    int lidx = -1; for (int j = 0; j < local_count; j++) if (local_binds[j] == sym) { lidx = j; break; }
+                    if (lidx >= 0) {
+                        EFF_CONSUME(vsp,consumed,local_bc[lidx]); vsp += local_bp[lidx]; tt = TC_NONE;
+                    } else if (ctx) { TCBinding *ub = tc_lookup(ctx, sym);
                         if (ub && ub->is_def && ub->atype.type == TC_TUPLE && ub->atype.effect_idx >= 0) { TupleEffect *e = &ctx->effects[ub->atype.effect_idx]; EFF_CONSUME(vsp,consumed,e->consumed); vsp += e->produced; if (e->produced > 0) tt = e->out_type; }
                         else if (ub) { vsp++; tt = ub->atype.type; }
                     }
@@ -947,6 +961,20 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
         }
         return;
     }
+    /* `case` with tagged scrutinee: enforce same linearity rules that used
+       to live under S_UNTAG — tagged box payloads can't be discarded by
+       clause dispatch, and a linear default would leak on any match. */
+    if (ho->sym == S_CASE && tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED) {
+        if (tc->data[tc->sp-3].tvar_id > 0) {
+            int tid = tc->data[tc->sp-3].tvar_id;
+            int tp = tvar_content(tc, tid, TC_TAGGED);
+            if (tp > 0) { TypeConstraint pt = tvar_resolve(tc, tp);
+                if (pt == TC_BOX)
+                    tc_error(tc, line, 0, "'case' branches cannot safely discard linear payload; use a typed handler that consumes the box"); }
+        }
+        if ((tc->data[tc->sp-2].flags & AT_LINEAR) || tc->data[tc->sp-2].type == TC_BOX)
+            tc_error(tc, line, 0, "'case' default must not be a linear value (would leak on any matched branch)");
+    }
     TypeConstraint lpt = TC_NONE; int tptv = 0, lptv = 0;
     int branch_linear = 0; /* any popped body tuple captures or outputs linear */
     for (int n = ho->need; n > 0 && tc->sp > tc->sp_floor; n--) {
@@ -970,19 +998,22 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
        Apply/dip execute the body directly and are fine. */
     if (bteff && bteff->output_is_linear && !(ho->flags & HO_APPLY_EFFECT))
         tc_error(tc, line, 0, "'%s' body may not produce a linear-capturing closure (would alias it across iterations or package it into a container)", ho->name);
-    if ((ho->flags & HO_BRANCHES_AGREE) && bc >= 2 && !tc->sp_floor && !tc->body_depth) {
+    /* Branch agreement only fires at top level (body_depth==0) and outside
+       recursive bodies. Infer-from-empty undercounts effects of branches that
+       pop from the outer stack, so enforcement inside nested scopes would
+       flag false positives whenever one branch is a shape-preserving identity
+       and another consumes-then-produces the same shape. */
+    if ((ho->flags & HO_BRANCHES_AGREE) && bc >= 2 && !tc->in_recur_body && !tc->body_depth) {
         TypeConstraint ref = TC_NONE;
         for (int i = 0; i < bc; i++) if (bouts[i] != TC_NONE) { ref = bouts[i]; break; }
         for (int i = 0; i < bc; i++)
             if (bouts[i] != TC_NONE && ref != TC_NONE && bouts[i] != ref && !tc_constraint_matches(ref, bouts[i]) && !tc_constraint_matches(bouts[i], ref))
                 tc_error(tc, line, 0, "'%s' branches produce different types: %s vs %s", ho->name, constraint_name(ref), constraint_name(bouts[i]));
-        if (!tc->in_recur_body && !tc->body_depth) {
-            int rnet = 0, rset = 0, rci = 0;
-            for (int i = 0; i < bc; i++) if (barr_has[i]) { rnet = barr_p[i] - barr_c[i]; rci = i; rset = 1; break; }
-            if (rset) for (int i = 0; i < bc; i++)
-                if (barr_has[i] && (barr_p[i] - barr_c[i]) != rnet)
-                    tc_error(tc, line, 0, "'%s' branches have different stack effects: net %+d vs net %+d (%d->%d vs %d->%d)", ho->name, rnet, barr_p[i]-barr_c[i], barr_c[rci], barr_p[rci], barr_c[i], barr_p[i]);
-        }
+        int rnet = 0, rset = 0, rci = 0;
+        for (int i = 0; i < bc; i++) if (barr_has[i]) { rnet = barr_p[i] - barr_c[i]; rci = i; rset = 1; break; }
+        if (rset) for (int i = 0; i < bc; i++)
+            if (barr_has[i] && (barr_p[i] - barr_c[i]) != rnet)
+                tc_error(tc, line, 0, "'%s' branches have different stack effects: net %+d vs net %+d (%d->%d vs %d->%d)", ho->name, rnet, barr_p[i]-barr_c[i], barr_c[rci], barr_p[rci], barr_c[i], barr_p[i]);
     }
     if ((ho->flags & HO_SCRUTINEE_TAGGED) && lpt != TC_TAGGED && lpt != TC_NONE)
         tc_error(tc, line, 0, "'%s' expected tagged value, got %s", ho->name, constraint_name(lpt));
@@ -1316,7 +1347,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     tv = TC_TUPLE; if (!pairs) { veffout = vo; has_eff = 1; }
                     if (has_eff && vo != TC_NONE && veffout != TC_NONE && vo != veffout && !tc_constraint_matches(veffout, vo) && !tc_constraint_matches(vo, veffout))
                         tc_error(tc, t->line, 0, "clause bodies produce different types: %s vs %s", constraint_name(veffout), constraint_name(vo));
-                    /* A cond/case/untag clause body that creates a linear closure
+                    /* A case clause body that creates a linear closure
                        escapes conditional dispatch — the resulting value can be
                        applied twice without detection. Ban box creation nested in
                        clause bodies. Runtime catches double-free but we'd rather
@@ -1422,21 +1453,6 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].union_id = uid;
                     }
                 }
-            } else if (sym == S_UNTAG) {
-                /* Stack shape: [tagged, default, clauses]. Tagged is at sp-3.
-                   A default is required; missing tags fall through to it, so
-                   static exhaustiveness is no longer a hard error (runtime is
-                   already sound). */
-                if (tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED && tc->data[tc->sp-3].tvar_id > 0) {
-                    int tid = tc->data[tc->sp-3].tvar_id;
-                    int tp = tvar_content(tc, tid, TC_TAGGED);
-                    if (tp > 0) { TypeConstraint pt = tvar_resolve(tc, tp);
-                        if (pt == TC_BOX)
-                            tc_error(tc, t->line, 0, "'untag' branches cannot safely discard linear payload; use a typed handler that consumes the box"); }
-                }
-                if (tc->sp >= 2 && ((tc->data[tc->sp-2].flags & AT_LINEAR) || tc->data[tc->sp-2].type == TC_BOX))
-                    tc_error(tc, t->line, 0, "'untag' default must not be a linear value (would leak on any matched branch)");
-                tc_check_word(tc, sym, t->line);
             } else if (sym == S_DEFAULT) {
                 if (tc->sp >= 1 && ((tc->data[tc->sp-1].flags & AT_LINEAR) || tc->data[tc->sp-1].type == TC_BOX))
                     tc_error(tc, t->line, 0, "'default' fallback must not be a linear value (would leak on the 'ok path)");
@@ -1570,8 +1586,7 @@ static int dispatch_clauses(const char *who, Value *cb, int cs, int cl, ValTag c
      fresh copy of the scrutinee; on truthy, push scrutinee and run body.
    If nothing matches, the default is pushed.
 
-   Exposed under three names: `cond`, `untag`, and `case`. The word kept
-   in error messages is the symbolic one the caller used. */
+   Single entry point: `case`. */
 static void prim_case(Frame *env) {
     POP_CLAUSES("case");
     POP_VAL(def);
@@ -1776,7 +1791,7 @@ static void dict_data_free(DictData *dd);
 static void prim_size(Frame *e) {
     (void)e; Value top=speek();
     if(top.tag==VAL_DICT){ int n=((DictData*)top.as.box)->len; dict_data_free((DictData*)top.as.box); sp--; spush(val_int(n)); return; }
-    if(top.tag==VAL_TAGGED) die("len: tagged values have no length (untag first)");
+    if(top.tag==VAL_TAGGED) die("len: tagged values have no length (case-match first)");
     if(!is_compound(top.tag)) die("len: expected compound, got %s",valtag_name(top.tag));
     sp-=val_slots(top); spush(val_int((int)top.as.compound.len));
 }
@@ -2837,7 +2852,7 @@ static void register_prims(void) {
         R(band,band),R(bor,bor),R(bxor,bxor),R(bnot,bnot),R(shl,shl),R(shr,shr),
         R(eq,eq),R(lt,lt),R(and,and),R(or,or),
         R(print,print),R(assert,assert),R(halt,halt),R(random,random),
-        R(if,if),R(cond,case),R(case,case),R(loop,loop),R(while,while),
+        R(if,if),R(case,case),R(loop,loop),R(while,while),
         R(itof,itof),R(ftoi,ftoi),R(fsqrt,fsqrt),R(fsin,fsin),R(fcos,fcos),R(ftan,ftan),
         R(ffloor,ffloor),R(fceil,fceil),R(fround,fround),R(fexp,fexp),R(flog,flog),R(fpow,fpow),R(fatan2,fatan2),
         R(stack,stack),{"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
@@ -2849,7 +2864,7 @@ static void register_prims(void) {
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),
         R(dict,dict),R(insert,insert),R(of,of),R(remove,remove),
         {"dict-keys",prim_keys},{"dict-values",prim_values},
-        R(tag,tag),R(untag,case),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
+        R(tag,tag),R(union,union),R(then,then),R(default,default),R(must,must),R(pthen,pthen),
         R(read,read),R(write,write),R(ls,ls),
         {"utf8-encode",prim_utf8_encode},{"utf8-decode",prim_utf8_decode},
         {"str-find",prim_str_find},{"str-split",prim_str_split},{"parse-http",prim_parse_http},

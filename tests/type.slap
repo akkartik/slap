@@ -94,11 +94,11 @@ true assert
 42 ok -1 default print
 "fail" no "" default print
 
--- exhaustive untag with union
-42 ok {'ok 'int 'no 'str} union () {'ok (1 plus) 'no (drop 0)} untag print
+-- exhaustive case with union
+42 ok {'ok 'int 'no 'str} union () {'ok (1 plus) 'no (drop 0)} case print
 
 -- union through then
-42 ok {'ok 'int 'no 'str} union (1 plus ok) then () {'ok () 'no (drop 0)} untag print
+42 ok {'ok 'int 'no 'str} union (1 plus ok) then () {'ok () 'no (drop 0)} case print
 
 -- ===== Protocol constraints =====
 

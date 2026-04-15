@@ -236,7 +236,7 @@
   </channel>
 </rss>") '_rss-sample def
 
-_rss-sample rss-parse () {'ok () 'no (drop "fail")} untag 'feed let
+_rss-sample rss-parse () {'ok () 'no (drop "fail")} case 'feed let
 feed rss-kind "rss" eq assert
 feed rss-title "My Blog" eq assert
 feed rss-link "http://example.com" eq assert
@@ -273,7 +273,7 @@ items 1 get must rss-item-summary "<p>html body</p>" eq assert
   </entry>
 </feed>") '_atom-sample def
 
-_atom-sample rss-parse () {'ok () 'no (drop "fail")} untag 'afeed let
+_atom-sample rss-parse () {'ok () 'no (drop "fail")} case 'afeed let
 afeed rss-kind "atom" eq assert
 afeed rss-title "Atom Blog" eq assert
 afeed rss-link "http://example.com" eq assert
@@ -285,13 +285,13 @@ aitems 0 get must rss-item-link "http://example.com/a1" eq assert
 aitems 0 get must rss-item-id "urn:uuid:1" eq assert
 
 -- Adversarial: unknown root
-"<html><body>hi</body></html>" rss-parse () {'no ()} untag
+"<html><body>hi</body></html>" rss-parse () {'no ()} case
   "/html: unknown feed format: html" eq assert
 
 -- Missing optional field: no description in channel
 (
 "<rss><channel><title>X</title><link>Y</link></channel></rss>") '_rss-no-desc def
-_rss-no-desc rss-parse () {'ok () 'no (drop "fail")} untag 'nd let
+_rss-no-desc rss-parse () {'ok () 'no (drop "fail")} case 'nd let
 nd rss-description "" eq assert
 nd rss-items len 0 eq assert
 
@@ -300,7 +300,7 @@ nd rss-items len 0 eq assert
 "<feed><title>F</title>
   <entry><title>T</title><content>body via content</content><id>1</id></entry>
 </feed>") '_atom-content-sample def
-_atom-content-sample rss-parse () {'ok () 'no (drop "fail")} untag 'ac let
+_atom-content-sample rss-parse () {'ok () 'no (drop "fail")} case 'ac let
 ac rss-items 0 get must rss-item-summary "body via content" eq assert
 
 -- Atom updated fallback (no <published>, has <updated>)
@@ -308,7 +308,7 @@ ac rss-items 0 get must rss-item-summary "body via content" eq assert
 "<feed><title>F</title>
   <entry><title>T</title><updated>2024-03-01</updated><id>1</id></entry>
 </feed>") '_atom-updated-sample def
-_atom-updated-sample rss-parse () {'ok () 'no (drop "fail")} untag 'au let
+_atom-updated-sample rss-parse () {'ok () 'no (drop "fail")} case 'au let
 au rss-items 0 get must rss-item-published "2024-03-01" eq assert
 
 -- Item attrs exposed (podcast enclosure pattern)
@@ -316,7 +316,7 @@ au rss-items 0 get must rss-item-published "2024-03-01" eq assert
 "<rss><channel><title>Pod</title>
   <item isPermaLink=\"true\"><title>Ep1</title><guid>ep1</guid></item>
 </channel></rss>") '_rss-pod-sample def
-_rss-pod-sample rss-parse () {'ok () 'no (drop "fail")} untag 'pod let
+_rss-pod-sample rss-parse () {'ok () 'no (drop "fail")} case 'pod let
 pod rss-items 0 get must rss-item-attrs 'pod-attrs let
 pod-attrs len 1 eq assert
 pod-attrs 0 get must 0 get must "isPermaLink" eq assert
@@ -338,7 +338,7 @@ rec "rss" 'kind into
 built-feed rss-to-xml 'xml-out let
 
 -- The generated XML should reparse to the same normalized fields.
-xml-out rss-parse () {'ok () 'no (drop "fail")} untag 'rt let
+xml-out rss-parse () {'ok () 'no (drop "fail")} case 'rt let
 rt rss-kind "rss" eq assert
 rt rss-title "My Feed" eq assert
 rt rss-items 0 get must rss-item-title "Post 1" eq assert
@@ -357,7 +357,7 @@ rec "atom" 'kind into
 'atom-feed let
 
 atom-feed rss-to-xml 'atom-xml let
-atom-xml rss-parse () {'ok () 'no (drop "fail")} untag 'art let
+atom-xml rss-parse () {'ok () 'no (drop "fail")} case 'art let
 art rss-kind "atom" eq assert
 art rss-title "Atom Feed" eq assert
 art rss-link "http://example.com" eq assert

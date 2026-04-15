@@ -10,7 +10,7 @@
 ('pred let 'acc let dup len 0 gt (dup 0 get must 'ch let ch pred apply (1 drop-n acc ch push pred parse-while-acc) (acc swap) if) (acc swap) if) 'parse-while-acc def
 ('pred let list pred parse-while-acc) 'parse-while-core def
 ('pred let list (pred parse-while-core ok) pthen) 'parse-while def
-('delim let dup delim str-find () {'ok ('pos let dup pos take-n swap pos delim len plus drop-n ok) 'no (drop drop "parse-until: delimiter not found" no)} untag) 'parse-until-core def
+('delim let dup delim str-find () {'ok ('pos let dup pos take-n swap pos delim len plus drop-n ok) 'no (drop drop "parse-until: delimiter not found" no)} case) 'parse-until-core def
 ('delim let list (delim parse-until-core) pthen) 'parse-until def
 ('pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv 10.0 mul pfd 48 sub itof plus parse-float-int) (pfv swap) if) (pfv swap) if) 'parse-float-int def
 ('pff let 'pfv let dup len 0 gt (dup 0 get must 'pfd let pfd 48 ge pfd 57 le and (1 drop-n pfv pfd 48 sub itof pff div plus pff 10.0 mul parse-float-frac) (pfv swap) if) (pfv swap) if) 'parse-float-frac def
