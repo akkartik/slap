@@ -65,10 +65,10 @@ Stack manipulation:
 
 ```slap
 3 dup                -- 3 3
-4 1 drop             -- 4
+4 1 drop             -- 4     (drop 1 item)
 6 5 swap             -- 5 6
 7 8 (1 plus) dip     -- 8 8   (apply under top)
-(2 3 plus) apply     -- 5     (execute a tuple)
+(2 3 plus) apply     -- 5     (execute a tuple literal)
 ```
 
 ### floats
@@ -108,17 +108,32 @@ Atomic identifiers. Prefixed with `'`.
 
 ### definitions
 
-Both `def` and `let` take value-then-name. `def` auto-executes tuples on lookup (for functions); `let` pushes the bound value on lookup.
+`let` takes value-then-name. On lookup, tuples auto-execute; other values push.
 
 ```slap
--- def: value then name, auto-executes tuples
-(2 mul) 'double def
+-- tuple binding: auto-executes on lookup (for functions)
+(2 mul) 'double let
 5 double              -- 10
 
--- let: value then name, pushes on lookup
+-- scalar binding: pushes on lookup
 42 'answer let
 answer                -- 42
 ```
+
+To bind a literal tuple as data (so lookup pushes it without running), wrap in extra parens — the outer tuple auto-execs and pushes the inner:
+
+```slap
+((1 2 3)) 'foo let
+foo                   -- (1 2 3) on stack
+```
+
+To thread a bound closure through a nested call without auto-executing it, use `quote`:
+
+```slap
+'foo quote            -- pushes foo's raw value (no auto-exec)
+```
+
+`quote` is mainly used when passing a closure parameter into a recursive call — see [closures](#closures).
 
 ### control flow
 
@@ -135,22 +150,16 @@ answer                -- 42
 
 ### recursion
 
-`def` is self-visible by default when the body references its own name:
+A name is self-visible inside its own body, so recursion needs no keyword:
 
 ```slap
-'factorial (
-  dup 1 le (drop 1) (dup 1 sub factorial mul) if
-) def
+(dup 1 le (drop 1) (dup 1 sub factorial mul) if) 'factorial let
 5 factorial            -- 120
 
-'fib (
-  dup 1 le () (dup 1 sub fib swap 2 sub fib plus) if
-) def
+(dup 1 le () (dup 1 sub fib swap 2 sub fib plus) if) 'fib let
 10 fib                 -- 55
 
-'gcd (
-  dup 0 eq (drop) (swap over mod gcd) if
-) def
+(dup 0 eq (drop) (swap over mod gcd) if) 'gcd let
 12 8 gcd               -- 4
 ```
 
@@ -159,21 +168,24 @@ answer                -- 42
 Functions capture their defining scope:
 
 ```slap
-'make-adder (
-  'n let
-  (n plus)
-) def
+('n let (n plus)) 'make-adder let
 
-5 make-adder 3 swap apply   -- 8
-10 make-adder 7 swap apply  -- 17
+5 make-adder 'add5 let
+3 add5                 -- 8
+7 add5                 -- 12
 
-'make-between (
-  'lo let 'hi let
-  (dup lo le not swap hi lt and)
-) def
+('lo let 'hi let (dup lo le not swap hi lt and)) 'make-between let
 10 1 make-between 'in-range let
-5 in-range apply             -- 1
-15 in-range apply            -- 0
+5 in-range             -- 1
+15 in-range            -- 0
+```
+
+When a closure is passed as a parameter and needs to be handed down to a recursive call, use `quote` to push it as data rather than running it:
+
+```slap
+-- 'pred let binds a predicate; recursion passes it down via 'pred quote
+('pred let dup 0 gt (dup pred drop 1 sub 'pred quote countdown) () if) 'countdown let
+5 (iseven) countdown    -- applies pred at each step, terminates at 0
 ```
 
 ### composition
@@ -197,30 +209,29 @@ list                        -- []
 [1 2 3]                     -- [1 2 3]
 0 5 range                   -- [0 1 2 3 4]
 
--- mutation
-list 10 push 20 push        -- [10 20]
-[10 20 30] pop              -- 30 [10 20]
-[10 20 30] 1 get            -- 20
-[10 20 30] 1 99 set         -- [10 99 30]
-[1 2] [3 4] cat             -- [1 2 3 4]
+-- mutation (pop/get/set return tagged; must unwraps or panics on no)
+list 10 push 20 push            -- [10 20]
+[10 20 30] pop must             -- 30 [10 20]
+[10 20 30] 1 get must           -- 20
+[10 20 30] 1 99 set must        -- [10 99 30]
+[1 2] [3 4] cat                 -- [1 2 3 4]
 
--- slicing
-[1 2 3 4 5] 3 take-n       -- [1 2 3]
-[1 2 3 4 5] 2 drop-n       -- [3 4 5]
+-- slicing (clamped; no tagged result)
+[1 2 3 4 5] 3 take-n            -- [1 2 3]
+[1 2 3 4 5] 2 drop-n            -- [3 4 5]
 
 -- higher-order
-[1 2 3] (2 mul) map         -- [2 4 6]
-[1 2 3 4 5] (2 mod 1 eq) filter  -- [1 3 5]
-[1 2 3] 0 (plus) fold       -- 6
-[1 2 3] (plus) reduce       -- 6
-0 [1 2 3] (plus) each       -- 6
-[1 2 3] 0 (plus) scan       -- [1 3 6]
+[1 2 3] (2 mul) each            -- [2 4 6] (map is spelled `each`)
+[1 2 3 4 5] (2 mod 1 eq) filter -- [1 3 5]
+[1 2 3] 0 (plus) fold           -- 6
+[1 2 3] (plus) reduce           -- 6
+[1 2 3] 0 (plus) scan           -- [1 3 6]
 
 -- sorting and searching
-[3 1 2] sort                -- [1 2 3]
-[1 2 3] reverse             -- [3 2 1]
-[1 2 2 3 3] dedup           -- [1 2 3]
-[10 20 30] 20 index-of      -- 1
+[3 1 2] sort                    -- [1 2 3]
+[1 2 3] reverse                 -- [3 2 1]
+[1 2 2 3 3] dedup               -- [1 2 3]
+[10 20 30] 20 index-of must     -- 1
 [10 20 30] -1 (15 lt not) find  -- 20 (default -1 if no match)
 
 -- structural
@@ -251,10 +262,10 @@ Immutable sequences. Parenthesized. Also used as code blocks. Access via destruc
 Key-value maps keyed by symbols.
 
 ```slap
-{'x 10 'y 20}               -- record
-{'x 10 'y 20} 'x at         -- 10
-{'x 10 'y 20} 30 'x into    -- {'x 30 'y 20}
-rec 10 'x into 20 'y into   -- {'x 10 'y 20}
+{'x 10 'y 20}                -- record
+{'x 10 'y 20} 'x at must     -- 10 (at returns tagged; must unwraps)
+{'x 10 'y 20} 30 'x into     -- {'x 30 'y 20}
+rec 10 'x into 20 'y into    -- {'x 10 'y 20}
 ```
 
 ### strings
@@ -286,9 +297,9 @@ Tag a value with a symbol to create a sum type. Use `ok`/`no` for result types, 
 123 'zzz tag 0 {'foo (1 plus) 'bar (2 mul)} case  -- 0 (default fires; unmatched tag)
 
 -- monadic chaining with then/default
-'safe-div ('d let 'n let
+('d let 'n let
   d 0 eq ("division by zero" no) (n d div ok) if
-) def
+) 'safe-div let
 
 10 2 safe-div (3 mul) then -1 default   -- 15
 10 0 safe-div (3 mul) then -1 default   -- -1
@@ -350,8 +361,16 @@ Boxes must be consumed via `free`, `lend`, `mutate`, or `clone`. `lend` borrows 
 Optional type annotations declare stack effects:
 
 ```slap
-'double (2 mul) [int lent in  int move out] effect def
-'square (dup mul) [int lent in  int move out] effect def
+(2 mul) [int lent in  int move out] effect 'double let
+(dup mul) [int lent in  int move out] effect 'square let
+```
+
+Forward declarations register a signature against a name defined later (used when a function needs to reference itself through a mutually-recursive helper):
+
+```slap
+'xml-render-pretty [int lent in  rec own in  list move out] effect
+-- ...later...
+(... xml-render-pretty ...) 'xml-render-pretty let
 ```
 
 Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ownership).
@@ -361,8 +380,8 @@ Ownership modes: `lent` (borrowed/copyable), `move` (consumed), `own` (linear ow
 Built-in protocols group types by capability. Use in effect annotations:
 
 ```slap
-'my-len (len) ['a sized lent in  int move out] effect def
-'my-sort (sort) ['a ord seq own in  'a ord seq move out] effect def
+(len) ['a sized lent in  int move out] effect 'my-len let
+(sort) ['a ord seq own in  'a ord seq move out] effect 'my-sort let
 ```
 
 | Protocol | Keyword | Types | Operations |
@@ -425,7 +444,6 @@ Additional keywords recognized in annotations: `functor` (required by `each`), `
 |------|--------|---------|
 | `iszero` | n → n==0 | `0 iszero` → `1` |
 | `ispos` | n → n>0 | `5 ispos` → `1` |
-| `isneg` | n → n<0 | `-1 isneg` → `1` |
 | `iseven` | n → even? | `4 iseven` → `1` |
 | `isodd` | n → odd? | `3 isodd` → `1` |
 | `divides` | a b → b%a==0 | `3 9 divides` → `1` |
@@ -447,8 +465,6 @@ Additional keywords recognized in annotations: `functor` (required by `each`), `
 | `table` | list f → [[x f(x)]...] | `[1 2 3] (sqr) table` → `[[1 1] [2 4] [3 9]]` |
 | `select` | list indices → sublist | `[10 20 30] [0 2] select` → `[10 30]` |
 | `reduce` | list f → result | `[1 2 3] (plus) reduce` → `6` |
-| `isany` | list → any nonzero? | `[0 0 1] isany` → `1` |
-| `isall` | list → all nonzero? | `[1 1 0] isall` → `0` |
 | `keep-mask` | list mask → filtered | `[10 20 30] [1 0 1] keep-mask` → `[10 30]` |
 
 ### structural utilities
@@ -555,7 +571,7 @@ Build with `make slap-sdl`. Opens a 640x480 canvas with 2-bit grayscale (4 shade
 | `clear` | Fill canvas with color (0-3) |
 | `pixel` | `x y color pixel` — set one pixel |
 | `fill-rect` | `x y w h color fill-rect` — fill a rectangle |
-| `on` | `'event (handler) on` — register event callback |
+| `on` | `(handler) 'event on` — register event callback |
 | `show` | `(render) show` — start event loop with render function |
 
 ### events
@@ -573,10 +589,9 @@ Build with `make slap-sdl`. Opens a 640x480 canvas with 2-bit grayscale (4 shade
 ```slap
 160 'W let  120 'H let  19200 'N let  4 'S let
 
-'cell (H plus H mod W mul swap W plus W mod plus nth) def
+(H plus H mod W mul swap W plus W mod plus nth) 'cell let
 
-'neighbors (
-  'cy let 'cx let 'gs let
+('cy let 'cx let 'gs let
   gs cx 1 sub cy 1 sub cell
   gs cx       cy 1 sub cell plus
   gs cx 1 plus cy 1 sub cell plus
@@ -585,25 +600,24 @@ Build with `make slap-sdl`. Opens a 640x480 canvas with 2-bit grayscale (4 shade
   gs cx 1 sub cy 1 plus cell plus
   gs cx       cy 1 plus cell plus
   gs cx 1 plus cy 1 plus cell plus
-) def
+) 'neighbors let
 
-'step (
-  'g let  list  0 'i let
+('g let  list  0 'i let
   (i N lt) (
     i W mod 'x let  i W div 'y let
-    'g x y neighbors 'n let
-    'g i nth 1 eq (n 2 eq n 3 eq or) (n 3 eq) if
+    g x y neighbors 'n let
+    g i nth must 1 eq (n 2 eq n 3 eq or) (n 3 eq) if
     (1) (0) if push
     i 1 plus 'i let
   ) while
-) def
+) 'step let
 
 list N (2 random push) repeat
 
-'tick (drop step) on
+(drop step) 'tick on
 ('g let 0 clear
   0 'i let (i N lt) (
-    'g i nth 1 eq (i W mod S mul i W div S mul 4 'S ...) () if
+    g i nth must 1 eq (i W mod S mul i W div S mul S S 3 fill-rect) () if
     i 1 plus 'i let
   ) while
 ) show

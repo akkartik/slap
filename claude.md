@@ -39,10 +39,10 @@ Single-file C interpreter (`slap.c`). Pipeline: **lex → typecheck → eval**.
 - **Lexer** (`lex`): Source → tokens. Token types: INT, FLOAT, SYM, WORD, STRING, brackets, EOF.
 - **Type checker** (`typecheck_tokens` → `tc_process_range`): Union-find type inference, effect system (consumed/produced stack slots), linear value tracking. Type variables use path-compressed union-find for unification.
 - **Evaluator** (`eval` → `build_tuple` → `eval_body`): Tokens → compound values (tuples), then stack-machine execution. `dispatch_word` resolves names via frame lookup then primitive table.
-- **Frames**: Lexical scope chain with refcounting. Closures capture their defining frame. `def` bindings auto-execute tuples on lookup; `let` bindings push values.
+- **Frames**: Lexical scope chain with refcounting. Closures capture their defining frame. `let` bindings auto-execute tuples on lookup; scalars push as values.
 - **Primitives**: ~75 C functions registered via `prim_register`. Macros `ARITH2`, `FLOAT1`, `CMP2` generate families of math/comparison ops.
 - **Prelude**: ~70 derived definitions in Slap itself (embedded string in slap.c). Loaded at startup before user code.
-- **Self-reference**: `def` makes the bound name visible inside its own body when referenced textually, enabling recursion without a keyword.
+- **Self-reference**: A name bound via `let` is visible inside its own body when referenced textually, enabling recursion without a keyword.
 
 ### Tagged unions (sum types)
 
@@ -52,8 +52,8 @@ Single-file C interpreter (`slap.c`). Pipeline: **lex → typecheck → eval**.
 - **`case`**: unified conditional. Two dispatch modes:
   - On tagged scrutinee: `tagged default {'sym1 (body1) 'sym2 (body2)} case` — match by tag symbol, payload pushed before body. Default fires on unmatched tag.
   - On non-tagged scrutinee: `value default {(pred1) (body1) (pred2) (body2)} case` — evaluates predicates in order (scrutinee pushed for each); on truthy, runs body.
-- **`then`** (prelude def): `tagged (body) then` — if `'ok`, unwrap payload, run body (body returns a new tagged); if not ok, re-wrap with `'no`. Implemented as `'body let () {'ok (body apply) 'no (no)} case`.
-- **`default`** (prelude def): `tagged fallback default` — unwrap `'ok` payload, or drop tagged and push fallback. Implemented as `'fb let fb {'ok () 'no (drop fb)} case`.
+- **`then`** (prelude): `tagged (body) then` — if `'ok`, unwrap payload, run body (body returns a new tagged); if not ok, re-wrap with `'no`. Implemented as `'body let () {'ok (body) 'no (no)} case` (body auto-execs on lookup).
+- **`default`** (prelude): `tagged fallback default` — unwrap `'ok` payload, or drop tagged and push fallback. Implemented as `'fb let fb {'ok () 'no (drop fb)} case`. Note: since `let` auto-execs tuples on lookup, a tuple fallback will run rather than be pushed — pass `((body))` if you want the literal tuple.
 - **`union`**: `{'ok 'int 'no 'str} union` — runtime no-op, type annotation only. Drops the schema record.
 - **`ok`/`no`** (prelude): sugar for `'ok tag` / `'no tag`
 - **`none`** (prelude): sugar for `() no` — the empty error value
@@ -97,7 +97,7 @@ Two categories of types:
 - **Stackable** (copyable): Int, Float, Symbol, Tuple, Record, List, String, Tagged. Support `dup`/`drop`.
 - **Linear**: Box only. Must be consumed exactly once via `free`, `lend`, `mutate`, or `clone`.
 
-`lend` borrows a stackable snapshot from a Box. The snapshot itself is stackable, but when the box contains a compound value (list/record/tuple/tagged) the checker forbids `let`/`def`-binding the snapshot inside the `lend` body — a later `mutate` would silently corrupt the binding, which aliases the box's backing storage (slap.c:950–953).
+`lend` borrows a stackable snapshot from a Box. The snapshot itself is stackable, but when the box contains a compound value (list/record/tuple/tagged) the checker forbids `let`-binding a borrowed compound snapshot inside the `lend` body — a later `mutate` would silently corrupt the binding, which aliases the box's backing storage. Only fires when the bound value carries the borrowed flag; binding a freshly-built tuple literal inside a lend body is fine.
 
 ### Protocols (built-in typeclasses)
 
@@ -134,25 +134,41 @@ Parsed in `parse_type_annotation`. Stored in `TypeSlot.either_syms/either_types/
 
 List ops: `push`, `pop`, `set`, `len`, `cat`. `compose` is a separate tuple-concat primitive for function composition.
 
-### let
+### let (unified binding)
 
-`val 'name let` — binds `val` to `name`. On lookup, if the value is a tuple, it auto-executes; otherwise it pushes.
+`val 'name let` — binds `val` to `name`. One keyword covers both "define a function" and "bind a stack argument":
 
-To bind a literal tuple (preserving it as data rather than auto-executing on lookup), wrap it in an extra pair of parens:
+- **Scalar bound**: lookup pushes the value. `42 'foo let; foo` → `42`.
+- **Tuple bound**: lookup auto-executes the tuple. `(1 plus) 'inc let; 2 inc` → `3`.
 
-- `42 'foo let` → `foo` pushes `42`
-- `(1 2 3) 'foo let` → `foo plus plus` → `6` (tuple auto-execs)
-- `((1 2 3)) 'foo let` → `foo` pushes `(1 2 3)` (outer execs, pushes inner)
-- `(1 plus) 'inc let` → `2 inc` → `3`
+This replaces the old `def`/`let` split. `def` is no longer a keyword.
+
+**Binding a literal tuple as data** — wrap in extra parens so the outer tuple auto-execs and pushes the inner:
+
+- `((1 2 3)) 'foo let` → `foo` pushes `(1 2 3)`
+- `(1 2 3) 'foo let` → `foo plus plus` → `6` (auto-execs)
+
+**HOF closure args** — when an HOF-style function receives a closure parameter, the caller wraps it at the call site so it's stored as a tuple. Inside the HOF body, a bare reference auto-executes:
+
+```
+('pred let [1 2 3 4] (pred) filter) 'keep-when let
+(iseven) keep-when  -- → [2 4]
+```
+
+The `(pred)` inside `filter`'s tuple defers `pred`'s dispatch to apply-time.
 
 ### quote
 
-`'name quote` pushes the raw value of `name`'s binding without auto-executing. Useful when threading a closure-arg through recursion: the bound closure would auto-exec on bare lookup, but `'name quote` preserves the value for passing into the next call.
+`'name quote` pushes the raw value of `name`'s binding without auto-executing. Needed when **threading a closure-arg through a recursive call** — the bound closure would auto-exec on bare lookup, shadowing itself in the recursive frame. `quote` captures the value at the current scope.
 
-Example:
 ```
-('pred let ... 'pred quote recurse) 'recurse let
+('pred let dup 0 gt (dup pred drop 1 sub 'pred quote recurse) () if) 'recurse let
+5 (iseven) recurse   -- applies pred at each step
 ```
+
+Without `quote`, `pred recurse` at the recursive call site would auto-exec `pred` (pushing the bool result) instead of passing `pred` itself to the recursion.
+
+Use `quote` sparingly — most HOF patterns work without it via the call-site-wraps idiom above. Recursion + closure arg is the main case that needs it.
 
 ### SDL graphics (optional)
 
