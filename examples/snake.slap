@@ -5,17 +5,17 @@
 (
   'c let 'gy let 'gx let
   gx 20 mul gy 20 mul 20 20 c fill-rect
-) 'draw-cell def
+) 'draw-cell let
 
 -- Draw 16x16 cell inset by 2px (grid lines effect)
 (
   'c let 'gy let 'gx let
   gx 20 mul 2 plus gy 20 mul 2 plus 16 16 c fill-rect
-) 'draw-inset def
+) 'draw-inset let
 
 -- Decode grid position
-(32 mod) 'pos-x def
-(32 div) 'pos-y def
+(32 mod) 'pos-x let
+(32 div) 'pos-y let
 
 -- Map SDL arrow key to direction, -1 if unknown
 (
@@ -25,7 +25,7 @@
   dup 1073741903 eq (drop 1) (
   drop -1
   ) if) if) if) if
-) 'key-dir def
+) 'key-dir let
 
 -- State record on stack
 rec
@@ -108,9 +108,9 @@ rec
   stv 2 eq (
     dup 'death-at at must 'da let
     frm da sub 4 div 2 mod 'flash let
-    snk (dup pos-x swap pos-y flash 1 eq (3) (1) if draw-cell) each drop
+    snk (dup pos-x swap pos-y flash 1 eq (3) (1) if draw-cell 0) each drop
   ) (
-    snk (dup pos-x swap pos-y 2 draw-inset) each drop
+    snk (dup pos-x swap pos-y 2 draw-inset 0) each drop
     snk last dup pos-x swap pos-y 3 draw-inset
 
     stv 0 eq frm 20 div 2 mod 0 eq and (

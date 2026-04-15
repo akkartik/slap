@@ -13,7 +13,7 @@
   )
   while
   drop num eq
-) 'is-palindrome def
+) 'is-palindrome let
 
 -- stack: best i
 0 999

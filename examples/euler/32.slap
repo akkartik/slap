@@ -5,14 +5,14 @@
 (
   'gdh-n let 'gdh-lst let
   gdh-n 0 gt (gdh-lst gdh-n 10 mod push gdh-n 10 div gd-helper) (gdh-lst) if
-) 'gd-helper def
-(list swap gd-helper) 'get-digits def
+) 'gd-helper let
+(list swap gd-helper) 'get-digits let
 
 (
   'ipt-c let 'ipt-b let 'ipt-a let
   ipt-a get-digits ipt-b get-digits cat ipt-c get-digits cat
   dup len 9 eq (sort [1 2 3 4 5 6 7 8 9] eq) (drop 0) if
-) 'is-pan9 def
+) 'is-pan9 let
 
 -- scan1-inner: products a b -> products'
 (
@@ -22,7 +22,7 @@
     si-a si-b si-c is-pan9 (si-prods si-c push) (si-prods) if
     si-a si-b 1 plus scan1-inner
   ) (si-prods) if
-) 'scan1-inner def
+) 'scan1-inner let
 
 -- scan1: products a -> products'
 (
@@ -31,7 +31,7 @@
     prods1 s1-a 1234 scan1-inner
     s1-a 1 plus scan1
   ) (prods1) if
-) 'scan1 def
+) 'scan1 let
 
 -- scan2-inner: products a b -> products'
 (
@@ -41,7 +41,7 @@
     si2-a si2-b si2-c is-pan9 (si2-prods si2-c push) (si2-prods) if
     si2-a si2-b 1 plus scan2-inner
   ) (si2-prods) if
-) 'scan2-inner def
+) 'scan2-inner let
 
 -- scan2: products a -> products'
 (
@@ -50,6 +50,6 @@
     prods2 s2-a 123 scan2-inner
     s2-a 1 plus scan2
   ) (prods2) if
-) 'scan2 def
+) 'scan2 let
 
 list 2 scan1 12 scan2 sort dedup sum print

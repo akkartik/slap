@@ -15,7 +15,7 @@
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 -- digit-key: 4-digit n -> sorted-digit list (4 bytes in [0,9]; valid dict key)
 (
@@ -26,7 +26,7 @@
     dk-n 10 div 10 mod push
     dk-n 10 mod push
   sort
-) 'digit-key def
+) 'digit-key let
 
 -- add-prime: dict p -> dict  (append p to the group keyed by its digit-key)
 (
@@ -35,7 +35,7 @@
   ap-k of list default
   ap-p push
   ap-k swap insert
-) 'add-prime def
+) 'add-prime let
 
 -- Build dict: sorted-digits -> list of 4-digit odd primes (ascending).
 dict 1001
@@ -71,7 +71,7 @@ drop
     sg-k 1 plus
   ) while
   drop
-) 'scan-group def
+) 'scan-group let
 
 -- Fold over dict entries; acc carries first answer found (0 = not yet).
 0 (

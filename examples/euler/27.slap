@@ -13,12 +13,12 @@
             ip-n ip-i mod 0 neq
             ip-i 2 plus ip-loop
           ) (ip-ok) if
-        ) 'ip-loop def
+        ) 'ip-loop let
         1 3 ip-loop
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 (
   'cp-b let 'cp-a let
@@ -26,9 +26,9 @@
     'cp-n let
     cp-n cp-n mul cp-a cp-n mul plus cp-b plus is-prime
     (cp-n 1 plus cp-loop) (cp-n) if
-  ) 'cp-loop def
+  ) 'cp-loop let
   0 cp-loop
-) 'count-primes def
+) 'count-primes let
 
 (
   'il-a let 'il-bestab let 'il-bestcnt let 'il-b let
@@ -38,7 +38,7 @@
     (il-b il-c il-a il-b mul il-a 1 plus inner-loop)
     (il-b il-bestcnt il-bestab il-a 1 plus inner-loop) if
   ) (il-bestcnt il-bestab) if
-) 'inner-loop def
+) 'inner-loop let
 
 (
   'ol-b let 'ol-bestab let 'ol-bestcnt let
@@ -48,6 +48,6 @@
     ) (ol-bestcnt ol-bestab) if
     ol-b 1 plus outer-loop
   ) (ol-bestab) if
-) 'outer-loop def
+) 'outer-loop let
 
 0 0 2 outer-loop print

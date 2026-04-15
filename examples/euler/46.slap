@@ -15,7 +15,7 @@
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 (
   'gc-n let
@@ -25,7 +25,7 @@
   (swap dup dup mul 2 mul gc-n swap sub is-prime (nip 1 swap) () if 1 plus swap)
   while
   nip
-) 'goldbach-check def
+) 'goldbach-check let
 
 -- stack: n
 9

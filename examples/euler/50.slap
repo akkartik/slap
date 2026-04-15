@@ -15,7 +15,7 @@
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 -- Generate primes up to 4600
 list
@@ -51,7 +51,7 @@ pflen 1 sub
     isi 1 plus
   ) while
   drop
-) 'inner-scan def
+) 'inner-scan let
 
 -- outer loop
 (
@@ -59,13 +59,13 @@ pflen 1 sub
   os-w inner-scan 'os-sv let
   os-sv 0 gt (os-w os-sv) (os-bl os-bv) if
   os-w 1 sub
-) 'outer-step def
+) 'outer-step let
 
 (
   'op-w let 'op-bv let 'op-bl let
   op-bl op-bv op-w
   op-w op-bl gt
-) 'outer-pred def
+) 'outer-pred let
 
 0 0 maxw
 (outer-pred)

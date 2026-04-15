@@ -64,7 +64,7 @@ rec
   st
   'xs (i xf set must) edit must 'ys (i yf set must) edit must
   'vxs (i vx3 set must) edit must 'vys (i vy3 set must) edit must
-) 'update-dot def
+) 'update-dot let
 
 (
   'frame let 'i let 'st let
@@ -72,7 +72,7 @@ rec
     st i frame update-dot
     i 1 plus frame tick-loop
   ) (st) if
-) 'tick-loop def
+) 'tick-loop let
 
 'tick (
   drop
@@ -85,7 +85,7 @@ rec
   'c let 'sz let 'cy let 'cx let
   sz 2 div 'r let
   cx r sub cy r sub r 2 mul 1 plus dup c fill-rect
-) 'draw-sq def
+) 'draw-sq let
 
 (
   'frame let 'st let 'i let
@@ -106,7 +106,7 @@ rec
     ) if) if
     i 1 plus st frame draw-dots
   ) () if
-) 'draw-dots def
+) 'draw-dots let
 
 (
   drop

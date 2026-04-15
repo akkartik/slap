@@ -10,7 +10,7 @@
 (
   'c let 'gy let 'gx let
   gx S mul gy S mul S S c fill-rect
-) 'draw-block def
+) 'draw-block let
 
 -- State indices packed into grid list:
 -- 0..N-1 = cells, N = ax, N+1 = ay, N+2 = dir, N+3 = steps
@@ -48,7 +48,7 @@ N 3 plus 'I-STEPS let
   I-AX nax set must I-AY nay set must I-DIR newdir set must
   dup I-STEPS get must 1 plus 'nsteps let
   I-STEPS nsteps set must
-) 'ant-step def
+) 'ant-step let
 
 -- Initial grid: all white (0)
 0 clear

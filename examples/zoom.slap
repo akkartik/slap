@@ -20,7 +20,7 @@
     'zy2 let 'zx2 let
     i 1 plus zx2 zy2 cx cy iterate
   ) (i) if
-) 'iterate def
+) 'iterate let
 
 (
   'cy2 let 'cy let 'xoff let 'xscl let 'py let 'px let
@@ -42,7 +42,7 @@
 
     px 1 plus py xscl xoff cy cy2 render-col
   ) () if
-) 'render-col def
+) 'render-col let
 
 (
   'yoff let 'yscl let 'xoff let 'xscl let 'py let
@@ -54,7 +54,7 @@
 
     py 1 plus xscl xoff yscl yoff render-row
   ) () if
-) 'render-row def
+) 'render-row let
 
 (
   'frame let

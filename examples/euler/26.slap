@@ -5,7 +5,7 @@
 (
   'sf-f let 'sf-d let
   sf-d sf-f mod 0 eq (sf-d sf-f div sf-f strip-factor) (sf-d) if
-) 'strip-factor def
+) 'strip-factor let
 
 (
   'cl-d let
@@ -14,10 +14,10 @@
     (
       'cl-k let 'cl-r let
       cl-r 1 neq (cl-r 10 mul cl-d2 mod cl-k 1 plus cl-loop) (cl-k) if
-    ) 'cl-loop def
+    ) 'cl-loop let
     10 cl-d2 mod 1 cl-loop
   ) if
-) 'cycle-len def
+) 'cycle-len let
 
 (
   'fb-d let 'fb-bestd let 'fb-best let
@@ -27,5 +27,5 @@
     (fb-c fb-d fb-d 1 plus find-best)
     (fb-best fb-bestd fb-d 1 plus find-best) if
   ) (fb-bestd) if
-) 'find-best def
+) 'find-best let
 0 0 2 find-best print

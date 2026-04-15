@@ -20,7 +20,7 @@
     ) while
     drop
   ) if
-) 'sum-divs def
+) 'sum-divs let
 
 -- Collect abundant numbers into a list
 list

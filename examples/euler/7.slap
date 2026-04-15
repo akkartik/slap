@@ -16,7 +16,7 @@
     while
     drop
   ) if
-) 'is-prime def
+) 'is-prime let
 
 -- stack: cnt candidate
 0 1

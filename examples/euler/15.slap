@@ -3,7 +3,7 @@
 -- C(40,20) using DP on a 21-element row
 
 -- upd-row: box j -> box (update row[j] = row[j] + row[j-1])
-('j let ('r let r j get must r j 1 sub get must plus 'v let r j v set must) mutate) 'upd-row def
+('j let ('r let r j get must r j 1 sub get must plus 'v let r j v set must) mutate) 'upd-row let
 
 -- stack: box i
 list 21 (0 push) repeat 0 1 set must box 1

@@ -24,14 +24,14 @@
     1 plus
   ) while
   drop
-) 'count-triples def
+) 'count-triples let
 
 (
   'stp let 'stbp let 'stbc let
   stp count-triples 'stcnt let
   stcnt stbc gt (stcnt stp) (stbc stbp) if
   stp 2 plus
-) 'step39 def
+) 'step39 let
 
 0 0 12
 (dup 1000 le)

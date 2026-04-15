@@ -16,18 +16,18 @@
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 (
   0 (swap 10 mul plus) fold
-) 'digits-to-num def
+) 'digits-to-num let
 
 -- list-swap: list i j -> list  (swap elements at must i and j)
 (
   'lsw-j let 'lsw-i let 'lsw-l let
   lsw-l lsw-i get must 'lsw-tmp let
   lsw-l lsw-i lsw-l lsw-j get must set must lsw-j lsw-tmp set must
-) 'list-swap def
+) 'list-swap let
 
 -- prev-perm-apply: perm i -> new-perm
 -- Given descent index i, compute previous permutation
@@ -40,12 +40,12 @@
   -- Swap i and j, then reverse suffix after i
   pa-perm pa-i pa-j list-swap 'pa-s let
   pa-s pa-i 1 plus take-n pa-s pa-i 1 plus drop-n reverse cat
-) 'prev-perm-apply def
+) 'prev-perm-apply let
 
 (
   'dc-perm let 'dc-i let
   dc-i 0 ge (dc-perm dc-i get must dc-perm dc-i 1 plus get must le) (0) if
-) 'descent-check def
+) 'descent-check let
 
 (
   'pp-perm let
@@ -57,7 +57,7 @@
   ) (
     pp-perm swap prev-perm-apply 1
   ) if
-) 'prev-perm def
+) 'prev-perm let
 
 -- stack: perm answer
 [7 6 5 4 3 2 1] 0

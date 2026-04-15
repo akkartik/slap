@@ -12,7 +12,7 @@
   'p5 dfs-n 1000 div 10 mod nth must plus
   'p5 dfs-n 10000 div 10 mod nth must plus
   'p5 dfs-n 100000 div 10 mod nth must plus
-) 'digit-fifth-sum def
+) 'digit-fifth-sum let
 
 -- stack: total n
 0 2

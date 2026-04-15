@@ -4,7 +4,7 @@
 
 (
   (dup len 1100 lt) (0 push) while
-) 'pad-1100 def
+) 'pad-1100 let
 
 -- add-digits: a-list a-len b-list b-len -> result-list result-len
 (
@@ -13,7 +13,7 @@
   (
     'adcl-j let 'adcl-carry let
     adcl-carry 0 gt (adcl-carry 10 mod push adcl-carry 10 div adcl-j 1 plus ad-carry-loop) (adcl-j) if
-  ) 'ad-carry-loop def
+  ) 'ad-carry-loop let
   (
     'ad-j let 'ad-carry let
     ad-j ad-n lt (
@@ -23,16 +23,16 @@
     ) (
       ad-carry ad-j ad-carry-loop
     ) if
-  ) 'ad-loop def
+  ) 'ad-loop let
   list 0 0 ad-loop
-) 'add-digits def
+) 'add-digits let
 
 -- fib-step: fa alen fb blen idx -> fa' alen' fb' blen' idx'
 (
   'fs-idx let 'fs-blen let 'fs-fb let 'fs-alen let 'fs-fa let
   fs-fa fs-alen fs-fb fs-blen add-digits 'fs-clen let pad-1100 'fs-fc let
   fs-fb fs-blen fs-fc fs-clen fs-idx 1 plus
-) 'fib-step def
+) 'fib-step let
 
 -- stack: fa alen fb blen idx
 [1] pad-1100 1 [1] pad-1100 1 2

@@ -22,9 +22,9 @@
   )
   while
   'result at must
-) 'mul-digits def
+) 'mul-digits let
 
-('nn let (nn mul-digits) mutate) 'mul-box def
+('nn let (nn mul-digits) mutate) 'mul-box let
 
 [1] box 2
 (dup 100 le)

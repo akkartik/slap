@@ -1,7 +1,7 @@
 -- chr.slap: 2-bit 8x8 tile codec (two 8-byte planes). 16 bytes <-> 64 pixels.
 
-(8 chunks 'rows let rows ((1 band) each bits-byte) each rows ((1 shr 1 band) each bits-byte) each cat) 'chr-encode def
-('data let data 8 take-n (byte-bits) each 'p0 let data 8 drop-n 8 take-n (byte-bits) each 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) each) each flatten) 'chr-decode def
+(8 chunks 'rows let rows ((1 band) each bits-byte) each rows ((1 shr 1 band) each bits-byte) each cat) 'chr-encode let
+('data let data 8 take-n (byte-bits) each 'p0 let data 8 drop-n 8 take-n (byte-bits) each 'p1 let 0 8 range ('r let 0 8 range ('c let p0 r get must c get must p1 r get must c get must 1 shl bor) each) each flatten) 'chr-decode let
 
 -- ===== tests =====
 [255 0 0 0 0 0 0 0  255 0 0 0 0 0 0 0] chr-decode

@@ -8,7 +8,7 @@
   over over plus 1000 swap sub
   dup sqr (swap sqr (swap sqr) dip plus) dip eq
   nip
-) 'pyth? def
+) 'pyth? let
 
 -- stack: a
 1

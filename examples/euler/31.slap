@@ -11,7 +11,7 @@ list 201 (0 push) repeat 0 1 set must box 'ways let
   'uw-j let 'uw-w let 'uw-coin let
   uw-w uw-j get must uw-w uw-j uw-coin sub get must plus 'uw-v let
   uw-w uw-j uw-v set must uw-j 1 plus
-) 'uw-step def
+) 'uw-step let
 
 -- update-ways: w coin -> w'
 (
@@ -22,7 +22,7 @@ list 201 (0 push) repeat 0 1 set must box 'ways let
   (swap uwc swap rot uw-step)
   while
   drop
-) 'update-ways def
+) 'update-ways let
 
 coins (
   'coin let

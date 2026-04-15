@@ -35,7 +35,7 @@
       ) if
     ) if
   ) if
-) 'word-len def
+) 'word-len let
 
 -- stack: total i
 0 1

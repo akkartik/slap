@@ -26,9 +26,9 @@ sv (
 
 svb (
   'data let
-  ('data swap nth must 1 eq) 'is-prime def
+  ('data swap nth must 1 eq) 'is-prime let
 
-  ('p let 1 p (10 mul) repeat) 'pow-10 def
+  ('p let 1 p (10 mul) repeat) 'pow-10 let
 
   -- family-count: n mult orig -> number of primes in family {base + d*mult}
   -- that have the same digit count as n (no leading zero).
@@ -45,7 +45,7 @@ svb (
       1 plus
     ) while
     drop
-  ) 'family-count def
+  ) 'family-count let
 
   -- compute-mult-loop: digits d i -> sum of 10^(L-1-i) for i where digits[i]=d
   (
@@ -58,12 +58,12 @@ svb (
         cml-digs cml-d cml-i 1 plus compute-mult-loop
       ) if
     ) if
-  ) 'compute-mult-loop def
+  ) 'compute-mult-loop let
 
   (
     'cm-d let 'cm-n let
     cm-n int-str (48 sub) each cm-d 0 compute-mult-loop
-  ) 'compute-mult def
+  ) 'compute-mult let
 
   (
     'td-d let 'td-p let
@@ -78,7 +78,7 @@ svb (
         td-p td-d 1 plus try-digit
       ) if
     ) if
-  ) 'try-digit def
+  ) 'try-digit let
 
   2 0
   (dup 0 eq)

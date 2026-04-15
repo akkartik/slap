@@ -45,7 +45,7 @@ rec
       j 1 plus i ysv xsv xi yi ax ay sep-loop
     ) if
   ) (ax ay) if
-) 'sep-loop def
+) 'sep-loop let
 
 -- Update one boid
 (
@@ -107,7 +107,7 @@ rec
   st2
   'xs (i xi2 set must) edit must 'ys (i yi2 set must) edit must
   'vxs (i vxi3 set must) edit must 'vys (i vyi3 set must) edit must
-) 'update-one-boid def
+) 'update-one-boid let
 
 (
   'frame let 'i let 'st let
@@ -115,7 +115,7 @@ rec
     st i frame update-one-boid
     i 1 plus frame update-boids-loop
   ) (st) if
-) 'update-boids-loop def
+) 'update-boids-loop let
 
 (
   'frame let 'st let
@@ -146,7 +146,7 @@ rec
       'ppx (drop spx) edit must 'ppy (drop spy) edit must
     ) (st) if
   ) if
-) 'update-predator def
+) 'update-predator let
 
 'tick (
   drop
@@ -166,12 +166,12 @@ rec
     ddy 0 neq (dx dd plus dy ddy sub dc pixel) () if
     dd 1 plus dr dx dy dc draw-diamond-cd
   ) () if
-) 'draw-diamond-cd def
+) 'draw-diamond-cd let
 
 (
   'dc let 'dr let 'dy let 'dx let
   dr neg dr dx dy dc draw-diamond-cd
-) 'draw-diamond def
+) 'draw-diamond let
 
 -- Draw trail layers
 (
@@ -180,7 +180,7 @@ rec
     st 'p3xs at must i get must st 'p3ys at must i get must 1 pixel
     i 1 plus st draw-trail3
   ) () if
-) 'draw-trail3 def
+) 'draw-trail3 let
 
 (
   'st let 'i let
@@ -190,7 +190,7 @@ rec
     szs i get must 2 gt (tx 1 plus ty 1 pixel) () if
     i 1 plus st draw-trail2
   ) () if
-) 'draw-trail2 def
+) 'draw-trail2 let
 
 (
   'st let 'i let
@@ -200,7 +200,7 @@ rec
     szs i get must 1 gt (tx 1 plus ty 2 pixel) () if
     i 1 plus st draw-trail1
   ) () if
-) 'draw-trail1 def
+) 'draw-trail1 let
 
 -- Draw boids
 (
@@ -209,7 +209,7 @@ rec
     bx sdx k mul sub by sdy k mul sub bc pixel
     k 1 plus sz bx by sdx sdy bc draw-boid-body
   ) () if
-) 'draw-boid-body def
+) 'draw-boid-body let
 
 (
   'st let 'i let
@@ -234,7 +234,7 @@ rec
 
     i 1 plus st draw-boids
   ) () if
-) 'draw-boids def
+) 'draw-boids let
 
 (
   drop
@@ -266,7 +266,7 @@ rec
         ppx 1 plus ppy pd plus pc pixel
         pd 1 plus draw-cross
       ) () if
-    ) 'draw-cross def
+    ) 'draw-cross let
     -3 draw-cross
     -- Pulsing danger ring
     frame 4 div 10 mod 6 plus 'dring let

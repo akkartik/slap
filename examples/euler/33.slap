@@ -2,7 +2,7 @@
 -- Product of four non-trivial digit-cancelling fractions, find denominator
 -- Answer: 100
 
-(dup 0 eq (drop) (swap over mod gcd) if) 'gcd def
+(dup 0 eq (drop) (swap over mod gcd) if) 'gcd let
 
 -- inner-loop: np dp a b -> np' dp'
 (
@@ -16,7 +16,7 @@
       ) (il-np il-dp il-a il-b 1 plus inner-loop) if
     ) (il-np il-dp il-a il-b 1 plus inner-loop) if
   ) (il-np il-dp) if
-) 'inner-loop def
+) 'inner-loop let
 
 -- outer-loop: np dp a -> np' dp'
 (
@@ -25,7 +25,7 @@
     ol-np ol-dp ol-a ol-a 1 plus inner-loop
     ol-a 1 plus outer-loop
   ) (ol-np ol-dp) if
-) 'outer-loop def
+) 'outer-loop let
 
 1 1 10 outer-loop
 'final-dp let 'final-np let

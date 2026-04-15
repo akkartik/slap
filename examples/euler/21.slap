@@ -14,10 +14,10 @@
         ) (sd-total) if
         sd-i 1 plus sd-loop
       ) (sd-total) if
-    ) 'sd-loop def
+    ) 'sd-loop let
     1 2 sd-loop
   ) if
-) 'sum-divs def
+) 'sum-divs let
 
 (
   'ca-n let
@@ -25,7 +25,7 @@
   ca-m ca-n neq ca-m 0 gt and (
     ca-m sum-divs ca-n eq (ca-n) (0) if
   ) (0) if
-) 'check-amicable def
+) 'check-amicable let
 
 -- stack: ans n
 0 2

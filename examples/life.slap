@@ -16,7 +16,7 @@ N 2 plus 'I-MY let
   H plus H mod W mul
   swap W plus W mod
   plus nth must
-) 'cell def
+) 'cell let
 
 -- Count live neighbors of (x, y); gs is a symbol for nth must
 (
@@ -29,7 +29,7 @@ N 2 plus 'I-MY let
   gs cx 1 sub cy 1 plus cell plus
   gs cx       cy 1 plus cell plus
   gs cx 1 plus cy 1 plus cell plus
-) 'neighbors def
+) 'neighbors let
 
 -- Compute next generation
 (
@@ -52,14 +52,14 @@ N 2 plus 'I-MY let
   while
   drop
   dv push mxv push myv push
-) 'step def
+) 'step let
 
 -- Draw SxS block for one alive cell
 (
   S mul 'py let
   S mul 'px let
   px py S S 3 fill-rect
-) 'draw-cell def
+) 'draw-cell let
 
 -- Draw SxS block in a given color
 (
@@ -67,7 +67,7 @@ N 2 plus 'I-MY let
   S mul 'py let
   S mul 'px let
   px py S S cc fill-rect
-) 'draw-cell-color def
+) 'draw-cell-color let
 
 -- Random initial grid + state slots
 list N (2 random push) repeat

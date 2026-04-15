@@ -15,7 +15,7 @@
       ) if
     ) if
   ) if
-) 'is-prime def
+) 'is-prime let
 
 -- For each level, take total on stack, return updated total
 -- d2 loop: total u8 u9 ua d7 d6 d5 d4 d3 -> total
@@ -38,7 +38,7 @@
     td-d2 1 plus
   ) while
   drop
-) 'try-d2 def
+) 'try-d2 let
 
 -- d3 loop
 (
@@ -55,7 +55,7 @@
     td3-d3 1 plus
   ) while
   drop
-) 'try-d3 def
+) 'try-d3 let
 
 -- d4 loop
 (
@@ -72,7 +72,7 @@
     td4-d4 1 plus
   ) while
   drop
-) 'try-d4 def
+) 'try-d4 let
 
 -- d5 loop
 (
@@ -89,7 +89,7 @@
     td5-d5 1 plus
   ) while
   drop
-) 'try-d5 def
+) 'try-d5 let
 
 -- d6 loop
 (
@@ -106,7 +106,7 @@
     td6-d6 1 plus
   ) while
   drop
-) 'try-d6 def
+) 'try-d6 let
 
 -- d7 loop
 (
@@ -123,7 +123,7 @@
     td7-d7 1 plus
   ) while
   drop
-) 'try-d7 def
+) 'try-d7 let
 
 -- mi loop: stack total mi -> total
 -- Each iteration: compute u8 u9 ua from mi*17, then try-d7

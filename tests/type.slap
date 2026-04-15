@@ -9,7 +9,7 @@
 'double [int lent in  int move out] effect
 
 -- The body must be provided before the type annotation
-(2 mul) [int lent in  int move out] effect 'double def
+(2 mul) [int lent in  int move out] effect 'double let
 
 -- ===== Basic arithmetic types =====
 2 3 plus drop
@@ -68,12 +68,12 @@ true assert
 -- ===== User-defined typed functions =====
 
 -- Define a typed increment function
-(1 plus) [int lent in  int move out] effect 'my-inc def
+(1 plus) [int lent in  int move out] effect 'my-inc let
 
 5 my-inc 6 eq assert
 
 -- Define typed double (polymorphic over num)
-(2 mul) ['a num lent in  'a num move out] effect 'my-double def
+(2 mul) ['a num lent in  'a num move out] effect 'my-double let
 
 3 my-double 6 eq assert
 
@@ -84,7 +84,7 @@ true assert
 'eq ['a lent in  'a lent in  int move out] effect
 
 -- ===== End-to-end: typed program =====
-(1 plus) [int lent in  int move out] effect 'bump def
+(1 plus) [int lent in  int move out] effect 'bump let
 
 0 bump bump bump 3 eq assert
 
@@ -123,11 +123,11 @@ true assert
 [3 1 2] sort drop
 
 -- protocol constraint in user-defined function
-(len) ['a seq lent in  int move out] effect 'list-len def
+(len) ['a seq lent in  int move out] effect 'list-len let
 [1 2 3] list-len 3 eq assert
 
 -- ord constraint in user-defined function
-(sort) ['a ord seq own in  'a ord seq move out] effect 'my-sort def
+(sort) ['a ord seq own in  'a ord seq move out] effect 'my-sort let
 [3 1 2] my-sort [1 2 3] eq assert
 
 "Type check tests passed!" print

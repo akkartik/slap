@@ -7,9 +7,9 @@
   (
     'fac-j let 'fac-acc let
     fac-j fac-n le (fac-acc fac-j mul fac-j 1 plus fac-loop) (fac-acc) if
-  ) 'fac-loop def
+  ) 'fac-loop let
   1 1 fac-loop
-) 'factorial def
+) 'factorial let
 
 (
   'ps-pos let 'ps-digits let 'ps-rem let 'ps-result let
@@ -25,6 +25,6 @@
   ) (
     ps-result 10 mul ps-digits 0 get must plus
   ) if
-) 'perm-step def
+) 'perm-step let
 
 0 [0 1 2 3 4 5 6 7 8 9] 999999 swap 9 perm-step print

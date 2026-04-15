@@ -76,11 +76,11 @@
 
 -- EXPECT: function body consumes
 -- TYPE ERROR: body consumes wrong number of inputs
-(drop drop) [int lent in  int move out] effect 'bad def
+(drop drop) [int lent in  int move out] effect 'bad let
 
 -- EXPECT: function body produces
 -- TYPE ERROR: body produces wrong number of outputs
-(dup) [int lent in  int move out] effect 'bad2 def
+(dup) [int lent in  int move out] effect 'bad2 let
 
 -- EXPECT: type error
 -- TYPE ERROR: plus on int result (eq returns int, plus expects num)
@@ -104,58 +104,58 @@
 
 -- EXPECT: function body consumes
 -- TYPE ERROR: body declares 2 inputs but only consumes 1
-(drop) [int lent in  int lent in  int move out] effect 'foo def
+(drop) [int lent in  int lent in  int move out] effect 'foo let
 
 -- EXPECT: already defined
 -- TYPE ERROR: duplicate def
-(1) 'aaa def
-(2) 'aaa def
+(1) 'aaa let
+(2) 'aaa let
 
 -- EXPECT: already defined
 -- TYPE ERROR: def shadows outer def
-1 'bbb def
-(2 'bbb def) 'ccc def
+1 'bbb let
+(2 'bbb let) 'ccc let
 
--- EXPECT: shadows existing definition
--- TYPE ERROR: let shadows def
-(1) 'ddd def
+-- EXPECT: already defined
+-- TYPE ERROR: let shadows prior tuple let
+(1) 'ddd let
 1 'ddd let
 
--- EXPECT: already bound
+-- EXPECT: already defined
 -- TYPE ERROR: let shadows let
 1 'eee let
 2 'eee let
 
--- EXPECT: shadows existing definition
--- TYPE ERROR: let inside closure shadows outer def (issue #7)
-(1) 'fff def
-(2 'fff let fff) 'ggg def
+-- EXPECT: already defined
+-- TYPE ERROR: let inside closure shadows outer tuple let
+(1) 'fff let
+(2 'fff let fff) 'ggg let
 
--- EXPECT: already bound
+-- EXPECT: already defined
 -- TYPE ERROR: let inside closure shadows outer let
 3 'hhh let
-(4 'hhh let hhh) 'iii def
+(4 'hhh let hhh) 'iii let
 
--- EXPECT: shadows existing definition
--- TYPE ERROR: let shadows def in wide-effect closure (>8 args)
-(1) 'jjj def
-('a1 let 'a2 let 'a3 let 'a4 let 'a5 let 'a6 let 'a7 let 'a8 let 'a9 let 'jjj let jjj) 'kkk def
+-- EXPECT: already defined
+-- TYPE ERROR: let shadows tuple let in wide-effect closure (>8 args)
+(1) 'jjj let
+('a1 let 'a2 let 'a3 let 'a4 let 'a5 let 'a6 let 'a7 let 'a8 let 'a9 let 'jjj let jjj) 'kkk let
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on list inside non-simple tuple (soundness: nested structure)
-(1 [2 3] plus) 'bad3 def
+(1 [2 3] plus) 'bad3 let
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on tuple inside non-simple tuple
-(1 (2 3) plus) 'bad4 def
+(1 (2 3) plus) 'bad4 let
 
 -- EXPECT: expected int
 -- TYPE ERROR: and on float inside non-simple tuple with nested list
-(1.0 [1 2] drop and) 'bad5 def
+(1.0 [1 2] drop and) 'bad5 let
 
 -- EXPECT: expected num
 -- TYPE ERROR: plus on list inside recursive non-simple tuple
-(dup 0 eq (drop 1) (1 sub [2 3] plus) if) 'bad6 def
+(dup 0 eq (drop 1) (1 sub [2 3] plus) if) 'bad6 let
 
 -- EXPECT: type error
 -- TYPE ERROR: read expects list, not int
@@ -292,7 +292,7 @@ dict (drop) each free
 
 -- EXPECT: never referenced
 -- TYPE ERROR: linear value let-bound inside quotation, never used → captured and leaked
-(42 box 'b let) 'leak def leak
+(42 box 'b let) 'leak let leak
 
 -- EXPECT: aliases the box
 -- TYPE ERROR: let-bind compound inside lend body (aliases box backing)
@@ -324,15 +324,15 @@ dict (drop) each free
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: linear-capturing closure returned from def, applied twice
-(42 box 'b let (b free)) 'make-freer def
+(42 box 'b let (b free)) 'make-freer let
 make-freer 'f let
 f apply
 f apply
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: linear-capturing closure via def chain, applied twice
-(42 box 'b let (b free)) 'inner-maker def
-(inner-maker) 'outer-maker def
+(42 box 'b let (b free)) 'inner-maker let
+(inner-maker) 'outer-maker let
 outer-maker 'f let
 f apply
 f apply
@@ -345,11 +345,11 @@ f apply
 
 -- EXPECT: clause body may not produce a linear value
 -- TYPE ERROR: case clause producing a linear closure
-(1 0 {(1 eq) (42 box 'b let (b free))} case) 'bad-case def
+(1 0 {(1 eq) (42 box 'b let (b free))} case) 'bad-case let
 
 -- EXPECT: already been consumed
 -- TYPE ERROR: if-branch returning linear closure, applied twice
-(1 (42 box 'b let (b free)) (99 box 'c let (c free)) if) 'maker def
+(1 (42 box 'b let (b free)) (99 box 'c let (c free)) if) 'maker let
 maker 'f let
 f apply
 f apply
@@ -384,7 +384,7 @@ rec 42 box 'b into drop
 
 -- EXPECT: branches produce different types
 -- TYPE ERROR: if inside a recursive body with type-mismatched branches
-'bad (dup 0 eq ("hi") (99) if) def
+'bad (dup 0 eq ("hi") (99) if) let
 5 bad drop
 
 -- EXPECT: inconsistent stack effects
@@ -393,4 +393,4 @@ rec 42 box 'b into drop
 
 -- EXPECT: unknown type
 -- TYPE ERROR: A6 — either schema with typo'd variant type
-'badsig [list own in  {'ok 'typoedtype 'no ()} either move out] effect (pop) def
+'badsig [list own in  {'ok 'typoedtype 'no ()} either move out] effect (pop) let

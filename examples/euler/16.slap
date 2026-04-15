@@ -22,7 +22,7 @@
   )
   while
   'result at must
-) 'double-digits def
+) 'double-digits let
 
 [1] box
 1000 ((double-digits) mutate) repeat

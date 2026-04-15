@@ -24,7 +24,7 @@ sv (
 
 svb (
   'data let
-  ('data swap nth must 1 eq) 'prime? def
+  ('data swap nth must 1 eq) 'prime? let
 
   (
     'ltn let
@@ -39,14 +39,14 @@ svb (
       10 div
     ) while
     drop
-  ) 'left-trunc def
+  ) 'left-trunc let
 
   (
     1 swap
     (dup 9 gt (over) dip and)
     (10 div dup prime? not ((drop 0) dip) () if) while
     drop
-  ) 'right-trunc def
+  ) 'right-trunc let
 
   0 0 11
   (over 11 lt)

@@ -9,7 +9,7 @@
       y 4 mod 0 eq
     ) if
   ) if
-) 'is-leap def
+) 'is-leap let
 
 [31 28 31 30 31 30 31 31 30 31 30 31] 'mdays let
 
@@ -17,7 +17,7 @@
   'mo let 'yr let
   mdays mo get must
   mo 1 eq yr is-leap and (1 plus) () if
-) 'days-in-month def
+) 'days-in-month let
 
 (
   dup 'y at must 1901 ge over 'dow at must 0 eq and ('cnt (inc) edit must) () if
@@ -26,7 +26,7 @@
     ('y (inc) edit must 'm (drop 0) edit must)
     ('m (inc) edit must)
   if
-) 'step-month def
+) 'step-month let
 
 rec 0 'cnt into 1 'dow into 1900 'y into 0 'm into
 1212 (step-month) repeat

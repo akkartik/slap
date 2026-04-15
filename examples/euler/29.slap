@@ -13,7 +13,7 @@
   (
     'cg-b let 'cg-e let
     cg-b 100 le (cg-e cg-b mul push cg-e cg-b 1 plus cg-inner) () if
-  ) 'cg-inner def
+  ) 'cg-inner let
   -- outer: iterate over exps
   (
     'cg-ei let
@@ -21,10 +21,10 @@
       cg-exps cg-ei get must 2 cg-inner
       cg-ei 1 plus cg-outer
     ) () if
-  ) 'cg-outer def
+  ) 'cg-outer let
   list 0 cg-outer
   sort dedup len
-) 'count-group def
+) 'count-group let
 
 -- Group 2: bases 2,4,8,16,32,64 (exponents 1,2,3,4,5,6)
 -- Group 3: bases 3,9,27,81 (exponents 1,2,3,4)

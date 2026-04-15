@@ -9,7 +9,7 @@
   ipn-si ipn-si mul itof ipn-s ipn-s mul sub fabs 0.5 lt (
     ipn-si 1 plus 6 mod 0 eq
   ) (0) if
-) 'is-pentagonal def
+) 'is-pentagonal let
 
 -- inner-search: k -> 0 or diff (the pentagonal difference found)
 (
@@ -28,7 +28,7 @@
     1 plus
   ) while
   drop
-) 'inner-search def
+) 'inner-search let
 
 -- stack: k
 2

@@ -14,7 +14,7 @@
   if)
   while
   nip
-) 'collatz-len def
+) 'collatz-len let
 
 -- stack: best-len best-start i
 0 1 500001

@@ -12,7 +12,7 @@
   b   4 band 0 neq (px 5 plus py dc pixel) () if
   b   2 band 0 neq (px 6 plus py dc pixel) () if
   b   1 band 0 neq (px 7 plus py dc pixel) () if
-) 'draw-byte def
+) 'draw-byte let
 
 -- Draw one character from raw font bytes
 (
@@ -34,7 +34,7 @@
     1 plus
   ) while
   drop
-) 'draw-char def
+) 'draw-char let
 
 -- Draw a string, no wrapping
 (
@@ -53,7 +53,7 @@
     1 plus
   ) while
   drop drop
-) 'draw-text def
+) 'draw-text let
 
 -- Draw text with wrapping; returns cur-x cur-y on stack
 (
@@ -78,10 +78,10 @@
     1 plus
   ) while
   drop
-) 'draw-text-wrap def
+) 'draw-text-wrap let
 
 -- N from filename last char
-(last 49 sub 1 plus) 'font-n def
+(last 49 sub 1 plus) 'font-n let
 
 -- Font catalog
 [

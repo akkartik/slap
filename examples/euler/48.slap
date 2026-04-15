@@ -11,7 +11,7 @@
   mms-a 2 mul mms-m mod
   mms-b 2 mod 1 eq (mms-r mms-a plus mms-m mod) (mms-r) if
   mms-b 2 div
-) 'mm-step def
+) 'mm-step let
 
 -- mod-mul: a b m -> (a*b) mod m
 (
@@ -22,7 +22,7 @@
   (mm-step)
   while
   drop nip nip
-) 'mod-mul def
+) 'mod-mul let
 
 -- mp-step: m b r e -> m b' r' e'
 (
@@ -31,7 +31,7 @@
   mps-b dup mps-m mod-mul
   mps-e 2 mod 1 eq (mps-r mps-b mps-m mod-mul) (mps-r) if
   mps-e 2 div
-) 'mp-step def
+) 'mp-step let
 
 -- mod-pow: b e m -> (b^e) mod m
 (
@@ -42,7 +42,7 @@
   (mp-step)
   while
   drop nip nip
-) 'mod-pow def
+) 'mod-pow let
 
 0 1
 (dup 1000 le)

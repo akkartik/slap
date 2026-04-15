@@ -134,12 +134,25 @@ Parsed in `parse_type_annotation`. Stored in `TypeSlot.either_syms/either_types/
 
 List ops: `push`, `pop`, `set`, `len`, `cat`. `compose` is a separate tuple-concat primitive for function composition.
 
-### def vs let
+### let
 
-Both take value-then-name: `val 'name def` / `val 'name let`.
+`val 'name let` — binds `val` to `name`. On lookup, if the value is a tuple, it auto-executes; otherwise it pushes.
 
-- `def` — auto-executes tuples on lookup. For function definitions.
-- `let` — pushes the bound value on lookup. For binding stack arguments in function bodies.
+To bind a literal tuple (preserving it as data rather than auto-executing on lookup), wrap it in an extra pair of parens:
+
+- `42 'foo let` → `foo` pushes `42`
+- `(1 2 3) 'foo let` → `foo plus plus` → `6` (tuple auto-execs)
+- `((1 2 3)) 'foo let` → `foo` pushes `(1 2 3)` (outer execs, pushes inner)
+- `(1 plus) 'inc let` → `2 inc` → `3`
+
+### quote
+
+`'name quote` pushes the raw value of `name`'s binding without auto-executing. Useful when threading a closure-arg through recursion: the bound closure would auto-exec on bare lookup, but `'name quote` preserves the value for passing into the next call.
+
+Example:
+```
+('pred let ... 'pred quote recurse) 'recurse let
+```
 
 ### SDL graphics (optional)
 

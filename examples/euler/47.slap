@@ -6,7 +6,7 @@
 (
   'do-p let
   (dup do-p mod 0 eq) (do-p div) while
-) 'divide-out def
+) 'divide-out let
 
 -- check-factor: n count p -> n count p divisible?
 -- Check if n is divisible by p (need to reach n which is 3rd element)
@@ -17,13 +17,13 @@
   ) (
     chk-n chk-c chk-p
   ) if
-) 'check-factor def
+) 'check-factor let
 
 (
   'cfp-p let 'cfp-c let 'cfp-n let
   cfp-n cfp-c cfp-p
   cfp-p cfp-p mul cfp-n le
-) 'cf-pred def
+) 'cf-pred let
 
 (
   'cf-n let
@@ -33,7 +33,7 @@
   (check-factor 1 plus)
   while
   drop swap 1 gt (1 plus) () if
-) 'count-factors def
+) 'count-factors let
 
 -- stack: n run
 2 0

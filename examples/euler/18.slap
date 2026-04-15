@@ -23,7 +23,7 @@ box
 (
   'ci let 'ri let 'li let
   ('t let t li get must t ri get must max t ci get must plus 'v let t ci v set must) mutate
-) 'upd-tri def
+) 'upd-tri let
 
 -- DP: bottom-up. stack: box r
 13

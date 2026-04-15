@@ -7,7 +7,7 @@
   list swap
   (dup 0 gt) (dup 10 mod (swap) dip push swap 10 div) while
   drop sort
-) 'digit-sig def
+) 'digit-sig let
 
 -- check-permuted: x -> bool (do x..6x have same digit signature?)
 (
@@ -18,7 +18,7 @@
   cp-x 4 mul digit-sig cp-sig eq and
   cp-x 5 mul digit-sig cp-sig eq and
   cp-x 6 mul digit-sig cp-sig eq and
-) 'check-permuted def
+) 'check-permuted let
 
 1
 (dup check-permuted not)

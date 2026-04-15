@@ -13,12 +13,12 @@
     dup 10 mul over sub
     cd-find-band
   ) (cdb-pos cdb-digits cdb-start) if
-) 'cd-find-band def
+) 'cd-find-band let
 
 (
   'cdd-k let 'cdd-n let
   cdd-k 0 gt (cdd-n 10 div cdd-k 1 sub cd-divn) (cdd-n 10 mod) if
-) 'cd-divn def
+) 'cd-divn let
 
 (
   'cd-pos let
@@ -27,6 +27,6 @@
   cd-pos2 1 sub cd-digits div cd-start plus 'cd-n let
   cd-digits cd-pos2 1 sub cd-digits mod sub 1 sub 'cd-off let
   cd-n cd-off cd-divn
-) 'champer-digit def
+) 'champer-digit let
 
 [1 10 100 1000 10000 100000 1000000] 1 (champer-digit mul) fold print
