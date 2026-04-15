@@ -1452,6 +1452,27 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                     int d = 1, bs = be;
                     for (int bi = be-1; bi >= start; bi--) { if (toks[bi].tag == TOK_RBRACKET) d++; else if (toks[bi].tag == TOK_LBRACKET && --d == 0) { bs = bi; break; } }
                     TypeSig sig = parse_type_annotation(toks, bs+1, be);
+                    /* validate either-schema variant types: anything longer than two
+                       characters must resolve as a type keyword or be referenced as a
+                       type-variable elsewhere in the signature. Catches typos like
+                       `{'ok 'ist 'no ()}` while still permitting single-letter 'a/'b/'k/'v
+                       conventions used by the builtin polymorphic sigs. */
+                    for (int si = 0; si < sig.slot_count; si++) {
+                        TypeSlot *sl = &sig.slots[si];
+                        for (int e = 0; e < sl->either_count; e++) {
+                            uint32_t tv = sl->either_tvars[e];
+                            if (!tv || sl->either_types[e] != TC_NONE) continue;
+                            const char *nm = sym_name(tv); int nl = (int)strlen(nm);
+                            if (nl <= 2) continue;
+                            int seen = 0;
+                            for (int sj = 0; sj < sig.slot_count && !seen; sj++) {
+                                if (sig.slots[sj].type_var == tv) seen = 1;
+                                for (int e2 = 0; e2 < sig.slots[sj].either_count && !seen; e2++)
+                                    if (sj != si || e2 != e) if (sig.slots[sj].either_tvars[e2] == tv) seen = 1;
+                            }
+                            if (!seen) tc_error(tc, toks[bs].line, 0, "unknown type '%s' in 'either' schema — expected a type keyword (int, list, …) or a type variable ('a, 'b) referenced elsewhere in the signature", nm);
+                        }
+                    }
                     if (tc->sp >= 1 && tc->data[tc->sp-1].type == TC_TUPLE) {
                         /* New-order: `(body) [sig] effect 'name def` — register sig against upcoming sym. */
                         if (i+2 < total_count && toks[i+1].tag == TOK_SYM
@@ -1501,6 +1522,31 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 tc_check_word(tc, sym, t->line);
                 if (pt != TC_NONE && tc->sp > 0 && tc->data[tc->sp-1].type == TC_NONE) tc->data[tc->sp-1].type = pt;
             } else if (sym == S_CASE) {
+                /* Predicate-mode lint: when the scrutinee isn't tagged, clause bodies
+                   run with the scrutinee on top of stack. An empty body `()` preserves
+                   the scrutinee as output; a body like `(42)` replaces it. Mixing the
+                   two produces branches with different output types and breaks the
+                   HO_BRANCHES_AGREE check (because the outer `{...}` effect hides
+                   per-clause shape). Require all bodies to be consistently empty or
+                   consistently non-empty. */
+                if (tc->sp >= 3 && tc->data[tc->sp-3].type != TC_TAGGED) {
+                    int brace = tc_find_brace_before(toks, i);
+                    if (brace >= 0) {
+                        int cl = find_matching(toks, brace+1, total_count, TOK_LBRACE, TOK_RBRACE);
+                        int pair = 0, empty_body = 0, nonempty_body = 0;
+                        for (int j = brace + 1; j < cl; ) {
+                            if (toks[j].tag == TOK_LPAREN) {
+                                int close = find_matching(toks, j+1, total_count, TOK_LPAREN, TOK_RPAREN);
+                                if (pair % 2 == 1) { /* body slot */
+                                    if (close == j + 1) empty_body = 1; else nonempty_body = 1;
+                                }
+                                j = close + 1; pair++;
+                            } else j++;
+                        }
+                        if (empty_body && nonempty_body)
+                            tc_error(tc, t->line, 0, "'case' clause bodies have inconsistent stack effects: empty body `()` preserves scrutinee as output while non-empty bodies replace it. Make all bodies empty, or rewrite empty bodies to return the scrutinee explicitly (e.g., `(dup)` or a typed identity).");
+                    }
+                }
                 /* Exhaustiveness: when scrutinee has a declared union, require every variant to appear as a clause. */
                 if (tc->sp >= 3 && tc->data[tc->sp-3].type == TC_TAGGED && tc->data[tc->sp-3].tvar_id > 0) {
                     int uid = tc->tvars[tvar_find(tc, tc->data[tc->sp-3].tvar_id)].union_id;

@@ -412,3 +412,11 @@ rec 42 box 'b into drop
 -- TYPE ERROR: if inside a recursive body with type-mismatched branches
 'bad (dup 0 eq ("hi") (99) if) def
 5 bad drop
+
+-- EXPECT: inconsistent stack effects
+-- TYPE ERROR: A5 — case predicate-mode with mixed empty/non-empty bodies
+"y" -99 {("x" eq) (42) ("y" eq) ()} case 1 plus print
+
+-- EXPECT: unknown type
+-- TYPE ERROR: A6 — either schema with typo'd variant type
+'badsig [list own in  {'ok 'typoedtype 'no ()} either move out] effect (pop) def
