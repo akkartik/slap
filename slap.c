@@ -406,7 +406,7 @@ typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, T
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
-#define HO_OP_COUNT 16
+#define HO_OP_COUNT 15
 static HOEffect ho_ops[HO_OP_COUNT] = {
     {"apply",0,1,0,TC_NONE,HO_APPLY_EFFECT},{"dip",0,2,1,TC_NONE,HO_APPLY_EFFECT|HO_SAVES_UNDER},
     {"if",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
@@ -415,7 +415,6 @@ static HOEffect ho_ops[HO_OP_COUNT] = {
     {"lend",0,2,2,TC_BOX,HO_BOX_BORROW},{"mutate",0,2,1,TC_BOX,HO_BOX_MUTATE},
     {"case",0,3,1,TC_NONE,HO_BRANCHES_AGREE},
     {"find",0,3,1,TC_NONE,0},
-    {"scan",0,3,1,TC_LIST,0},
     {"on",0,1,0,TC_NONE,0},{"show",0,1,0,TC_NONE,0},
     {"edit",0,3,1,TC_TAGGED,HO_BODY_1TO1},
 };
@@ -1397,10 +1396,18 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                         if (!otv[j]) { otv[j] = tvar_fresh(tc); if (tc->data[idx].type != TC_NONE) tc->tvars[otv[j]].bound = tc->data[idx].type; } }
                     sc = tc->tvar_count - scheme_base;
                     if (ao == 1 && tc->data[tc->sp-1].type == TC_TUPLE && tc->data[tc->sp-1].effect_idx >= 0) out_eff = tc->data[tc->sp-1].effect_idx;
-                    /* Partial C1 unification: prefer real-checker's observed top
-                       for eff_out. Fixes cases where the static pre-scan's `tt`
-                       tracker goes stale after consume ops like `drop` (see G2
-                       round 1 band-aid). */
+                    /* C1: use real-checker's observation for eff_out, and detect
+                       underflow-caused input consumption that pre-scan missed.
+                       Only trust real count when underflow OCCURRED — in the
+                       no-underflow case we can't distinguish "body consumed
+                       few phantoms" from "body consumed all + emitted
+                       similar count", so fall back to pre-scan. */
+                    /* C1 partial: use real-checker's observed top for eff_out.
+                       Full underflow tracking attempted but sp_low proves
+                       unreliable across the HO/binding dispatch paths — a
+                       body with pre-scan eff_c=1 can see sp_low drop for
+                       reasons unrelated to the body's actual inputs. Keep
+                       the partial fix. */
                     if (ao > 0 && tc->data[tc->sp-1].type != TC_NONE) eff_out = tc->data[tc->sp-1].type;
                 }
                 int body_captured = tc->saw_linear_capture;
@@ -2102,14 +2109,6 @@ static inline void prim_indexof_impl(Frame *e, int tagged) {
 }
 static void prim_index_of(Frame *e) { prim_indexof_impl(e,1); }
 static void prim_indexof_must(Frame *e) { prim_indexof_impl(e,0); }
-static void prim_scan(Frame *env) {
-    POP_BODY(fn,"scan"); POP_VAL(init); POP_LIST_BUF(list,"scan");
-    int offs[LOCAL_MAX],szs[LOCAL_MAX]; compute_offsets(list_buf,list_s,list_len,offs,szs);
-    Value acc[LOCAL_MAX]; int as=init_s; VCPY(acc,init_buf,init_s);
-    int rb=sp;
-    for(int i=0;i<list_len;i++){SPUSH(acc,as);PUSH_ELEM(i);eval_body(fn_buf,fn_s,env);as=val_slots(stack[sp-1]);VCPY(acc,&stack[sp-as],as);}
-    spush(val_compound(VAL_LIST,list_len,sp-rb+1));
-}
 static inline void prim_at_impl(Frame *env, int tagged) {
     (void)env; uint32_t key=pop_sym();
     if(sp<=0) die("at: stack underflow"); Value next=stack[sp-1];
@@ -2553,7 +2552,7 @@ static const char *BUILTIN_TYPES =
     "'random [int lent in  int" MO "'halt [] effect\n'box ['a own in  'a box" MO "'free ['a box own in] effect\n"
     "'at [rec own in  sym lent in  {'ok 'a 'no ()} either move out] effect\n'into [rec own in  own in  sym lent in  rec" MO "'clone ['a box own in  'a box move out  'a box" MO
     "'clear [int lent in] effect\n'pixel [int lent in  int lent in  int lent in] effect\n'fill-rect [int lent in  int lent in  int lent in  int lent in  int lent in] effect\n"
-    "'rotate" LNE "'windows" LNE "'zip ['a list own in  'a list own in  list" MO "'group" LDE "'reshape" LDE "'transpose [list own in  list" MO
+    "'rotate" LNE "'windows" LNE "'zip ['a list own in  'a list own in  list" MO
     "'read [list own in  {'ok list 'no list} either move out] effect\n'write [list own in  int list own in  {'ok int 'no list} either move out] effect\n'ls [list own in  {'ok list 'no list} either move out] effect\n"
     "'utf8-encode [int list own in  {'ok list 'no int} either move out] effect\n'utf8-decode [int list own in  {'ok list 'no int} either move out] effect\n'str-find [int list own in  int list own in  {'ok int 'no ()} either move out] effect\n"
     "'str-split [int list own in  int list own in  list" MO "'parse-http [int list own in  {'ok rec 'no list} either move out] effect\n'args [list" MO "'isheadless [int" MO "'cwd [list" MO
@@ -2595,8 +2594,6 @@ static const char *PRELUDE =
     "(over over lt (nip) (drop) if) ['a ord lent in  'a ord lent in  'a ord move out] effect 'max let\n"
     "(over over lt (drop) (nip) if) ['a ord lent in  'a ord lent in  'a ord move out] effect 'min let\n"
     "(dup 0 lt (neg) (dup drop) if) 'abs let\n"
-    "(over (apply) dip) 'keep let\n"
-    "((keep) dip apply) 'bi let\n"
     "('f let (dup 0 gt) (1 sub (f) dip) while drop) 'repeat let\n"
     "(swap 'data let (data swap get must) each) 'select let\n"
     "(swap dup 0 get must swap 1 drop-n swap rot fold) 'reduce let\n"
@@ -2641,10 +2638,7 @@ static const char *PRELUDE =
     "('n let dup len 'ln let ln 0 eq not (n ln wrap 'nn let nn 0 eq not (dup ln nn sub take-n swap ln nn sub drop-n swap cat) () if) () if) 'rotate let\n"
     "('b let 'a let a len b len min 'n let 0 n range (dup a swap get must swap b swap get must couple) each) 'zip let\n"
     "('n let 'l let l len 'll let n 0 le ll n lt or (list) (0 ll n sub 1 plus range ('i let l i drop-n n take-n) each) if) 'windows let\n"
-    "('dims let 'data let dims 0 get must 'rows let dims 1 get must 'cols let 0 rows range ('r let 0 cols range ('c let data r cols mul c plus get must) each) each) 'reshape let\n"
-    "('m let m 0 get must len 'cols let m len 'rows let 0 cols range ('c let 0 rows range ('r let m r get must c get must) each) each) 'transpose let\n"
     "('mask let 0 mask len range (mask swap get must 0 neq) where select) 'keep-mask let\n"
-    "('idx let 'data let 0 idx (max) fold 1 plus 'ng let 0 ng range ('g let 0 idx len range (idx swap get must g eq) where data swap select) each) 'group let\n"
     "(dup 'l let (l swap index-of must) each dup dedup 'u let (u swap index-of must) each) 'classify let\n"
     "(255 band) 'byte-mask let\n"
     "('b let 0 8 range (7 swap sub b swap shr 1 band) each) 'byte-bits let\n"
@@ -2960,7 +2954,7 @@ static void register_prims(void) {
         {"compose",prim_concat},R(list,list),R(len,size),R(push,push_op),R(pop,pop_op),
         {"get",prim_get},R(nth,nth),R(set,replace_at),R(cat,concat),
         {"take-n",prim_take_n},{"drop-n",prim_drop_n},R(range,range),
-        R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},R(scan,scan),
+        R(fold,fold),R(each,each),R(sort,sort),{"index-of",prim_index_of},
         R(at,at),R(rise,rise),R(fall,fall),R(shape,shape),
         R(rec,rec),R(into,into),R(edit,edit),R(find,find_elem),
         R(millis,millis),R(box,box),R(free,free),R(lend,lend),R(mutate,mutate),R(clone,clone),

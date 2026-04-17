@@ -28,7 +28,7 @@ drop
 primes len 'pcount let
 
 -- Prefix sums
-list 0 push primes 0 (plus) scan cat 'prefix let
+primes [0] ('p let dup last p plus push) fold 'prefix let
 prefix len 'pflen let
 
 -- Find max window

@@ -125,8 +125,8 @@ list 10 push 20 push [10 20] eq assert
 -- ===== List: sort =====
 [3 1 2] sort [1 2 3] eq assert
 
--- ===== List: scan =====
-[1 2 3] 0 (plus) scan [1 3 6] eq assert
+-- ===== List: scan via fold =====
+[1 2 3] [0] ('p let dup last p plus push) fold 1 drop-n [1 3 6] eq assert
 
 -- ===== List: keep-mask =====
 [1 2 3 4 5 6] dup (3 mod 0 eq) each keep-mask [3 6] eq assert
@@ -296,14 +296,6 @@ outer 15 eq assert
 2.0 3.0 fpow 8.0 eq assert
 1.0 fexp 2.0 lt not assert
 
--- ===== Prelude: keep =====
--- keep: x f → f(x) x  (apply f, then push x back)
-5 (sqr) keep 5 eq assert 25 eq assert
-
--- ===== Prelude: bi =====
--- bi: x f g → f(x) g(x)
-3 (2 plus) (3 mul) bi 9 eq assert 5 eq assert
-
 -- ===== Prelude: repeat =====
 0 3 (1 plus) repeat 3 eq assert
 10 0 (1 plus) repeat 10 eq assert
@@ -400,7 +392,7 @@ outer 15 eq assert
 [1 2 3] (sqr) table [[1 1] [2 4] [3 9]] eq assert
 
 -- ===== Complex: zip + map =====
-[1 2 3] [10 20 30] zip ((0 get must) (1 get must) bi plus) each [11 22 33] eq assert
+[1 2 3] [10 20 30] zip (dup 0 get must swap 1 get must plus) each [11 22 33] eq assert
 
 -- ===== Complex: where + select =====
 [5 3 8 1 7] dup (4 lt) where select [3 1] eq assert
@@ -556,10 +548,6 @@ free free
 1 2 3 (10 plus) dip (20 plus) dip
 3 eq assert 32 eq assert 1 eq assert
 
--- ===== Complex: keep + bi combinations =====
-10 (2 mul) keep 10 eq assert 20 eq assert
-6 (1 plus) (1 sub) bi 5 eq assert 7 eq assert
-
 -- ===== Complex: repeat for exponentiation =====
 1 10 (2 mul) repeat 1024 eq assert
 
@@ -594,9 +582,9 @@ dup dup mul 2.0 sub fabs 0.0001 lt assert drop
 'blue color-val 2 eq assert
 'green color-val 1 eq assert
 
--- ===== Complex: cumulative sum via scan =====
-[1 2 3 4 5] 0 (plus) scan [1 3 6 10 15] eq assert
-[10 20 30] 0 (plus) scan [10 30 60] eq assert
+-- ===== Complex: cumulative sum via fold =====
+[1 2 3 4 5] [0] ('p let dup last p plus push) fold 1 drop-n [1 3 6 10 15] eq assert
+[10 20 30] [0] ('p let dup last p plus push) fold 1 drop-n [10 30 60] eq assert
 
 -- ===== Complex: fibonacci via repeat (no recursion) =====
 0 1 10 (swap over plus) repeat drop 55 eq assert

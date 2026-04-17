@@ -224,7 +224,6 @@ list 10 push 20 push            -- [10 20]
 [1 2 3 4 5] (2 mod 1 eq) filter -- [1 3 5]
 [1 2 3] 0 (plus) fold           -- 6
 [1 2 3] (plus) reduce           -- 6
-[1 2 3] 0 (plus) scan           -- [1 3 6]
 
 -- sorting and searching
 [3 1 2] sort                    -- [1 2 3]
@@ -408,10 +407,7 @@ Additional keywords recognized in annotations: `functor` (required by `each`), `
 | `rot` | a b c → b c a | `1 2 3 rot` → `2 3 1` |
 | `tuck` | a b → b a b | `1 2 tuck` → `2 1 2` |
 | `not` | n → n==0 | `1 not` → `0` |
-| `bi` | x f g → f(x) g(x) | `3 (2 plus) (3 mul) bi` → `9 5` |
-| `keep` | x f → f(x) x | `5 (sqr) keep` → `25 5` |
 | `repeat` | x n f → f^n(x) | `1 10 (2 mul) repeat` → `1024` |
-| `times-i` | n f → f(0) f(1) ... f(n-1) | `3 (print) times-i` → prints 0 1 2 |
 
 ### arithmetic
 
@@ -473,9 +469,6 @@ Additional keywords recognized in annotations: `functor` (required by `each`), `
 | `rotate` | list n → rotated | `[1 2 3 4 5] 2 rotate` → `[4 5 1 2 3]` |
 | `zip` | a b → pairs | `[1 2 3] [4 5 6] zip` → `[[1 4] [2 5] [3 6]]` |
 | `windows` | list n → sublists | `[1 2 3 4] 2 windows` → `[[1 2] [2 3] [3 4]]` |
-| `reshape` | list [r c] → matrix | `[1 2 3 4] [2 2] reshape` → `[[1 2] [3 4]]` |
-| `transpose` | matrix → transposed | `[[1 2] [3 4]] transpose` → `[[1 3] [2 4]]` |
-| `group` | data indices → groups | groups data by index labels |
 | `classify` | list → indices | `[1 2 1 3 2] classify` → `[0 1 0 2 1]` |
 
 ### tagged unions
@@ -688,7 +681,7 @@ It catches the following at compile time:
 - Embedding a box into a stackable container (list, tuple, record, tagged) is rejected.
 - Duplicating a box with `dup` is rejected (boxes aren't copyable).
 - A closure that captures a linear outer binding is marked linear itself — applying it twice is rejected.
-- Higher-order ops (`each`, `fold`, `scan`, `while`, `find`) reject bodies that capture linear outer bindings.
+- Higher-order ops (`each`, `fold`, `while`, `find`) reject bodies that capture linear outer bindings.
 - `compose` propagates linear-capture: merging a linear-capturing closure with a pure one yields a linear-capturing result.
 - A linear-capturing closure cannot recurse on itself — each recursive call would re-consume the capture.
 
