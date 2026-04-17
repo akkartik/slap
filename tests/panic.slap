@@ -236,9 +236,6 @@ tuck
 -- EXPECT: got int
 1 42 while
 
--- EXPECT: lt: type mismatch, got int and float
-1 2.0 lt
-
 -- Source-location tests: every case below asserts the reported line+col.
 -- Each test runs in a file whose first (and only) non-empty line is line 1.
 

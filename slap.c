@@ -390,8 +390,7 @@ static int val_less(Value *a, int aslots, Value *b, int bslots) {
     switch (atop.tag) {
     case VAL_INT: return atop.as.i < btop.as.i;
     case VAL_FLOAT: return atop.as.f < btop.as.f;
-    case VAL_SYM: return atop.as.sym < btop.as.sym;
-    default: die("lt: unsupported type %s (only int/float/symbol are ordered)", valtag_name(atop.tag)); return 0;
+    default: die("lt: unsupported type %s (only int and float are ordered)", valtag_name(atop.tag)); return 0;
     }
 }
 static int eval_depth = 0;
@@ -403,7 +402,7 @@ static void syms_init(void);
 /* ---- TYPE SYSTEM ---- */
 typedef enum { DIR_IN, DIR_OUT } SlotDir;
 typedef enum { OWN_OWN, OWN_COPY, OWN_MOVE, OWN_LENT, OWN_AUTO } OwnMode;
-typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_STACK, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_MONOID, TC_FUNCTOR, TC_APPLICATIVE, TC_FOLDABLE, TC_MONAD, TC_DICT, TC_LINEAR, TC_SIZED } TypeConstraint;
+typedef enum { TC_NONE=0, TC_INT, TC_FLOAT, TC_SYM, TC_NUM, TC_LIST, TC_TUPLE, TC_REC, TC_BOX, TC_TAGGED, TC_SEQ, TC_EQ, TC_ORD, TC_INTEGRAL, TC_SEMIGROUP, TC_FUNCTOR, TC_MONAD, TC_DICT, TC_SIZED } TypeConstraint;
 enum { HO_BODY_1TO1=1, HO_BRANCHES_AGREE=2, HO_SAVES_UNDER=4,
        HO_APPLY_EFFECT=16, HO_BOX_BORROW=32, HO_BOX_MUTATE=64, HO_SCRUTINEE_TAGGED=128 };
 typedef struct { const char *name; uint32_t sym; int need; int out; TypeConstraint out_type; uint8_t flags; } HOEffect;
@@ -455,16 +454,16 @@ static TypeSig *typesig_find(uint32_t sym) {
 }
 static const struct { const char *name; TypeConstraint tc; } tc_names[] = {
     {"int",TC_INT},{"float",TC_FLOAT},{"sym",TC_SYM},{"num",TC_NUM},
-    {"list",TC_LIST},{"tuple",TC_TUPLE},{"rec",TC_REC},{"box",TC_BOX},{"stack",TC_STACK},{"tagged",TC_TAGGED},
+    {"list",TC_LIST},{"tuple",TC_TUPLE},{"rec",TC_REC},{"box",TC_BOX},{"tagged",TC_TAGGED},
     {"seq",TC_SEQ},{"eq",TC_EQ},{"ord",TC_ORD},
     {"integral",TC_INTEGRAL},{"semigroup",TC_SEMIGROUP},
-    {"functor",TC_FUNCTOR},{"monad",TC_MONAD},{"dict",TC_DICT},{"linear",TC_LINEAR},{"sized",TC_SIZED},{NULL,TC_NONE}
+    {"functor",TC_FUNCTOR},{"monad",TC_MONAD},{"dict",TC_DICT},{"linear",TC_BOX},{"sized",TC_SIZED},{NULL,TC_NONE}
 };
 static TypeConstraint parse_constraint(const char *tw) {
     for (int i=0; tc_names[i].name; i++) if (strcmp(tw,tc_names[i].name)==0) return tc_names[i].tc;
     return TC_NONE;
 }
-static int tc_is_container(TypeConstraint c) { return c == TC_LIST || c == TC_BOX || c == TC_TAGGED || c == TC_SEQ || c == TC_FUNCTOR || c == TC_MONAD || c == TC_APPLICATIVE || c == TC_DICT; }
+static int tc_is_container(TypeConstraint c) { return c == TC_LIST || c == TC_BOX || c == TC_TAGGED || c == TC_SEQ || c == TC_FUNCTOR || c == TC_MONAD || c == TC_DICT; }
 static int tc_is_concrete(TypeConstraint c) {
     return c == TC_INT || c == TC_FLOAT || c == TC_SYM || c == TC_LIST || c == TC_TUPLE || c == TC_REC || c == TC_BOX || c == TC_TAGGED || c == TC_DICT;
 }
@@ -593,32 +592,28 @@ static const uint32_t tc_compat[] = {
     [TC_NONE]=0xFFFFFFFF,
     [TC_INT]=B(TC_INT)|B(TC_NUM)|B(TC_INTEGRAL)|B(TC_ORD)|B(TC_EQ),
     [TC_FLOAT]=B(TC_FLOAT)|B(TC_NUM)|B(TC_ORD)|B(TC_EQ),
-    [TC_SYM]=B(TC_SYM)|B(TC_EQ)|B(TC_ORD),
+    [TC_SYM]=B(TC_SYM)|B(TC_EQ),
     [TC_NUM]=B(TC_NUM)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_ORD),
-    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
-    [TC_TUPLE]=B(TC_TUPLE)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ)|B(TC_SIZED),
-    [TC_REC]=B(TC_REC)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_EQ)|B(TC_SIZED),
-    [TC_BOX]=B(TC_BOX)|B(TC_LINEAR), [TC_STACK]=B(TC_STACK),
-    [TC_TAGGED]=B(TC_TAGGED)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_EQ),
-    [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_FOLDABLE)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
+    [TC_LIST]=B(TC_LIST)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_FUNCTOR)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
+    [TC_TUPLE]=B(TC_TUPLE)|B(TC_SEMIGROUP)|B(TC_EQ)|B(TC_SIZED),
+    [TC_REC]=B(TC_REC)|B(TC_SEMIGROUP)|B(TC_EQ)|B(TC_SIZED),
+    [TC_BOX]=B(TC_BOX),
+    [TC_TAGGED]=B(TC_TAGGED)|B(TC_FUNCTOR)|B(TC_MONAD)|B(TC_EQ),
+    [TC_SEQ]=B(TC_SEQ)|B(TC_LIST)|B(TC_SEMIGROUP)|B(TC_FUNCTOR)|B(TC_MONAD)|B(TC_EQ)|B(TC_SIZED),
     /* EQ is the most general stackable constraint. A value typed only as EQ
        cannot be narrowed to something stricter (ORD, NUM, SEQ, ...) without
        concrete evidence — that would silently tighten a function's declared
        signature beyond what was written. Keep this row minimal: EQ and the
        concrete stackable types that inherently satisfy Eq. */
     [TC_EQ]=B(TC_EQ)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_TAGGED),
-    [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_SYM)|B(TC_EQ)|B(TC_NUM),
+    [TC_ORD]=B(TC_ORD)|B(TC_INT)|B(TC_FLOAT)|B(TC_EQ)|B(TC_NUM),
     [TC_INTEGRAL]=B(TC_INTEGRAL)|B(TC_INT)|B(TC_NUM)|B(TC_EQ),
-    [TC_SEMIGROUP]=B(TC_SEMIGROUP)|B(TC_MONOID)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ),
-    [TC_MONOID]=B(TC_MONOID)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ)|B(TC_SEMIGROUP),
-    [TC_FUNCTOR]=B(TC_FUNCTOR)|B(TC_APPLICATIVE)|B(TC_MONAD)|B(TC_FOLDABLE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_DICT),
-    [TC_APPLICATIVE]=B(TC_APPLICATIVE)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_MONAD),
-    [TC_FOLDABLE]=B(TC_FOLDABLE)|B(TC_LIST)|B(TC_SEQ)|B(TC_DICT),
-    [TC_MONAD]=B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR)|B(TC_APPLICATIVE),
-    /* DICT is stackable (dup deep-clones, drop deep-frees). Linear is box-only. */
-    [TC_DICT]=B(TC_DICT)|B(TC_FUNCTOR)|B(TC_FOLDABLE)|B(TC_SIZED),
-    [TC_LINEAR]=B(TC_LINEAR)|B(TC_BOX),
-    [TC_SIZED]=B(TC_SIZED)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_DICT)|B(TC_SEQ)|B(TC_SEMIGROUP)|B(TC_MONOID),
+    [TC_SEMIGROUP]=B(TC_SEMIGROUP)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_SEQ),
+    [TC_FUNCTOR]=B(TC_FUNCTOR)|B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_DICT),
+    [TC_MONAD]=B(TC_MONAD)|B(TC_LIST)|B(TC_TAGGED)|B(TC_SEQ)|B(TC_FUNCTOR),
+    /* DICT is stackable (dup deep-clones, drop deep-frees). Box is linear (free/lend/mutate/clone). */
+    [TC_DICT]=B(TC_DICT)|B(TC_FUNCTOR)|B(TC_SIZED),
+    [TC_SIZED]=B(TC_SIZED)|B(TC_LIST)|B(TC_TUPLE)|B(TC_REC)|B(TC_DICT)|B(TC_SEQ)|B(TC_SEMIGROUP),
 };
 #undef B
 static int tc_constraint_matches(TypeConstraint a, TypeConstraint b) {
@@ -628,11 +623,9 @@ static int tc_constraint_matches(TypeConstraint a, TypeConstraint b) {
 static int tc_should_narrow(TypeConstraint cur, TypeConstraint c) {
     if (tc_is_concrete(c) && !tc_is_concrete(cur)) return 1;
     if (cur == TC_NUM && (c == TC_INT || c == TC_FLOAT || c == TC_INTEGRAL)) return 1;
-    if (cur == TC_EQ && (c == TC_ORD || c == TC_NUM || c == TC_SEQ || c == TC_INTEGRAL || c == TC_SEMIGROUP || c == TC_MONOID || c == TC_FUNCTOR || c == TC_APPLICATIVE || c == TC_FOLDABLE || c == TC_MONAD)) return 1;
-    if (cur == TC_SEMIGROUP && (c == TC_SEQ || c == TC_MONOID)) return 1;
-    if (cur == TC_MONOID && c == TC_SEQ) return 1;
-    if (cur == TC_FUNCTOR && (c == TC_APPLICATIVE || c == TC_MONAD || c == TC_FOLDABLE)) return 1;
-    if (cur == TC_APPLICATIVE && c == TC_MONAD) return 1;
+    if (cur == TC_EQ && (c == TC_ORD || c == TC_NUM || c == TC_SEQ || c == TC_INTEGRAL || c == TC_SEMIGROUP || c == TC_FUNCTOR || c == TC_MONAD)) return 1;
+    if (cur == TC_SEMIGROUP && c == TC_SEQ) return 1;
+    if (cur == TC_FUNCTOR && c == TC_MONAD) return 1;
     return 0;
 }
 static int tvar_bind(TypeChecker *tc, int id, TypeConstraint c, int line) {
@@ -849,7 +842,7 @@ static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int 
                 if (sig) {
                     int ni = 0, no = 0; TypeConstraint lo = TC_NONE;
                     for (int j = 0; j < sig->slot_count; j++) { if (sig->slots[j].direction == DIR_IN) ni++; else { no++; lo = sig->slots[j].constraint; } }
-                    EFF_CONSUME(vsp,consumed,ni); vsp += no; if (no > 0) tt = lo;
+                    EFF_CONSUME(vsp,consumed,ni); vsp += no; if (no > 0) tt = lo; else if (ni > 0) tt = TC_NONE;
                 } else {
                     HOEffect *ho = ho_ops_find(sym);
                     if (ho) { int need = ho->need, out = ho->out;
@@ -858,7 +851,7 @@ static TypeConstraint tc_infer_effect_ctx2(Token *toks, int start, int end, int 
                             for (int k = bp-1; k >= start; k--) { if (toks[k].tag == TOK_RPAREN) d++; else if (toks[k].tag == TOK_LPAREN && --d == 0) { ep = k; break; } }
                             int bc = 0, bp2 = 0; tc_infer_effect_ctx2(toks, ep+1, bp, tc2, &bc, &bp2, ctx, local_binds, local_count); need = ho->need + bc; out = bp2;
                         }
-                        EFF_CONSUME(vsp,consumed,need); vsp += out; if (out > 0) tt = ho->out_type;
+                        EFF_CONSUME(vsp,consumed,need); vsp += out; if (out > 0) tt = ho->out_type; else if (need > 0) tt = TC_NONE;
                     }
                 }
                 if (!sig && !ho_ops_find(sym)) {
@@ -997,10 +990,8 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
             tc_error(tc, line, 0, "'%s' expected box, got %s", ho->name, constraint_name(tc->data[tc->sp-1].type));
         if ((ho->flags & HO_BOX_BORROW) && tc->sp > 0 && tc->data[tc->sp-1].type == TC_BOX) {
             TypeConstraint ct = tc_top_content(tc, TC_BOX); tc->data[tc->sp-1].borrowed++;
-            if (bk && bteff && (bteff->has_let || bteff->has_nested) && (ct == TC_LIST || ct == TC_REC || ct == TC_TUPLE || ct == TC_TAGGED))
-                tc_error_hard(tc, line, 0, "'lend' body may not %s when the box contains a compound value (%s) — the borrowed snapshot aliases the box's backing storage and later 'mutate' calls would silently corrupt the binding",
-                    bteff->has_let ? "'let'-bind values" : "contain a nested tuple literal",
-                    constraint_name(ct));
+            if (bk && bteff && bteff->has_let && (ct == TC_LIST || ct == TC_REC || ct == TC_TUPLE || ct == TC_TAGGED))
+                tc_error_hard(tc, line, 0, "'lend' body may not 'let'-bind the snapshot as a word-accessible name when the box contains a compound value (%s) — pulling the snapshot to the stack aliases the box's backing storage and later 'mutate' calls would silently corrupt it. Use `'name k nth` for indexed access without aliasing.", constraint_name(ct));
             int r = bk ? (1 - eff_c + eff_p) : 1; if (r < 0) r = 0;
             for (int j = 0; j < r; j++) tc_push(tc, (j==r-1&&bo!=TC_NONE)?bo:(j==0&&ct!=TC_NONE)?ct:TC_NONE, line);
             int bi = tc->sp - r - 1; if (bi >= 0) tc->data[bi].borrowed--;
@@ -1027,6 +1018,7 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
     }
     TypeConstraint lpt = TC_NONE; int tptv = 0, lptv = 0;
     int branch_linear = 0; /* any popped body tuple captures or outputs linear */
+    int body_captures_linear = 0; /* primary body tuple captures a linear outer binding */
     for (int n = ho->need; n > 0 && tc->sp > tc->sp_floor; n--) {
         AbstractType *top = &tc->data[tc->sp - 1];
         if ((ho->flags & HO_SAVES_UNDER) && n == 1) { saved = *top; had_saved = 1; tc->sp--; continue; }
@@ -1035,7 +1027,10 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
         int ib = (n > 1) && !((ho->flags & HO_SCRUTINEE_TAGGED) && n == ho->need);
         if (top->type == TC_TUPLE && top->effect_idx >= 0) {
             TupleEffect *te = &tc->effects[top->effect_idx];
-            if (!bk) { eff_c = te->consumed; eff_p = te->produced; bo = te->out_type; bk = 1; boe = te->out_effect; bteff = te; }
+            if (!bk) {
+                eff_c = te->consumed; eff_p = te->produced; bo = te->out_type; bk = 1; boe = te->out_effect; bteff = te;
+                if (top->flags & AT_LINEAR) body_captures_linear = 1;
+            }
             if (te->output_is_linear || (top->flags & AT_LINEAR)) branch_linear = 1;
             if (ib && bc < 8) { barr_c[bc]=te->consumed; barr_p[bc]=te->produced; barr_has[bc]=1; bouts[bc++] = te->out_type; }
         } else if (ib && top->type != TC_NONE && bc < 8) bouts[bc++] = top->type;
@@ -1048,6 +1043,13 @@ static void tc_apply_ho(TypeChecker *tc, HOEffect *ho, int line) {
        Apply/dip execute the body directly and are fine. */
     if (bteff && bteff->output_is_linear && !(ho->flags & HO_APPLY_EFFECT))
         tc_error(tc, line, 0, "'%s' body may not produce a linear-capturing closure (would alias it across iterations or package it into a container)", ho->name);
+    /* An iterated body (each/fold/scan/while/find) that captures a linear
+       outer binding would consume that binding N times. Apply-style ops
+       (apply/dip/loop) run the body once; if/case dispatch one branch, so
+       branch_linear is handled separately. */
+    if (body_captures_linear && !(ho->flags & HO_APPLY_EFFECT) && !(ho->flags & HO_BRANCHES_AGREE)
+        && !(ho->flags & HO_BOX_BORROW) && !(ho->flags & HO_BOX_MUTATE))
+        tc_error(tc, line, 0, "'%s' body captures a linear value; running it more than once would double-consume that value", ho->name);
     /* Branch agreement splits into two checks:
        - Output *type* agreement: safe to enforce everywhere. A branch returning
          list vs int is always a bug, regardless of inferred pop counts.
@@ -1179,7 +1181,22 @@ static void tc_check_word(TypeChecker *tc, uint32_t sym, int line) {
             if (eff->out_effect >= 0 && tc->sp > 0 && tc->data[tc->sp-1].type == TC_TUPLE)
                 tc->data[tc->sp-1].effect_idx = eff->out_effect;
             return;
-        } else { tc_push(tc, b->atype.type, line); if (b->atype.flags & AT_LINEAR) { tc->data[tc->sp-1].flags |= AT_LINEAR; tc->saw_linear_capture = 1; } return; }
+        } else {
+            tc_push(tc, b->atype.type, line);
+            /* Box bindings: copy the content-type binding from the original
+               tvar onto the fresh one so `lend`'s compound-aliasing guard can
+               see what the box contains. Uses a fresh tvar for isolation. */
+            if (b->atype.type == TC_BOX && b->atype.tvar_id > 0 && tc->data[tc->sp-1].tvar_id > 0) {
+                int src_bc = tc->tvars[tvar_find(tc, b->atype.tvar_id)].box_c;
+                if (src_bc > 0) {
+                    TypeConstraint bct = tvar_resolve(tc, src_bc);
+                    int dst_bc = tc->tvars[tvar_find(tc, tc->data[tc->sp-1].tvar_id)].box_c;
+                    if (bct != TC_NONE && dst_bc > 0) tvar_bind(tc, dst_bc, bct, line);
+                }
+            }
+            if (b->atype.flags & AT_LINEAR) { tc->data[tc->sp-1].flags |= AT_LINEAR; tc->saw_linear_capture = 1; }
+            return;
+        }
       }
     }
     if (tc->unknown_count < TC_UNKNOWN_MAX) { tc->unknowns[tc->unknown_count].sym = sym; tc->unknowns[tc->unknown_count].line = line; tc->unknown_count++; }
@@ -1385,13 +1402,24 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                 eff->output_is_linear = output_captures_linear;
                 for (int j = 0; j < ic; j++) eff->in_tvars[j] = itv[j];
                 for (int j = 0; j < oc; j++) eff->out_tvars[j] = otv[j];
+                /* has_let tracks only `let`-bindings whose value is read back as a
+                   WORD later in the same body. A binding referenced only as a SYM
+                   literal (e.g. `'data k nth`) accesses the value via `nth` without
+                   pulling it to the stack, so it can't create an aliasing snapshot. */
                 for (int k = i+1; k < close; k++) {
-                    if (toks[k].tag == TOK_WORD && toks[k].as.sym == S_LET) eff->has_let = 1;
-                    else if (toks[k].tag == TOK_LPAREN) { eff->has_nested = 1; k = find_matching(toks, k+1, total_count, TOK_LPAREN, TOK_RPAREN); }
+                    if (toks[k].tag == TOK_WORD && toks[k].as.sym == S_LET
+                        && k >= i+2 && toks[k-1].tag == TOK_SYM) {
+                        uint32_t bn = toks[k-1].as.sym;
+                        for (int m = k+1; m < close; m++) {
+                            if (toks[m].tag == TOK_WORD && toks[m].as.sym == bn) { eff->has_let = 1; break; }
+                            if (toks[m].tag == TOK_LPAREN) m = find_matching(toks, m+1, total_count, TOK_LPAREN, TOK_RPAREN);
+                        }
+                    }
+                    if (toks[k].tag == TOK_LPAREN) { eff->has_nested = 1; k = find_matching(toks, k+1, total_count, TOK_LPAREN, TOK_RPAREN); }
                     if (eff->has_let && eff->has_nested) break;
                 }
                 tc->data[tc->sp-1].effect_idx = eidx;
-                if (body_captured) tc->data[tc->sp-1].flags |= AT_LINEAR;
+                if (body_captured) { tc->data[tc->sp-1].flags |= AT_LINEAR; tc->saw_linear_capture = 1; }
             }
             i = close; break;
         }
@@ -1474,6 +1502,23 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                             int seen = 0;
                             for (int k = i+1; k < end; k++) if (toks[k].tag == TOK_WORD && toks[k].as.sym == ns) { seen = 1; break; }
                             if (!seen) tc_error(tc, t->line, vt.source_line, "linear value bound as '%s' is never referenced in the enclosing quotation — it will be captured and leaked", sym_name(ns));
+                        }
+                        /* A linear-capturing closure that recursively references itself
+                           would double-consume on each recursion. Scan the tuple body
+                           preceding this `'name let` for a self-reference. */
+                        if ((vt.flags & AT_LINEAR) && vt.type == TC_TUPLE && i >= 2 && toks[i-2].tag == TOK_RPAREN) {
+                            int d2 = 1, b2 = i-2;
+                            for (int k = b2-1; k >= start; k--) {
+                                if (toks[k].tag == TOK_RPAREN) d2++;
+                                else if (toks[k].tag == TOK_LPAREN && --d2 == 0) {
+                                    for (int m = k+1; m < b2; m++)
+                                        if (toks[m].tag == TOK_WORD && toks[m].as.sym == ns) {
+                                            tc_error_hard(tc, t->line, 0, "linear-capturing closure '%s' cannot recurse on itself — each recursive call would re-consume the captured linear value", sym_name(ns));
+                                            break;
+                                        }
+                                    break;
+                                }
+                            }
                         }
                         if (tc->lend_depth > 0 && vt.borrowed > 0 && (vt.type == TC_LIST || vt.type == TC_REC || vt.type == TC_TUPLE || vt.type == TC_TAGGED)) {
                             tc_error_hard(tc, t->line, vt.source_line, "cannot 'let'-bind compound value '%s' (%s) inside a 'lend' body — the snapshot aliases the box's backing storage and would observe later mutations", sym_name(ns), constraint_name(vt.type));
@@ -1603,7 +1648,7 @@ static void tc_process_range(TypeChecker *tc, Token *toks, int start, int end, i
                             UnionDef *ud = &tc->unions[uid-1];
                             int has_linear = 0;
                             for (int v = 0; v < ud->count; v++)
-                                if (ud->types[v] == TC_BOX || ud->types[v] == TC_LINEAR) { has_linear = 1; break; }
+                                if (ud->types[v] == TC_BOX) { has_linear = 1; break; }
                             for (int v = 0; v < ud->count; v++) {
                                 int found = 0;
                                 for (int k = 0; k < cc; k++) if (csyms[k] == ud->syms[v]) { found = 1; break; }
@@ -2017,7 +2062,6 @@ static void prim_fold(Frame *env) {
 static int val_cmp(const Value *va, const Value *vb) {
     if(va->tag==VAL_INT&&vb->tag==VAL_INT) return(va->as.i>vb->as.i)-(va->as.i<vb->as.i);
     if(va->tag==VAL_FLOAT&&vb->tag==VAL_FLOAT) return(va->as.f>vb->as.f)-(va->as.f<vb->as.f);
-    if(va->tag==VAL_SYM&&vb->tag==VAL_SYM) return strcmp(sym_name(va->as.sym),sym_name(vb->as.sym));
     die("sort: mismatched or unsupported element types (got %s and %s)", valtag_name(va->tag), valtag_name(vb->tag)); return 0;
 }
 static int sort_cmp(const void *a,const void *b) { return val_cmp((const Value*)a,(const Value*)b); }
@@ -2104,7 +2148,8 @@ static void prim_lend(Frame *env) {
 static void prim_mutate(Frame *env) {
     BOX_UNPACK("mutate"); eval_body(fn_buf,fn_s,env);
     Value new_top=stack[sp-1]; int ns=val_slots(new_top);
-    free(bd->data); bd->data=malloc(ns*sizeof(Value)); bd->slots=ns;
+    deep_free_values(bd->data, bd->slots); free(bd->data);
+    bd->data=malloc(ns*sizeof(Value)); bd->slots=ns;
     VCPY(bd->data,&stack[sp-ns],ns); sp-=ns; spush(box_val);
 }
 static DictData *dict_clone(DictData *orig);
@@ -2474,7 +2519,7 @@ static const char *BUILTIN_TYPES =
     "'plus" A2E "'sub" A2E "'mul" A2E "'div" A2E
     "'mod" I2E "'wrap" I2E "'band" I2E "'bor" I2E "'bxor" I2E "'shl" I2E "'shr" I2E
     "'bnot [int lent in  int" MO "'divmod [int lent in  int lent in  int move out  int" MO
-    "'eq [lent in  lent in  int" MO "'lt [lent in  lent in  int" MO
+    "'eq [lent in  lent in  int" MO "'lt ['a ord lent in  'a ord lent in  int" MO
     "'and" I2E "'or" I2E
     "'print [own in] effect\n'assert [int own in] effect\n'millis [int" MO
     "'itof [int lent in  float" MO "'ftoi [float lent in  int" MO

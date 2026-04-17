@@ -388,12 +388,12 @@ Built-in protocols group types by capability. Use in effect annotations:
 | Sized | `sized` | list, tuple, record, dict | `len` |
 | Seq | `seq` | list | `get`, `set`, `push`, `pop`, `cat` |
 | Eq | `eq` | all stackable | `eq` |
-| Ord | `ord` | int, float, sym | `lt`, `sort` |
+| Ord | `ord` | int, float | `lt`, `sort` |
 | Num | `num` | int, float | `plus`, `sub`, `mul`, `div` |
 | Integral | `integral` | int | `mod`, `divmod`, `wrap`, bitwise |
 | Semigroup | `semigroup` | list, tuple, record | `cat` |
 
-Additional keywords recognized in annotations: `functor` (required by `each`), `monad` (required by `then`), `dict` (for the dict type), `linear` (for Box).
+Additional keywords recognized in annotations: `functor` (required by `each`), `monad` (required by `then`), `dict` (for the dict type), `linear` (alias for Box). Symbols are comparable with `eq` but not orderable.
 
 ## prelude
 

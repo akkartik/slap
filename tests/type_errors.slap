@@ -261,6 +261,18 @@
 -- TYPE ERROR: sort list of lists (lists aren't Ord)
 [[1] [2]] sort
 
+-- EXPECT: type error
+-- TYPE ERROR: lt on symbols (symbols aren't Ord)
+'foo 'bar lt
+
+-- EXPECT: type error
+-- TYPE ERROR: lt on mismatched int/float
+1 2.0 lt
+
+-- EXPECT: type error
+-- TYPE ERROR: sort list of symbols (symbols aren't Ord)
+['foo 'bar 'baz] sort
+
 -- EXPECT: type variable 'a' mismatch
 -- TYPE ERROR: heterogeneous dict values (no need for free now that dicts are stackable)
 dict "k" 1 insert "j" "two" insert
@@ -370,9 +382,9 @@ rec 42 box 'b into drop
 -- TYPE ERROR: set would place box into list slot
 [1 2 3] 0 42 box set drop
 
--- EXPECT: nested tuple literal
--- TYPE ERROR: lend body captures snapshot into a nested tuple (would alias past mutate)
-{'x 1} box (dup (swap) dip) lend free
+-- EXPECT: 'let'-bind the snapshot
+-- TYPE ERROR: lend body binds the snapshot as a word-accessible name (probe 18 shape)
+[1 2 3] box ('x let x) lend print free
 
 -- EXPECT: missing clause
 -- TYPE ERROR: case on a typed union missing a variant
